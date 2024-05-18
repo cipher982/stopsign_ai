@@ -15,6 +15,7 @@ if not cap.isOpened():
     print("Error: Could not open video stream")
     exit()
 
+# Main loop
 while True:
     ret, frame = cap.read()
     if not ret:
