@@ -44,8 +44,8 @@ Frameworks: React.
 - The model will detect and classify the cars in the frames and classify whether they stop, roll, or dont slow down at all in the intersection.
 
 **Storage:**
-Images and metadata are stored in a designated storage system.
-Options include local storage or cloud-based storage for larger scalability.
+- Images and metadata are stored in a designated storage system.
+- Options include local storage or cloud based.
 
 **Web Server and Database:**
 - Metadata Storage: Metadata is stored in a database.
