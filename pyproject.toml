@@ -10,6 +10,19 @@ python = "^3.12"
 opencv-python = "^4.9.0.80"
 python-dotenv = "^1.0.1"
 
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.3.5"
+pre-commit = "^3.7.0"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["I", "E", "F"]
+ignore = []
+
+[tool.ruff.lint.isort]
+force-single-line = true
 
 [build-system]
 requires = ["poetry-core"]
