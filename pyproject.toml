@@ -24,6 +24,11 @@ ignore = []
 [tool.ruff.lint.isort]
 force-single-line = true
 
+[tool.ruff.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "double"
+multiline-quotes = "double"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
