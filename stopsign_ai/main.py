@@ -6,7 +6,7 @@ import dotenv
 dotenv.load_dotenv()
 
 # RTSP stream URL
-rtsp_url = os.getenv('RTSP_URL')
+rtsp_url = os.getenv("RTSP_URL")
 
 # Open the RTSP stream
 cap = cv2.VideoCapture(rtsp_url)
@@ -25,10 +25,9 @@ while True:
     # detections = your_ai_model.detect(frame)
 
     # Display the frame (optional)
-    cv2.imshow('Frame', frame)
-
+    cv2.imshow("Frame", frame)
     # Press 'q' to exit the loop
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
 # Release the capture and close any OpenCV windows
