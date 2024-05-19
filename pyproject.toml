@@ -9,6 +9,7 @@ readme = "README.md"
 python = "^3.12"
 opencv-python = "^4.9.0.80"
 python-dotenv = "^1.0.1"
+ultralytics = "^8.2.18"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.3.5"
@@ -18,13 +19,13 @@ pre-commit = "^3.7.0"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["I", "E", "F"]
+select = ["I", "E", "F", "Q000"]
 ignore = []
 
 [tool.ruff.lint.isort]
 force-single-line = true
 
-[tool.ruff.flake8-quotes]
+[tool.ruff.lint.flake8-quotes]
 docstring-quotes = "double"
 inline-quotes = "double"
 multiline-quotes = "double"
