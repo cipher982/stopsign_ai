@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import signal
 
 import cv2
 import dotenv
@@ -15,6 +16,9 @@ rtsp_url = os.getenv("RTSP_URL")
 model_path = os.getenv("YOLO_MODEL_PATH")
 output_video_path = os.getenv("OUTPUT_VIDEO_PATH")
 
+if not rtsp_url:
+    print("Error: RTSP_URL environment variable is not set.")
+    sys.exit(1)
 
 # Function to open the RTSP stream
 def open_rtsp_stream(url: str) -> cv2.VideoCapture:
@@ -33,7 +37,17 @@ def draw_gridlines(frame, w, h, grid_increment):
         cv2.putText(frame, str(y), (5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
 
+def signal_handler(sig, frame):
+    print("Interrupt signal received. Cleaning up...")
+    cap.release()
+    video_writer.release()
+    cv2.destroyAllWindows()
+    sys.exit(0)
+
+
 def main(draw_grid=False, grid_increment=100):
+    global cap, video_writer
+
     # Open the RTSP stream
     cap = open_rtsp_stream(rtsp_url)
 
@@ -66,62 +80,71 @@ def main(draw_grid=False, grid_increment=100):
     # vehicle_classes = ["bicycle", "car", "motorcycle", "bus", "train", "truck"]
     vehicle_classes = [1, 2, 3, 5, 6, 7]  # Indices of vehicle classes
 
+    # Register the signal handler
+    signal.signal(signal.SIGINT, signal_handler)
+
     # Main loop
     frame_count = 0
     inference_times = []  # Store inference times
 
-    while True:
-        if cap.get(cv2.CAP_PROP_POS_FRAMES) < cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1:
-            continue
+    try:
+        while True:
+            if cap.get(cv2.CAP_PROP_POS_FRAMES) < cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1:
+                continue
 
-        ret, frame = cap.read()
-        if not ret:
-            print("Stream read failed, attempting to reconnect...")
-            cap.release()
-            cap = open_rtsp_stream(rtsp_url)
-            continue
+            ret, frame = cap.read()
+            if not ret:
+                print("Stream read failed, attempting to reconnect...")
+                cap.release()
+                cap = open_rtsp_stream(rtsp_url)
+                continue
 
-        # Convert frame to PIL image
-        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            # Convert frame to PIL image
+            pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
-        # Perform tracking and measure inference time
-        start_time = time.time()
-        tracks = model.track(source=pil_img, persist=True, classes=vehicle_classes)
-        end_time = time.time()
-        inference_time = end_time - start_time
-        inference_times.append(inference_time)
+            # Perform tracking and measure inference time
+            start_time = time.time()
+            tracks = model.track(source=pil_img, persist=True, classes=vehicle_classes)
+            end_time = time.time()
+            inference_time = end_time - start_time
+            inference_times.append(inference_time)
 
-        # Estimate speed and draw on frame
-        frame = speed_obj.estimate_speed(frame, tracks)
+            # Estimate speed and draw on frame
+            frame = speed_obj.estimate_speed(frame, tracks)
 
-        # Write the frame to the output video
-        video_writer.write(frame)
+            # Write the frame to the output video
+            video_writer.write(frame)
 
-        if draw_grid:
-            draw_gridlines(frame, w, h, grid_increment)
+            if draw_grid:
+                draw_gridlines(frame, w, h, grid_increment)
 
-        # Draw the current line_pts on the frame
-        cv2.line(frame, line_pts[0], line_pts[1], (0, 255, 0), 2)
+            # Draw the current line_pts on the frame
+            cv2.line(frame, line_pts[0], line_pts[1], (0, 255, 0), 2)
 
-        # Display the frame
-        cv2.imshow("Frame", frame)
-        frame_count += 1
+            # Display the frame
+            cv2.imshow("Frame", frame)
+            frame_count += 1
 
-        # Press 'q' to exit the loop
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+            # Press 'q' to exit the loop
+            if cv2.waitKey(5) & 0xFF == ord("q"):
+                break
 
-    # Release the capture, video writer, and close any OpenCV windows
-    cap.release()
-    video_writer.release()
-    cv2.destroyAllWindows()
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
 
-    # Calculate and print mean and median inference times
-    mean_inference_time = sum(inference_times) / len(inference_times)
-    median_inference_time = sorted(inference_times)[len(inference_times) // 2]
+    finally:
+        # Cleanup actions
+        cap.release()
+        video_writer.release()
+        cv2.destroyAllWindows()
 
-    print(f"Mean inference time: {mean_inference_time * 1000:.2f} ms")
-    print(f"Median inference time: {median_inference_time * 1000:.2f} ms")
+        # Calculate and print mean and median inference times
+        if len(inference_times) > 0:
+            mean_inference_time = sum(inference_times) / len(inference_times)
+            median_inference_time = sorted(inference_times)[len(inference_times) // 2]
+
+            print(f"Mean inference time: {mean_inference_time * 1000:.2f} ms")
+            print(f"Median inference time: {median_inference_time * 1000:.2f} ms")
 
 
 if __name__ == "__main__":
