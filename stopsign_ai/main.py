@@ -6,12 +6,14 @@ import cv2
 import dotenv
 from PIL import Image
 from ultralytics import YOLO
+from ultralytics import solutions
 
 dotenv.load_dotenv()
 
 # Constants
 rtsp_url = os.getenv("RTSP_URL")
 model_path = os.getenv("YOLO_MODEL_PATH")
+output_video_path = os.getenv("OUTPUT_VIDEO_PATH")
 
 
 # Function to open the RTSP stream
@@ -31,10 +33,31 @@ if not cap.isOpened():
 
 # Load the YOLO model
 model = YOLO(model_path)
+names = model.model.names
+
+# Get video properties
+w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+# Video writer
+video_writer = cv2.VideoWriter(output_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+
+# Define line points for speed estimation
+line_pts = [(0, 360), (1280, 360)]
+
+# Initialize speed estimation object
+speed_obj = solutions.SpeedEstimator(
+    reg_pts=line_pts,
+    names=names,
+    view_img=True,
+)
+
+# vehicle_classes = ["bicycle", "car", "motorcycle", "bus", "train", "truck"]
+vehicle_classes = [1, 2, 3, 5, 6, 7]  # Indices of vehicle classes
 
 # Main loop
 frame_count = 0
-last_boxes = []  # Store the last set of bounding boxes
 inference_times = []  # Store inference times
 
 while True:
@@ -45,45 +68,33 @@ while True:
         cap = open_rtsp_stream(rtsp_url)
         continue
 
-    # Run AI model every 4th frame
-    if frame_count % 2 == 0:
-        # Convert frame to PIL image
-        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    # Convert frame to PIL image
+    pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
-        # Perform detection and measure inference time
-        start_time = time.time()
-        results = model.predict(source=pil_img)
-        end_time = time.time()
-        inference_time = end_time - start_time
-        inference_times.append(inference_time)
+    # Perform tracking and measure inference time
+    start_time = time.time()
+    tracks = model.track(source=pil_img, persist=True, classes=vehicle_classes)
+    end_time = time.time()
+    inference_time = end_time - start_time
+    inference_times.append(inference_time)
 
-        last_boxes = []  # Clear the last boxes
-        for result in results:
-            for box in result.boxes:
-                # Extract bounding box coordinates and class label
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                label = result.names[int(box.cls[0])]
+    # Estimate speed and draw on frame
+    frame = speed_obj.estimate_speed(frame, tracks)
 
-                # Filter objects to track only vehicles
-                if label in ["car", "motorcycle", "bus", "truck"]:
-                    last_boxes.append((x1, y1, x2, y2, label))
-
-    # Draw the last set of bounding boxes
-    for x1, y1, x2, y2, label in last_boxes:
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+    # Write the frame to the output video
+    video_writer.write(frame)
 
     # Display the frame
     cv2.imshow("Frame", frame)
-
     frame_count += 1
 
     # Press 'q' to exit the loop
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
-# Release the capture and close any OpenCV windows
+# Release the capture, video writer, and close any OpenCV windows
 cap.release()
+video_writer.release()
 cv2.destroyAllWindows()
 
 # Calculate and print mean and median inference times
