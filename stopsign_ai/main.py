@@ -19,7 +19,7 @@ output_video_path = os.getenv("OUTPUT_VIDEO_PATH")
 # Function to open the RTSP stream
 def open_rtsp_stream(url: str) -> cv2.VideoCapture:
     cap = cv2.VideoCapture(url)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)  # Set buffer size
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Set buffer size
     cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 60000)  # Set timeout to 60 seconds
     return cap
 
@@ -44,7 +44,7 @@ fps = int(cap.get(cv2.CAP_PROP_FPS))
 video_writer = cv2.VideoWriter(output_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
 
 # Define line points for speed estimation
-line_pts = [(0, 360), (1280, 360)]
+line_pts = [(900, 700), (1200, 600)]
 
 # Initialize speed estimation object
 speed_obj = solutions.SpeedEstimator(
@@ -60,7 +60,12 @@ vehicle_classes = [1, 2, 3, 5, 6, 7]  # Indices of vehicle classes
 frame_count = 0
 inference_times = []  # Store inference times
 
+grid_increment = 100
+
 while True:
+    if cap.get(cv2.CAP_PROP_POS_FRAMES) < cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1:
+        continue
+
     ret, frame = cap.read()
     if not ret:
         print("Stream read failed, attempting to reconnect...")
@@ -83,6 +88,16 @@ while True:
 
     # Write the frame to the output video
     video_writer.write(frame)
+
+    for x in range(0, w, grid_increment):
+        cv2.line(frame, (x, 0), (x, h), (128, 128, 128), 1)
+        cv2.putText(frame, str(x), (x, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    for y in range(0, h, grid_increment):
+        cv2.line(frame, (0, y), (w, y), (128, 128, 128), 1)
+        cv2.putText(frame, str(y), (5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+    # Draw the current line_pts on the frame
+    cv2.line(frame, line_pts[0], line_pts[1], (0, 255, 0), 2)
 
     # Display the frame
     cv2.imshow("Frame", frame)
