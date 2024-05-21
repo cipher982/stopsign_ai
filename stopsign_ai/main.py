@@ -5,6 +5,7 @@ import signal
 
 import cv2
 import dotenv
+import numpy as np
 from PIL import Image
 from ultralytics import YOLO
 from ultralytics import solutions
@@ -45,7 +46,7 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
-def main(draw_grid=False, grid_increment=100):
+def main(draw_grid=False, grid_increment=100, scale=1.0):
     global cap, video_writer
 
     # Open the RTSP stream
@@ -64,11 +65,25 @@ def main(draw_grid=False, grid_increment=100):
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-    # Video writer
-    video_writer = cv2.VideoWriter(output_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    # Resize dimensions
+    resized_w = int(w * scale)
+    resized_h = int(h * scale)
+
+    # Calculate crop dimensions
+    crop_top = resized_h // 2
+    crop_left = resized_w // 6
+    crop_right = resized_w - crop_left
+
+    # Video writer with new dimensions
+    cropped_w = crop_right - crop_left
+    cropped_h = resized_h - crop_top
+    video_writer = cv2.VideoWriter(
+        output_video_path, 
+        cv2.VideoWriter_fourcc(*"mp4v"), fps, (cropped_w, cropped_h)
+    )
 
     # Define line points for speed estimation
-    line_pts = [(900, 700), (1200, 600)]
+    line_pts = [(600, 800), (700, 600)]
 
     # Initialize speed estimation object
     speed_obj = solutions.SpeedEstimator(
@@ -99,35 +114,43 @@ def main(draw_grid=False, grid_increment=100):
                 cap = open_rtsp_stream(rtsp_url)
                 continue
 
+            # Resize the frame
+            resized_frame = cv2.resize(frame, (resized_w, resized_h))
+
+            # Crop the frame
+            cropped_frame = resized_frame[crop_top:resized_h, crop_left:crop_right]
+            cropped_frame = np.ascontiguousarray(cropped_frame)
+
             # Convert frame to PIL image
-            pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            pil_img = Image.fromarray(cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB))
 
             # Perform tracking and measure inference time
             start_time = time.time()
-            tracks = model.track(source=pil_img, persist=True, classes=vehicle_classes)
+            tracks = model.track(
+                source=pil_img,
+                stream=False,
+                persist=True,
+                classes=vehicle_classes
+            )
             end_time = time.time()
             inference_time = end_time - start_time
             inference_times.append(inference_time)
 
-            # Estimate speed and draw on frame
-            frame = speed_obj.estimate_speed(frame, tracks)
-
-            # Write the frame to the output video
-            video_writer.write(frame)
-
             if draw_grid:
-                draw_gridlines(frame, w, h, grid_increment)
+                draw_gridlines(cropped_frame, cropped_w, cropped_h, grid_increment)
 
             # Draw the current line_pts on the frame
-            cv2.line(frame, line_pts[0], line_pts[1], (0, 255, 0), 2)
+            cv2.line(cropped_frame, line_pts[0], line_pts[1], (0, 255, 0), 2)
+
+            # Estimate speed and draw on frame
+            cropped_frame = speed_obj.estimate_speed(cropped_frame, tracks)
+
+            # Write the frame to the output video
+            video_writer.write(cropped_frame)
 
             # Display the frame
-            cv2.imshow("Frame", frame)
+            # cv2.imshow("Frame", cropped_frame)
             frame_count += 1
-
-            # Press 'q' to exit the loop
-            if cv2.waitKey(5) & 0xFF == ord("q"):
-                break
 
     except Exception as e:
         print(f"An error occurred: {str(e)}")
@@ -146,6 +169,5 @@ def main(draw_grid=False, grid_increment=100):
             print(f"Mean inference time: {mean_inference_time * 1000:.2f} ms")
             print(f"Median inference time: {median_inference_time * 1000:.2f} ms")
 
-
 if __name__ == "__main__":
-    main(draw_grid=True, grid_increment=100)
+    main(draw_grid=True, grid_increment=100, scale=0.75)
