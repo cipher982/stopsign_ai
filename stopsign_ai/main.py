@@ -1,7 +1,7 @@
 import os
+import signal
 import sys
 import time
-import signal
 
 import cv2
 import dotenv
@@ -20,11 +20,13 @@ if not rtsp_url:
     print("Error: RTSP_URL environment variable is not set.")
     sys.exit(1)
 
+
 def open_rtsp_stream(url: str) -> cv2.VideoCapture:
     cap = cv2.VideoCapture(url)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 60000)
     return cap
+
 
 def preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio):
     h, w = frame.shape[:2]
@@ -34,8 +36,9 @@ def preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio):
 
     crop_top = int(resized_h * crop_top_ratio)
     crop_side = int(resized_w * crop_side_ratio)
-    cropped_frame = resized_frame[crop_top:, crop_side:resized_w - crop_side]
+    cropped_frame = resized_frame[crop_top:, crop_side : resized_w - crop_side]
     return np.ascontiguousarray(cropped_frame)
+
 
 def draw_gridlines(frame, grid_increment):
     h, w = frame.shape[:2]
@@ -46,6 +49,7 @@ def draw_gridlines(frame, grid_increment):
         cv2.line(frame, (0, y), (w, y), (128, 128, 128), 1)
         cv2.putText(frame, str(y), (5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
+
 def signal_handler(sig, frame):
     print("Interrupt signal received. Cleaning up...")
     cap.release()
@@ -53,7 +57,8 @@ def signal_handler(sig, frame):
     cv2.destroyAllWindows()
     sys.exit(0)
 
-def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, crop_side_ratio=1/6):
+
+def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, crop_side_ratio=1 / 6):
     global cap, video_writer
 
     cap = open_rtsp_stream(rtsp_url)
@@ -69,10 +74,7 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-    video_writer = cv2.VideoWriter(
-        output_video_path,
-        cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
-    )
+    video_writer = cv2.VideoWriter(output_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
 
     line_pts = [(600, 800), (700, 600)]
 
@@ -105,12 +107,7 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
             pil_img = Image.fromarray(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB))
 
             start_time = time.time()
-            tracks = model.track(
-                source=pil_img,
-                stream=False,
-                persist=True,
-                classes=vehicle_classes
-            )
+            tracks = model.track(source=pil_img, stream=False, persist=True, classes=vehicle_classes)
             end_time = time.time()
             inference_time = end_time - start_time
             inference_times.append(inference_time)
@@ -140,6 +137,7 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
 
             print(f"Mean inference time: {mean_inference_time * 1000:.2f} ms")
             print(f"Median inference time: {median_inference_time * 1000:.2f} ms")
+
 
 if __name__ == "__main__":
     main(draw_grid=True, grid_increment=100, scale=0.75)
