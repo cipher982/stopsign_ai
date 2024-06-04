@@ -12,12 +12,18 @@ from ultralytics import solutions
 
 dotenv.load_dotenv()
 
-rtsp_url = os.getenv("RTSP_URL")
-model_path = os.getenv("YOLO_MODEL_PATH")
-output_video_path = os.getenv("OUTPUT_VIDEO_PATH")
+RTSP_URL = os.getenv("RTSP_URL")
+MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
+OUTPUT_VIDEO_PATH = os.getenv("OUTPUT_VIDEO_PATH")
+SAVE_VIDEO = False
 
-if not rtsp_url:
+
+if not RTSP_URL:
     print("Error: RTSP_URL environment variable is not set.")
+    sys.exit(1)
+
+if not MODEL_PATH:
+    print("Error: YOLO_MODEL_PATH environment variable is not set.")
     sys.exit(1)
 
 
@@ -61,20 +67,27 @@ def signal_handler(sig, frame):
 def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, crop_side_ratio=1 / 6):
     global cap, video_writer
 
-    cap = open_rtsp_stream(rtsp_url)
+    cap = open_rtsp_stream(RTSP_URL)
 
     if not cap.isOpened():
         print("Error: Could not open video stream")
         sys.exit()
 
-    model = YOLO(model_path)
-    names = model.model.names
+    model = YOLO(MODEL_PATH)
+    names = model.model.names  # type: ignore
 
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-    video_writer = cv2.VideoWriter(output_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    if SAVE_VIDEO:
+        assert OUTPUT_VIDEO_PATH, "Error: OUTPUT_VIDEO_PATH environment variable is not set."
+        video_writer = cv2.VideoWriter(
+            filename=OUTPUT_VIDEO_PATH,
+            fourcc=cv2.VideoWriter_fourcc(*"mp4v"),  # type: ignore
+            fps=fps,
+            framesize=(w, h),
+        )  # type: ignore
 
     line_pts = [(600, 800), (700, 600)]
 
@@ -100,14 +113,20 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
             if not ret:
                 print("Stream read failed, attempting to reconnect...")
                 cap.release()
-                cap = open_rtsp_stream(rtsp_url)
+                cap = open_rtsp_stream(RTSP_URL)
                 continue
 
             processed_frame = preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio)
             pil_img = Image.fromarray(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB))
 
             start_time = time.time()
-            tracks = model.track(source=pil_img, stream=False, persist=True, classes=vehicle_classes)
+            tracks = model.track(
+                source=pil_img,  # type: ignore
+                stream=False,
+                persist=True,
+                classes=vehicle_classes,
+            )
+
             end_time = time.time()
             inference_time = end_time - start_time
             inference_times.append(inference_time)
@@ -119,7 +138,11 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
 
             processed_frame = speed_obj.estimate_speed(processed_frame, tracks)
 
-            video_writer.write(processed_frame)
+            # cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
+            cv2.imshow("Output", processed_frame)
+
+            if SAVE_VIDEO:
+                video_writer.write(processed_frame)
 
             frame_count += 1
 
@@ -128,7 +151,8 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
 
     finally:
         cap.release()
-        video_writer.release()
+        if SAVE_VIDEO:
+            video_writer.release()
         cv2.destroyAllWindows()
 
         if len(inference_times) > 0:
@@ -140,4 +164,10 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
 
 
 if __name__ == "__main__":
-    main(draw_grid=True, grid_increment=100, scale=0.75)
+    main(
+        draw_grid=True,
+        grid_increment=100,
+        crop_top_ratio=0,
+        crop_side_ratio=0,
+        scale=0.75,
+    )
