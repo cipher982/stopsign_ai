@@ -8,7 +8,6 @@ import dotenv
 import numpy as np
 from PIL import Image
 from ultralytics import YOLO
-from ultralytics import solutions
 
 dotenv.load_dotenv()
 
@@ -17,6 +16,9 @@ MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
 OUTPUT_VIDEO_PATH = os.getenv("OUTPUT_VIDEO_PATH")
 SAVE_VIDEO = False
 
+os.environ["DISPLAY"] = ":0"
+
+vehicle_classes = [1, 2, 3, 5, 6, 7]
 
 if not RTSP_URL:
     print("Error: RTSP_URL environment variable is not set.")
@@ -73,9 +75,6 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
         print("Error: Could not open video stream")
         sys.exit()
 
-    model = YOLO(MODEL_PATH)
-    names = model.model.names  # type: ignore
-
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
@@ -89,21 +88,14 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
             framesize=(w, h),
         )  # type: ignore
 
-    line_pts = [(600, 800), (700, 600)]
-
-    speed_obj = solutions.SpeedEstimator(
-        reg_pts=line_pts,
-        names=names,
-        view_img=True,
-    )
-
-    vehicle_classes = [1, 2, 3, 5, 6, 7]
-
     signal.signal(signal.SIGINT, signal_handler)
 
+    # Create the model
+    model = YOLO(MODEL_PATH)
+
+    # Begin streaming loop
     frame_count = 0
     inference_times = []
-
     try:
         while True:
             if cap.get(cv2.CAP_PROP_POS_FRAMES) < cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1:
@@ -117,32 +109,34 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
                 continue
 
             processed_frame = preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio)
-            pil_img = Image.fromarray(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB))
+            # pil_img = Image.fromarray(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB))
 
             start_time = time.time()
-            tracks = model.track(
-                source=pil_img,  # type: ignore
+            results = model.track(
+                source=processed_frame,
                 stream=False,
                 persist=True,
                 classes=vehicle_classes,
+                show=False,
             )
-
             end_time = time.time()
             inference_time = end_time - start_time
             inference_times.append(inference_time)
 
+            annotated_frame = results[0].plot()
+
             if draw_grid:
-                draw_gridlines(processed_frame, grid_increment)
+                draw_gridlines(annotated_frame, grid_increment)
 
-            cv2.line(processed_frame, line_pts[0], line_pts[1], (0, 255, 0), 2)
+            # cv2.line(processed_frame, line_pts[0], line_pts[1], (0, 255, 0), 2)
 
-            processed_frame = speed_obj.estimate_speed(processed_frame, tracks)
+            # processed_frame = speed_obj.estimate_speed(processed_frame, tracks)
 
             # cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
-            cv2.imshow("Output", processed_frame)
+            cv2.imshow("Output", annotated_frame)  # type: ignore
 
             if SAVE_VIDEO:
-                video_writer.write(processed_frame)
+                video_writer.write(processed_frame)  # type: ignore
 
             frame_count += 1
 
