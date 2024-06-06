@@ -6,7 +6,6 @@ import time
 import cv2
 import dotenv
 import numpy as np
-from PIL import Image
 from ultralytics import YOLO
 
 dotenv.load_dotenv()
@@ -108,12 +107,11 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
                 cap = open_rtsp_stream(RTSP_URL)
                 continue
 
-            processed_frame = preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio)
-            # pil_img = Image.fromarray(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB))
+            frame = preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio)
 
             start_time = time.time()
             results = model.track(
-                source=processed_frame,
+                source=frame,
                 stream=False,
                 persist=True,
                 classes=vehicle_classes,
@@ -128,15 +126,11 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
             if draw_grid:
                 draw_gridlines(annotated_frame, grid_increment)
 
-            # cv2.line(processed_frame, line_pts[0], line_pts[1], (0, 255, 0), 2)
-
-            # processed_frame = speed_obj.estimate_speed(processed_frame, tracks)
-
-            # cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
-            cv2.imshow("Output", annotated_frame)  # type: ignore
+            cv2.imshow("Output", frame)
+            cv2.waitKey(1)
 
             if SAVE_VIDEO:
-                video_writer.write(processed_frame)  # type: ignore
+                video_writer.write(frame)  # type: ignore
 
             frame_count += 1
 
