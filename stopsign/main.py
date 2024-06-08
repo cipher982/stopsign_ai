@@ -37,7 +37,11 @@ def open_rtsp_stream(url: str) -> cv2.VideoCapture:
     return cap
 
 
-def preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio):
+def preprocess_frame(frame: np.ndarray, scale: float, crop_top_ratio: float, crop_side_ratio: float) -> np.ndarray:
+    """
+    Preprocess the input frame by resizing and cropping.
+    I want to just focus on area around the stop sign.
+    """
     h, w = frame.shape[:2]
     resized_w = int(w * scale)
     resized_h = int(h * scale)
@@ -49,7 +53,11 @@ def preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio):
     return np.ascontiguousarray(cropped_frame)
 
 
-def draw_gridlines(frame, grid_increment):
+def draw_gridlines(frame: np.ndarray, grid_increment: int) -> None:
+    """
+    Draws gridlines on the given frame.
+    Helpful for debugging locations for development.
+    """
     h, w = frame.shape[:2]
     for x in range(0, w, grid_increment):
         cv2.line(frame, (x, 0), (x, h), (128, 128, 128), 1)
