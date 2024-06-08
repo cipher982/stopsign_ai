@@ -1,3 +1,4 @@
+import argparse
 import os
 import signal
 import sys
@@ -13,6 +14,7 @@ dotenv.load_dotenv()
 RTSP_URL = os.getenv("RTSP_URL")
 MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
 OUTPUT_VIDEO_PATH = os.getenv("OUTPUT_VIDEO_PATH")
+SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
 SAVE_VIDEO = False
 
 os.environ["DISPLAY"] = ":0"
@@ -65,10 +67,18 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
-def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, crop_side_ratio=1 / 6):
+def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, crop_side_ratio=1 / 6):
     global cap, video_writer
 
-    cap = open_rtsp_stream(RTSP_URL)
+    if input_source == "live":
+        print(f"Opening RTSP stream: {RTSP_URL}")
+        cap = open_rtsp_stream(RTSP_URL)
+    elif input_source == "file":
+        print(f"Opening video file: {SAMPLE_FILE_PATH}")
+        cap = cv2.VideoCapture(SAMPLE_FILE_PATH)  # type: ignore
+    else:
+        print("Error: Invalid input source")
+        sys.exit(1)
 
     if not cap.isOpened():
         print("Error: Could not open video stream")
@@ -91,8 +101,10 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
 
     # Create the model
     model = YOLO(MODEL_PATH)
+    print("Model loaded successfully")
 
     # Begin streaming loop
+    print("Streaming...")
     frame_count = 0
     inference_times = []
     try:
@@ -152,7 +164,14 @@ def main(draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, cro
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Object detection on live RTSP stream or video file.")
+    parser.add_argument(
+        "input_source", choices=["live", "file"], help="Input source type (live RTSP stream or video file)"
+    )
+    args = parser.parse_args()
+
     main(
+        input_source=args.input_source,
         draw_grid=True,
         grid_increment=100,
         crop_top_ratio=0,
