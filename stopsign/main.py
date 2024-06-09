@@ -23,7 +23,7 @@ vehicle_classes = [1, 2, 3, 5, 6, 7]
 
 if SAVE_VIDEO:
     assert OUTPUT_VIDEO_DIR, "Error: OUTPUT_VIDEO_DIR environment variable is not set."
-    output_video_path = OUTPUT_VIDEO_DIR + f"/output_{int(time.time())}.mp4"
+    output_video_path = OUTPUT_VIDEO_DIR + f"/output_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
 
 if not RTSP_URL:
     print("Error: RTSP_URL environment variable is not set.")
