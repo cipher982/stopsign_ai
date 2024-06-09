@@ -13,9 +13,9 @@ dotenv.load_dotenv()
 
 RTSP_URL = os.getenv("RTSP_URL")
 MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
-OUTPUT_VIDEO_PATH = os.getenv("OUTPUT_VIDEO_PATH")
+OUTPUT_VIDEO_DIR = os.getenv("OUTPUT_VIDEO_DIR")
 SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
-SAVE_VIDEO = False
+SAVE_VIDEO = True
 
 os.environ["DISPLAY"] = ":0"
 
@@ -97,13 +97,14 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     fps = int(cap.get(cv2.CAP_PROP_FPS))
 
     if SAVE_VIDEO:
-        assert OUTPUT_VIDEO_PATH, "Error: OUTPUT_VIDEO_PATH environment variable is not set."
+        assert OUTPUT_VIDEO_DIR, "Error: OUTPUT_VIDEO_PATH environment variable is not set."
         video_writer = cv2.VideoWriter(
-            filename=OUTPUT_VIDEO_PATH,
+            filename=OUTPUT_VIDEO_DIR + f"/output_{int(time.time())}.mp4",
+            apiPreference=cv2.CAP_FFMPEG,  # type: ignore
             fourcc=cv2.VideoWriter_fourcc(*"mp4v"),  # type: ignore
             fps=fps,
-            framesize=(w, h),
-        )  # type: ignore
+            frameSize=(w, h),
+        )
 
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -114,21 +115,34 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     # Begin streaming loop
     print("Streaming...")
     frame_count = 0
+    frame_buffer = []
+    buffer_size = 30
+    prev_frame_time = time.time()
     inference_times = []
     try:
         while True:
-            if cap.get(cv2.CAP_PROP_POS_FRAMES) < cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1:
-                continue
-
             ret, frame = cap.read()
             if not ret:
-                print("Stream read failed, attempting to reconnect...")
-                cap.release()
-                cap = open_rtsp_stream(RTSP_URL)
-                continue
+                print("End of video file reached.")
+                break
 
             frame = preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio)
 
+            # Calculate the timestamp based on the input source
+            if input_source == "live":
+                current_time = time.time()
+                timestamp = current_time - prev_frame_time
+                prev_frame_time = current_time
+            else:  # Video file
+                frame_number = cap.get(cv2.CAP_PROP_POS_FRAMES)
+                timestamp = frame_number / fps
+
+            # Add the frame to the buffer
+            frame_buffer.append((frame, timestamp))
+            if len(frame_buffer) > buffer_size:
+                frame_buffer.pop(0)
+
+            # Run YOLO inference
             start_time = time.time()
             results = model.track(
                 source=frame,
