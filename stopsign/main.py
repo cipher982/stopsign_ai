@@ -21,6 +21,10 @@ os.environ["DISPLAY"] = ":0"
 
 vehicle_classes = [1, 2, 3, 5, 6, 7]
 
+if SAVE_VIDEO:
+    assert OUTPUT_VIDEO_DIR, "Error: OUTPUT_VIDEO_DIR environment variable is not set."
+    output_video_path = OUTPUT_VIDEO_DIR + f"/output_{int(time.time())}.mp4"
+
 if not RTSP_URL:
     print("Error: RTSP_URL environment variable is not set.")
     sys.exit(1)
@@ -69,9 +73,9 @@ def draw_gridlines(frame: np.ndarray, grid_increment: int) -> None:
 
 def signal_handler(sig, frame):
     print("Interrupt signal received. Cleaning up...")
-    cap.release()
-    video_writer.release()
-    cv2.destroyAllWindows()
+    # cap.release()
+    # video_writer.release()
+    # cv2.destroyAllWindows()
     sys.exit(0)
 
 
@@ -99,7 +103,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     if SAVE_VIDEO:
         assert OUTPUT_VIDEO_DIR, "Error: OUTPUT_VIDEO_PATH environment variable is not set."
         video_writer = cv2.VideoWriter(
-            filename=OUTPUT_VIDEO_DIR + f"/output_{int(time.time())}.mp4",
+            filename=output_video_path,  # type: ignore
             apiPreference=cv2.CAP_FFMPEG,  # type: ignore
             fourcc=cv2.VideoWriter_fourcc(*"mp4v"),  # type: ignore
             fps=fps,
@@ -174,6 +178,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     finally:
         cap.release()
         if SAVE_VIDEO:
+            print(f"Output video saved to: {output_video_path}")  # type: ignore
             video_writer.release()
         cv2.destroyAllWindows()
 
