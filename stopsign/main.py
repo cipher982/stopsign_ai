@@ -22,8 +22,7 @@ os.environ["DISPLAY"] = ":0"
 vehicle_classes = [1, 2, 3, 5, 6, 7]
 
 if SAVE_VIDEO:
-    assert OUTPUT_VIDEO_DIR, "Error: OUTPUT_VIDEO_DIR environment variable is not set."
-    output_video_path = OUTPUT_VIDEO_DIR + f"/output_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+    output_video_path = str(OUTPUT_VIDEO_DIR) + f"/output_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
 
 if not RTSP_URL:
     print("Error: RTSP_URL environment variable is not set.")
@@ -73,9 +72,6 @@ def draw_gridlines(frame: np.ndarray, grid_increment: int) -> None:
 
 def signal_handler(sig, frame):
     print("Interrupt signal received. Cleaning up...")
-    # cap.release()
-    # video_writer.release()
-    # cv2.destroyAllWindows()
     sys.exit(0)
 
 
@@ -104,7 +100,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
         assert OUTPUT_VIDEO_DIR, "Error: OUTPUT_VIDEO_PATH environment variable is not set."
         video_writer = cv2.VideoWriter(
             filename=output_video_path,  # type: ignore
-            apiPreference=cv2.CAP_FFMPEG,  # type: ignore
+            apiPreference=cv2.CAP_FFMPEG,
             fourcc=cv2.VideoWriter_fourcc(*"mp4v"),  # type: ignore
             fps=fps,
             frameSize=(w, h),
@@ -120,7 +116,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     print("Streaming...")
     frame_count = 0
     frame_buffer = []
-    buffer_size = 30
+    buffer_size = 5
     prev_frame_time = time.time()
     inference_times = []
     try:
@@ -159,12 +155,20 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
             inference_time = end_time - start_time
             inference_times.append(inference_time)
 
+            boxes = results[0].boxes
+            if boxes:
+                vehicles = [obj for obj in boxes if obj.cls in vehicle_classes]
+            else:
+                vehicles = []
+
+            print(f"Frame {frame_count}: {len(vehicles)} vehicles detected")
+
             annotated_frame = results[0].plot()
 
             if draw_grid:
                 draw_gridlines(annotated_frame, grid_increment)
 
-            cv2.imshow("Output", frame)
+            cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
 
             if SAVE_VIDEO:
