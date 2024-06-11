@@ -3,6 +3,7 @@ import os
 import signal
 import sys
 import time
+from collections import defaultdict
 
 import cv2
 import dotenv
@@ -98,10 +99,11 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
     if SAVE_VIDEO:
         assert OUTPUT_VIDEO_DIR, "Error: OUTPUT_VIDEO_PATH environment variable is not set."
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
         video_writer = cv2.VideoWriter(
             filename=output_video_path,  # type: ignore
             apiPreference=cv2.CAP_FFMPEG,
-            fourcc=cv2.VideoWriter_fourcc(*"mp4v"),  # type: ignore
+            fourcc=fourcc,
             fps=fps,
             frameSize=(w, h),
         )
@@ -111,6 +113,8 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     # Create the model
     model = YOLO(MODEL_PATH)
     print("Model loaded successfully")
+
+    track_history = defaultdict(lambda: [])
 
     # Begin streaming loop
     print("Streaming...")
@@ -128,7 +132,6 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
             frame = preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio)
 
-            # Calculate the timestamp based on the input source
             if input_source == "live":
                 current_time = time.time()
                 timestamp = current_time - prev_frame_time
@@ -146,10 +149,10 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
             start_time = time.time()
             results = model.track(
                 source=frame,
+                tracker="./trackers/bytetrack.yaml",
                 stream=False,
                 persist=True,
                 classes=vehicle_classes,
-                show=False,
             )
             end_time = time.time()
             inference_time = end_time - start_time
@@ -157,22 +160,41 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
             boxes = results[0].boxes
             if boxes:
-                vehicles = [obj for obj in boxes if obj.cls in vehicle_classes]
+                boxes = [obj for obj in boxes if obj.cls in vehicle_classes]
             else:
-                vehicles = []
+                boxes = []
 
-            print(f"Frame {frame_count}: {len(vehicles)} vehicles detected")
+            print(f"Frame {frame_count}: {len(boxes)} vehicles detected")
 
-            annotated_frame = results[0].plot()
+            # Update track history
+            for box in boxes:
+                x, y, w, h = box.xywh[0]
+                track_id = int(box.id.item())
+                track = track_history[track_id]
+                track.append((float(x), float(y)))  # x, y center point
+                if len(track) > 30:  # retain 30 tracks for 30 frames
+                    track.pop(0)
 
+            # Draw the vehicles IDs and bounding boxes
+            frame = results[0].plot()
+
+            # Plot tracking lines
+            for track_id, track in track_history.items():
+                points = np.array(track, dtype=np.int32).reshape((-1, 1, 2))
+                cv2.polylines(frame, [points], isClosed=False, color=(0, 0, 255), thickness=2)
+
+            # Draw the gridlines for debugging
             if draw_grid:
-                draw_gridlines(annotated_frame, grid_increment)
+                draw_gridlines(frame, grid_increment)
 
-            cv2.imshow("Output", annotated_frame)
+            cv2.imshow("Output", frame)
             cv2.waitKey(1)
 
             if SAVE_VIDEO:
-                video_writer.write(frame)  # type: ignore
+                print(f"Frame shape: {frame.shape}")
+                assert frame.size > 0, "Error: Frame is empty"
+                video_writer.write(frame)
+                print(f"Frame {frame_count} written")
 
             frame_count += 1
 
