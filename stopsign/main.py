@@ -65,10 +65,12 @@ def draw_gridlines(frame: np.ndarray, grid_increment: int) -> None:
     h, w = frame.shape[:2]
     for x in range(0, w, grid_increment):
         cv2.line(frame, (x, 0), (x, h), (128, 128, 128), 1)
-        cv2.putText(frame, str(x), (x, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(frame, str(x), (x + 5, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
+        cv2.putText(frame, str(x), (x + 5, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
     for y in range(0, h, grid_increment):
         cv2.line(frame, (0, y), (w, y), (128, 128, 128), 1)
-        cv2.putText(frame, str(y), (5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(frame, str(y), (10, y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
+        cv2.putText(frame, str(y), (10, y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
 
 
 def signal_handler(sig, frame):
@@ -168,11 +170,11 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
             # Update track history
             for box in boxes:
-                x, y, w, h = box.xywh[0]
+                x, y, w, h = box.xywh[0]  # type: ignore
                 track_id = int(box.id.item())
                 track = track_history[track_id]
                 track.append((float(x), float(y)))  # x, y center point
-                if len(track) > 30:  # retain 30 tracks for 30 frames
+                if len(track) > 30:
                     track.pop(0)
 
             # Draw the vehicles IDs and bounding boxes
