@@ -118,6 +118,9 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
     track_history = defaultdict(lambda: [])
 
+    # virtual stop sign line
+    stopsign_line = (650, 450), (500, 500)
+
     # Begin streaming loop
     print("Streaming...")
     frame_count = 0
@@ -165,8 +168,10 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
                 boxes = [obj for obj in boxes if obj.cls in vehicle_classes]
             else:
                 boxes = []
-
             print(f"Frame {frame_count}: {len(boxes)} vehicles detected")
+
+            # Plot the stop sign line
+            cv2.line(frame, stopsign_line[0], stopsign_line[1], (0, 0, 255), 2)
 
             # Update track history
             for box in boxes:
@@ -183,7 +188,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
             # Plot tracking lines
             for track_id, track in track_history.items():
                 points = np.array(track, dtype=np.int32).reshape((-1, 1, 2))
-                cv2.polylines(frame, [points], isClosed=False, color=(0, 0, 255), thickness=2)
+                cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
 
             # Draw the gridlines for debugging
             if draw_grid:
