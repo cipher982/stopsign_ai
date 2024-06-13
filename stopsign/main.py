@@ -118,8 +118,18 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
     track_history = defaultdict(lambda: [])
 
-    # virtual stop sign line
+    # Some constants for stop sign detection
     stopsign_line = (650, 450), (500, 500)
+    stop_box_tolerance = 50  # pixels
+    min_stop_duration = 2  # seconds
+    stop_score_threshold = 5  # pixels
+
+    # Calculate stop box coordinates
+    left_x = min(stopsign_line[0][0], stopsign_line[1][0]) - stop_box_tolerance
+    right_x = max(stopsign_line[0][0], stopsign_line[1][0]) + stop_box_tolerance
+    top_y = min(stopsign_line[0][1], stopsign_line[1][1])
+    bottom_y = max(stopsign_line[0][1], stopsign_line[1][1])
+    stop_box = [(left_x, top_y), (right_x, bottom_y)]
 
     # Begin streaming loop
     print("Streaming...")
@@ -185,10 +195,34 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
             # Draw the vehicles IDs and bounding boxes
             frame = results[0].plot()
 
-            # Plot tracking lines
+            # Path tracking code
             for track_id, track in track_history.items():
                 points = np.array(track, dtype=np.int32).reshape((-1, 1, 2))
                 cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
+
+                # Calculate stop duration and speed
+                stop_duration = 0
+                stopped_frames = 0
+                previous_point = None
+                for point in track:
+                    if left_x <= point[0] <= right_x and top_y <= point[1] <= bottom_y:
+                        stopped_frames += 1
+                        if stopped_frames >= min_stop_duration * fps:
+                            stop_duration += 1 / fps  # Add frame duration
+                    else:
+                        stopped_frames = 0
+
+                    if previous_point is not None:
+                        distance = np.linalg.norm(np.array(point) - np.array(previous_point))
+                        speed = distance / (1 / fps)  # Calculate speed in pixels per second
+                        # Use speed for further analysis or scoring
+                    previous_point = point
+
+                # Classify stop behavior based on stop_duration and/or speed
+                if stop_duration >= min_stop_duration:
+                    print(f"Vehicle {track_id} stopped for {stop_duration:.2f} seconds.")
+                else:
+                    print(f"Vehicle {track_id} did not stop completely.")
 
             # Draw the gridlines for debugging
             if draw_grid:
