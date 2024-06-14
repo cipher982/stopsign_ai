@@ -208,14 +208,14 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
                     if left_x <= point[0] <= right_x and top_y <= point[1] <= bottom_y:
                         stopped_frames += 1
                         if stopped_frames >= min_stop_duration * fps:
-                            stop_duration += 1 / fps  # Add frame duration
+                            stop_duration += 1 / fps
                     else:
                         stopped_frames = 0
 
                     if previous_point is not None:
                         distance = np.linalg.norm(np.array(point) - np.array(previous_point))
-                        speed = distance / (1 / fps)  # Calculate speed in pixels per second
-                        # Use speed for further analysis or scoring
+                        speed = distance / (1 / fps)
+                        # TODO - implement scoring system
                     previous_point = point
 
                 # Classify stop behavior based on stop_duration and/or speed
