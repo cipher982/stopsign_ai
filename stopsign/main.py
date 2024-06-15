@@ -16,7 +16,7 @@ RTSP_URL = os.getenv("RTSP_URL")
 MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
 OUTPUT_VIDEO_DIR = os.getenv("OUTPUT_VIDEO_DIR")
 SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
-SAVE_VIDEO = True
+SAVE_VIDEO = False
 
 os.environ["DISPLAY"] = ":0"
 
@@ -78,7 +78,7 @@ def draw_boxes(frame, boxes, color=(0, 255, 0), thickness=2) -> np.ndarray:
     for box in boxes:
         x1, y1, x2, y2 = map(int, box.xyxy[0])
         cv2.rectangle(frame_with_boxes, (x1, y1), (x2, y2), color, thickness)
-        label = f"{box.cls.item()}: {box.conf.item():.2f}"
+        label = f"{int(box.id.item())}: {box.conf.item():.2f}"
         cv2.putText(frame_with_boxes, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, thickness)
     return frame_with_boxes
 
@@ -127,11 +127,12 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     print("Model loaded successfully")
 
     # Parked car detection parameters
-    parked_threshold = 5  # pixels
+    parked_threshold = 10  # pixels
     parked_frames_threshold = 100
     parked_timeout = 100
     speed_threshold = 2  # pixels per frame
     exclusion_radius = 50  # pixels
+    parked_buffer_frames = 10  # Buffer period for parked detection
 
     # Store the track history, previous positions, and parked car information
     track_history = defaultdict(lambda: [])
@@ -221,22 +222,20 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
                     distance = np.linalg.norm(np.array(current_point) - np.array(previous_point))
                     time_diff = timestamp - previous_timestamp
                     speed = distance / time_diff if time_diff > 0 else 0
-                    distance_to_stop_sign = min(
+                    sign_distance = min(
                         np.linalg.norm(np.array(current_point) - np.array(stop_point)) for stop_point in stopsign_line
                     )
 
-                    if (
-                        distance_to_stop_sign > exclusion_radius
-                        and distance < parked_threshold
-                        and speed < speed_threshold
-                    ):
+                    if sign_distance > exclusion_radius and distance < parked_threshold and speed < speed_threshold:
                         if track_id in parked_cars:
                             parked_cars[track_id]["frames_parked"] += 1
                         else:
                             parked_cars[track_id] = {"frames_parked": 1, "timeout": 0}
                     else:
                         if track_id in parked_cars:
-                            del parked_cars[track_id]
+                            parked_cars[track_id]["frames_parked"] -= parked_buffer_frames
+                            if parked_cars[track_id]["frames_parked"] <= 0:
+                                del parked_cars[track_id]
 
                 previous_positions[track_id] = current_point
                 previous_timestamps[track_id] = timestamp
