@@ -222,9 +222,10 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
                     distance = np.linalg.norm(np.array(current_point) - np.array(previous_point))
                     time_diff = timestamp - previous_timestamp
                     speed = distance / time_diff if time_diff > 0 else 0
-                    sign_distance = min(
+                    sign_distances = [
                         np.linalg.norm(np.array(current_point) - np.array(stop_point)) for stop_point in stopsign_line
-                    )
+                    ]
+                    sign_distance = min(sign_distances)  # type: ignore
 
                     if sign_distance > exclusion_radius and distance < parked_threshold and speed < speed_threshold:
                         if track_id in parked_cars:
