@@ -201,7 +201,7 @@ class ParkedTracker:
         return stop_duration
 
 
-class StopSignDetector:
+class Stopsign:
     def __init__(
         self,
         stopsign_line: tuple,
@@ -326,7 +326,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     stop_box_tolerance = 50  # pixels
     min_stop_duration = 2  # seconds
 
-    stopsign_detector = StopSignDetector(
+    stopsign = Stopsign(
         stopsign_line=stopsign_line,
         stop_box_tolerance=stop_box_tolerance,
         min_stop_duration=min_stop_duration,
@@ -374,9 +374,9 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
             # Calculate stop duration for each vehicle
             for track_id in tracked_vehicles:
                 stop_duration = parked_tracker.calculate_stop_duration(
-                    track_id, fps, stopsign_detector.stop_box, stopsign_detector.min_stop_duration
+                    track_id, fps, stopsign.stop_box, stopsign.min_stop_duration
                 )  # Pass min_stop_duration here
-                if stop_duration >= stopsign_detector.min_stop_duration:
+                if stop_duration >= stopsign.min_stop_duration:
                     print(f"Vehicle {track_id} stopped for {stop_duration:.2f} seconds.")
                 else:
                     print(f"Vehicle {track_id} did not stop completely.")
@@ -385,7 +385,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
                 frame,
                 tracked_vehicles,
                 parked_tracker.track_history,
-                stopsign_detector.stopsign_line,
+                stopsign.stopsign_line,
                 boxes,
             )
 
