@@ -10,6 +10,12 @@ import dotenv
 import numpy as np
 from ultralytics import YOLO
 
+from stopsign.utils.video import draw_boxes
+from stopsign.utils.video import draw_gridlines
+from stopsign.utils.video import open_rtsp_stream
+from stopsign.utils.video import preprocess_frame
+from stopsign.utils.video import signal_handler
+
 dotenv.load_dotenv()
 
 RTSP_URL = os.getenv("RTSP_URL")
@@ -34,171 +40,38 @@ if not MODEL_PATH:
     sys.exit(1)
 
 
-def open_rtsp_stream(url: str) -> cv2.VideoCapture:
-    cap = cv2.VideoCapture(url)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 60000)
-    return cap
-
-
-def preprocess_frame(frame: np.ndarray, scale: float, crop_top_ratio: float, crop_side_ratio: float) -> np.ndarray:
-    """
-    Preprocess the input frame by resizing and cropping.
-    I want to just focus on area around the stop sign.
-    """
-    h, w = frame.shape[:2]
-    resized_w = int(w * scale)
-    resized_h = int(h * scale)
-    resized_frame = cv2.resize(frame, (resized_w, resized_h))
-
-    crop_top = int(resized_h * crop_top_ratio)
-    crop_side = int(resized_w * crop_side_ratio)
-    cropped_frame = resized_frame[crop_top:, crop_side : resized_w - crop_side]
-    return np.ascontiguousarray(cropped_frame)
-
-
-def draw_gridlines(frame: np.ndarray, grid_increment: int) -> None:
-    """
-    Draws gridlines on the given frame.
-    Helpful for debugging locations for development.
-    """
-    h, w = frame.shape[:2]
-    for x in range(0, w, grid_increment):
-        cv2.line(frame, (x, 0), (x, h), (128, 128, 128), 1)
-        cv2.putText(frame, str(x), (x + 5, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
-        cv2.putText(frame, str(x), (x + 5, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-    for y in range(0, h, grid_increment):
-        cv2.line(frame, (0, y), (w, y), (128, 128, 128), 1)
-        cv2.putText(frame, str(y), (10, y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
-        cv2.putText(frame, str(y), (10, y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-
-
-def draw_boxes(frame, boxes, color=(0, 255, 0), thickness=2) -> np.ndarray:
-    frame_with_boxes = frame.copy()
-    for box in boxes:
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        cv2.rectangle(frame_with_boxes, (x1, y1), (x2, y2), color, thickness)
-        label = f"{int(box.id.item())}: {box.conf.item():.2f}"
-        cv2.putText(frame_with_boxes, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, thickness)
-    return frame_with_boxes
-
-
-def signal_handler(sig, frame):
-    print("Interrupt signal received. Cleaning up...")
-    sys.exit(0)
-
-
-class CarTracker:
+class Car:
     def __init__(
         self,
-        stopsign_line: tuple,
+        id: int,
         parked_threshold: int,
         parked_frames_threshold: int,
-        parked_timeout: int,
-        speed_threshold: int,
-        exclusion_radius: int,
-        parked_buffer_frames: int,
     ):
-        # Parked car detection parameters
-        self.parked_threshold = parked_threshold  # pixels
+        self.id = id
+        self.location = (0, 0)
+        self.speed = 0
+        self.is_parked = False
+        self.frames_parked = 0
+        self.track = []  # Store track history
+        self.parked_threshold = parked_threshold
         self.parked_frames_threshold = parked_frames_threshold
-        self.parked_timeout = parked_timeout
-        self.speed_threshold = speed_threshold  # pixels per frame
-        self.exclusion_radius = exclusion_radius  # pixels
-        self.parked_buffer_frames = parked_buffer_frames  # Buffer period for parked detection
-        self.stopsign_line = stopsign_line
 
-        # Store the track history, previous positions, and parked car information
-        self.track_history = defaultdict(lambda: [])
-        self.previous_positions = {}
-        self.previous_timestamps = {}
-        self.parked_cars = {}
-
-    def update(self, boxes, timestamp):
-        for box in boxes:
-            x, y, w, h = box.xywh[0]  # type: ignore
-            track_id = int(box.id.item())
-            track = self.track_history[track_id]
-            current_point = (float(x), float(y))
-            track.append(current_point)  # x, y center point
-            if len(track) > 30:  # retain 30 tracks for 30 frames
-                track.pop(0)
-
-            # Parked car detection
-            if track_id in self.previous_positions:
-                previous_point = self.previous_positions[track_id]
-                previous_timestamp = self.previous_timestamps[track_id]
-                distance = np.linalg.norm(np.array(current_point) - np.array(previous_point))
-                time_diff = timestamp - previous_timestamp
-                speed = distance / time_diff if time_diff > 0 else 0
-                sign_distances = [
-                    np.linalg.norm(np.array(current_point) - np.array(stop_point)) for stop_point in self.stopsign_line
-                ]
-                sign_distance = min(sign_distances)  # type: ignore
-
-                if (
-                    sign_distance > self.exclusion_radius
-                    and distance < self.parked_threshold
-                    and speed < self.speed_threshold
-                ):
-                    if track_id in self.parked_cars:
-                        self.parked_cars[track_id]["frames_parked"] += 1
-                    else:
-                        self.parked_cars[track_id] = {"frames_parked": 1, "timeout": 0}
-                else:
-                    if track_id in self.parked_cars:
-                        self.parked_cars[track_id]["frames_parked"] -= self.parked_buffer_frames
-                        if self.parked_cars[track_id]["frames_parked"] <= 0:
-                            del self.parked_cars[track_id]
-
-            self.previous_positions[track_id] = current_point
-            self.previous_timestamps[track_id] = timestamp
-
-        # Update timeout for parked cars
-        for track_id in list(self.parked_cars.keys()):
-            parked_car = self.parked_cars[track_id]
-
-            # Check if the car has been parked for the required number of frames
-            if parked_car["frames_parked"] >= self.parked_frames_threshold:
-                # Increment the timeout counter for the parked car
-                parked_car["timeout"] += 1
-
-                # If the timeout exceeds the allowed limit, remove the car from parked cars
-                if parked_car["timeout"] > self.parked_timeout:
-                    del self.parked_cars[track_id]
-
-    def get_tracked_cars(self):
-        return [track_id for track_id in self.track_history if track_id not in self.parked_cars]
-
-    def calculate_stop_duration(
+    def update(
         self,
-        track_id: int,
-        fps: int,
-        stop_box: tuple,
-        min_stop_duration: int,
-    ) -> float:
-        # Pass min_stop_duration as an argument
-        left_x, top_y = stop_box[0]
-        right_x, bottom_y = stop_box[1]
-        # Calculate stop duration and speed
-        stop_duration = 0
-        stopped_frames = 0
-        previous_point = None
-        track = self.track_history[track_id]
-        for point in track:
-            if left_x <= point[0] <= right_x and top_y <= point[1] <= bottom_y:
-                stopped_frames += 1
-                if stopped_frames >= min_stop_duration * fps:  # Use the passed min_stop_duration
-                    stop_duration += 1 / fps
-            else:
-                stopped_frames = 0
+        location: tuple,
+        speed: float,
+    ):
+        self.location = location
+        self.speed = speed
+        self.track.append(location)  # Update track history
 
-            if previous_point is not None:
-                distance = np.linalg.norm(np.array(point) - np.array(previous_point))
-                speed = distance / (1 / fps)
-                # TODO - implement scoring system
-            previous_point = point
-        return stop_duration
+        if self.speed < self.parked_threshold:
+            self.frames_parked += 1
+        else:
+            self.frames_parked = 0
+
+        if self.frames_parked >= self.parked_frames_threshold:
+            self.is_parked = True
 
 
 class Stopsign:
@@ -219,6 +92,46 @@ class Stopsign:
         top_y = min(self.stopsign_line[0][1], self.stopsign_line[1][1])
         bottom_y = max(self.stopsign_line[0][1], self.stopsign_line[1][1])
         self.stop_box = ((left_x, top_y), (right_x, bottom_y))
+
+
+def stop_score(car: Car, stop_box: tuple, min_stop_frames: int, fps: int) -> int:
+    """
+    Calculate a stop score for a car based on its behavior at a stop sign.
+
+    Score is determined by an algorithm considering speed and stop duration,
+    ranging from 1 (no stop) to 10 (perfect stop).
+
+    Args:
+        car (Car): The car object.
+        stop_box (tuple): Tuple defining the top-left and bottom-right corners of the stop box.
+        min_stop_frames (int): Minimum number of frames stopped to be considered a complete stop.
+        fps (int): Frames per second of the video.
+
+    Returns:
+        int: A score from 1 to 10 based on the car's stopping behavior.
+    """
+
+    left_x, top_y = stop_box[0]
+    right_x, bottom_y = stop_box[1]
+
+    # Check if the car is within the stop box
+    if left_x <= car.location[0] <= right_x and top_y <= car.location[1] <= bottom_y:
+        if car.speed == 0:
+            car.frames_parked += 1
+        else:
+            car.frames_parked = 0
+
+        # Score algorithm:
+        # - Full points if stopped for minimum duration
+        # - Deductions based on speed (higher speed = lower score)
+        # - Minimum score of 1
+        stop_duration_score = min(car.frames_parked / min_stop_frames, 1) * 10
+        speed_score = max(10 - int(car.speed), 1)  # Assuming speed is in pixels/frame, adjust as needed
+        score = int(stop_duration_score * 0.7 + speed_score * 0.3)  # Weighting towards stop duration
+        return min(score, 10)  # Cap at 10
+    else:
+        car.frames_parked = 0
+        return 1  # Not at the stop sign yet
 
 
 def process_frame(
@@ -248,7 +161,7 @@ def process_frame(
     return frame, boxes
 
 
-def visualize(frame, tracked_cars, track_history, stopsign_line, boxes):
+def visualize(frame, tracked_cars, track_history, stopsign_line, boxes) -> np.ndarray:
     # Plot the stop sign line
     cv2.line(frame, stopsign_line[0], stopsign_line[1], (0, 0, 255), 2)
 
@@ -306,20 +219,10 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     stopsign_line = ((650, 450), (500, 500))
     parked_threshold = 500  # pixels
     parked_frames_threshold = 150
-    parked_timeout = 100
-    speed_threshold = 2  # pixels per frame
-    exclusion_radius = 50  # pixels
-    parked_buffer_frames = 10  # Buffer period for parked detection
-
-    parked_tracker = CarTracker(
-        stopsign_line=stopsign_line,
-        parked_threshold=parked_threshold,
-        parked_frames_threshold=parked_frames_threshold,
-        parked_timeout=parked_timeout,
-        speed_threshold=speed_threshold,
-        exclusion_radius=exclusion_radius,
-        parked_buffer_frames=parked_buffer_frames,
-    )
+    # parked_timeout = 100
+    # speed_threshold = 2  # pixels per frame
+    # exclusion_radius = 50  # pixels
+    # parked_buffer_frames = 10  # Buffer period for parked detection
 
     stop_box_tolerance = 50  # pixels
     min_stop_duration = 2  # seconds
@@ -332,6 +235,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
     # Begin streaming loop
     print("Streaming...")
+    cars = {}
     frame_count = 0
     frame_buffer = []
     buffer_size = 5
@@ -365,26 +269,36 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
                 vehicle_classes,
             )
 
-            # Update track history and detect parked cars
-            parked_tracker.update(boxes, timestamp)
-            tracked_cars = parked_tracker.get_tracked_cars()
+            # Update or create car objects
+            for box in boxes:
+                track_id = int(box.id.item())
+                x, y, w, h = box.xywh[0]  # type: ignore
+                location = (float(x), float(y))
 
-            # Calculate stop duration for each car
-            for track_id in tracked_cars:
-                stop_duration = parked_tracker.calculate_stop_duration(
-                    track_id, fps, stopsign.stop_box, stopsign.min_stop_duration
-                )  # Pass min_stop_duration here
-                if stop_duration >= stopsign.min_stop_duration:
-                    print(f"car {track_id} stopped for {stop_duration:.2f} seconds.")
+                if track_id in cars:
+                    car = cars[track_id]
                 else:
-                    print(f"car {track_id} did not stop completely.")
+                    car = Car(track_id, parked_threshold, parked_frames_threshold)
+                    cars[track_id] = car
 
+                # Calculate speed (using car's track history)
+                if car.track:
+                    previous_point = car.track[-1]
+                    distance = np.linalg.norm(np.array(location) - np.array(previous_point))
+                    speed = float(distance / timestamp if timestamp > 0 else 0)
+                else:
+                    speed = 0.0
+
+                car.update(location, speed)
+
+            # Visualize only non-parked cars
+            non_parked_cars = [car for car in cars.values() if not car.is_parked]
             annotated_frame = visualize(
                 frame,
-                tracked_cars,
-                parked_tracker.track_history,
+                [car.id for car in non_parked_cars],
+                {car.id: car.track for car in non_parked_cars},
                 stopsign.stopsign_line,
-                boxes,
+                [box for box in boxes if int(box.id.item()) in [car.id for car in non_parked_cars]],
             )
 
             # Draw the gridlines for debugging
