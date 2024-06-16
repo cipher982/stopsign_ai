@@ -1,0 +1,23 @@
+video_processing:
+  scale: 0.75
+  crop_top_ratio: 0.5
+  crop_side_ratio: 0.1667
+  buffer_size: 5 # number of frames to buffer
+
+stopsign_detection:
+  stopsign_line: [[650, 450], [500, 500]]
+  stop_box_tolerance: 50 # pixels
+  min_stop_duration: 2  # seconds
+  movement_allowance: 500  # pixels
+  stationary_frame_limit: 150
+
+output:
+  save_video: true
+
+debugging_visualization:
+  draw_grid: true
+  grid_increment: 100
+
+stream_settings:
+  fps: 15
+  vehicle_classes: [1, 2, 3, 5, 6, 7]

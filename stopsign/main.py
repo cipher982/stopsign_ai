@@ -3,49 +3,59 @@ import os
 import signal
 import sys
 import time
-from collections import defaultdict
 
 import cv2
 import dotenv
 import numpy as np
+import yaml
 from ultralytics import YOLO
 
+from stopsign.utils.video import crop_scale_frame
 from stopsign.utils.video import draw_boxes
 from stopsign.utils.video import draw_gridlines
 from stopsign.utils.video import open_rtsp_stream
-from stopsign.utils.video import preprocess_frame
 from stopsign.utils.video import signal_handler
 
 dotenv.load_dotenv()
 
 RTSP_URL = os.getenv("RTSP_URL")
 MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
-OUTPUT_VIDEO_DIR = os.getenv("OUTPUT_VIDEO_DIR")
 SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
-SAVE_VIDEO = False
+OUTPUT_VIDEO_DIR = os.getenv("OUTPUT_VIDEO_DIR")
 
 os.environ["DISPLAY"] = ":0"
 
-vehicle_classes = [1, 2, 3, 5, 6, 7]
 
-if SAVE_VIDEO:
-    output_video_path = str(OUTPUT_VIDEO_DIR) + f"/output_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+class Config:
+    def __init__(self, config_path):
+        with open(config_path, "r") as file:
+            config = yaml.safe_load(file)
 
-if not RTSP_URL:
-    print("Error: RTSP_URL environment variable is not set.")
-    sys.exit(1)
+        self.scale = config["video_processing"]["scale"]
+        self.crop_top_ratio = config["video_processing"]["crop_top_ratio"]
+        self.crop_side_ratio = config["video_processing"]["crop_side_ratio"]
+        self.buffer_size = config["video_processing"]["buffer_size"]
 
-if not MODEL_PATH:
-    print("Error: YOLO_MODEL_PATH environment variable is not set.")
-    sys.exit(1)
+        self.stopsign_line = tuple(tuple(i) for i in config["stopsign_detection"]["stopsign_line"])
+        self.stop_box_tolerance = config["stopsign_detection"]["stop_box_tolerance"]
+        self.min_stop_duration = config["stopsign_detection"]["min_stop_duration"]
+        self.movement_allowance = config["stopsign_detection"]["movement_allowance"]
+        self.stationary_frame_limit = config["stopsign_detection"]["stationary_frame_limit"]
+
+        self.save_video = config["output"]["save_video"]
+
+        self.draw_grid = config["debugging_visualization"]["draw_grid"]
+        self.grid_increment = config["debugging_visualization"]["grid_increment"]
+
+        self.fps = config["stream_settings"]["fps"]
+        self.vehicle_classes = config["stream_settings"]["vehicle_classes"]
 
 
 class Car:
     def __init__(
         self,
         id: int,
-        parked_threshold: int,
-        parked_frames_threshold: int,
+        config: Config,
     ):
         self.id = id
         self.location = (0, 0)
@@ -53,8 +63,8 @@ class Car:
         self.is_parked = False
         self.frames_parked = 0
         self.track = []  # Store track history
-        self.parked_threshold = parked_threshold
-        self.parked_frames_threshold = parked_frames_threshold
+        self.movement_allowance = config.movement_allowance
+        self.stationary_frame_limit = config.stationary_frame_limit
 
     def update(
         self,
@@ -65,12 +75,13 @@ class Car:
         self.speed = speed
         self.track.append(location)  # Update track history
 
-        if self.speed < self.parked_threshold:
+        if self.speed < self.movement_allowance:
             self.frames_parked += 1
         else:
             self.frames_parked = 0
+            self.is_parked = False  # Reset parked status if the car moves
 
-        if self.frames_parked >= self.parked_frames_threshold:
+        if self.frames_parked >= self.stationary_frame_limit:
             self.is_parked = True
 
 
@@ -142,7 +153,7 @@ def process_frame(
     crop_side_ratio: float,
     vehicle_classes: list,
 ) -> tuple:
-    frame = preprocess_frame(frame, scale, crop_top_ratio, crop_side_ratio)
+    frame = crop_scale_frame(frame, scale, crop_top_ratio, crop_side_ratio)
 
     # Run YOLO inference
     results = model.track(
@@ -178,10 +189,13 @@ def visualize(frame, tracked_cars, track_history, stopsign_line, boxes) -> np.nd
     return annotated_frame
 
 
-def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_ratio=0.5, crop_side_ratio=1 / 6):
+def main(input_source, config: Config):
     global cap, video_writer
 
     if input_source == "live":
+        if not RTSP_URL:
+            print("Error: RTSP_URL environment variable is not set.")
+            sys.exit(1)
         print(f"Opening RTSP stream: {RTSP_URL}")
         cap = open_rtsp_stream(RTSP_URL)
     elif input_source == "file":
@@ -195,19 +209,23 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
         print("Error: Could not open video stream")
         sys.exit()
 
+    if not MODEL_PATH:
+        print("Error: YOLO_MODEL_PATH environment variable is not set.")
+        sys.exit(1)
+
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-    if SAVE_VIDEO:
-        assert OUTPUT_VIDEO_DIR, "Error: OUTPUT_VIDEO_PATH environment variable is not set."
+    if config.save_video:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
+        output_file_name = f"{OUTPUT_VIDEO_DIR}/output_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
         video_writer = cv2.VideoWriter(
-            filename=output_video_path,  # type: ignore
+            filename=output_file_name,
             apiPreference=cv2.CAP_FFMPEG,
             fourcc=fourcc,
-            fps=fps,
-            frameSize=(w, h),
+            fps=config.fps,
+            frameSize=(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))),
         )
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -216,21 +234,17 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     model = YOLO(MODEL_PATH)
     print("Model loaded successfully")
 
-    stopsign_line = ((650, 450), (500, 500))
-    parked_threshold = 500  # pixels
-    parked_frames_threshold = 150
-    # parked_timeout = 100
-    # speed_threshold = 2  # pixels per frame
-    # exclusion_radius = 50  # pixels
-    # parked_buffer_frames = 10  # Buffer period for parked detection
+    # stopsign_line = ((650, 450), (500, 500))
+    # movement_allowance = 500  # pixels
+    # stationary_frame_limit = 150
 
-    stop_box_tolerance = 50  # pixels
-    min_stop_duration = 2  # seconds
+    # stop_box_tolerance = 50  # pixels
+    # min_stop_duration = 2  # seconds
 
     stopsign = Stopsign(
-        stopsign_line=stopsign_line,
-        stop_box_tolerance=stop_box_tolerance,
-        min_stop_duration=min_stop_duration,
+        stopsign_line=config.stopsign_line,
+        stop_box_tolerance=config.stop_box_tolerance,
+        min_stop_duration=config.min_stop_duration,
     )
 
     # Begin streaming loop
@@ -260,13 +274,15 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
             if len(frame_buffer) > buffer_size:
                 frame_buffer.pop(0)
 
+            print(f"Frame {frame_count} - Timestamp: {timestamp:.2f}s")
+
             frame, boxes = process_frame(
-                model,
-                frame,
-                scale,
-                crop_top_ratio,
-                crop_side_ratio,
-                vehicle_classes,
+                model=model,
+                frame=frame,
+                scale=config.scale,
+                crop_top_ratio=config.crop_top_ratio,
+                crop_side_ratio=config.crop_side_ratio,
+                vehicle_classes=config.vehicle_classes,
             )
 
             # Update or create car objects
@@ -278,7 +294,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
                 if track_id in cars:
                     car = cars[track_id]
                 else:
-                    car = Car(track_id, parked_threshold, parked_frames_threshold)
+                    car = Car(id=track_id, config=config)
                     cars[track_id] = car
 
                 # Calculate speed (using car's track history)
@@ -302,13 +318,16 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
             )
 
             # Draw the gridlines for debugging
-            if draw_grid:
-                draw_gridlines(annotated_frame, grid_increment)
+            if config.draw_grid:
+                draw_gridlines(annotated_frame, config.grid_increment)
 
             cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
 
-            if SAVE_VIDEO:
+            if frame_count == 108:
+                print("Pausing...")
+
+            if config.save_video:
                 print(f"Frame shape: {frame.shape}")
                 assert frame.size > 0, "Error: Frame is empty"
                 video_writer.write(annotated_frame)
@@ -321,8 +340,8 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
     finally:
         cap.release()
-        if SAVE_VIDEO:
-            print(f"Output video saved to: {output_video_path}")  # type: ignore
+        if config.save_video:
+            print(f"Output video saved to: {output_file_name}")  # type: ignore
             video_writer.release()
         cv2.destroyAllWindows()
 
@@ -334,11 +353,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    config = Config("./config.yaml")
+
     main(
         input_source=args.input_source,
-        draw_grid=True,
-        grid_increment=100,
-        crop_top_ratio=0,
-        crop_side_ratio=0,
-        scale=0.75,
+        config=config,
+        # draw_grid=True,
+        # grid_increment=100,
+        # crop_top_ratio=0,
+        # crop_side_ratio=0,
+        # scale=0.75,
     )

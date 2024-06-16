@@ -16,7 +16,7 @@ def open_rtsp_stream(url: str) -> cv2.VideoCapture:
     return cap
 
 
-def preprocess_frame(frame: np.ndarray, scale: float, crop_top_ratio: float, crop_side_ratio: float) -> np.ndarray:
+def crop_scale_frame(frame: np.ndarray, scale: float, crop_top_ratio: float, crop_side_ratio: float) -> np.ndarray:
     """
     Preprocess the input frame by resizing and cropping.
     I want to just focus on area around the stop sign.
