@@ -88,7 +88,7 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
-class ParkedTracker:
+class CarTracker:
     def __init__(
         self,
         stopsign_line: tuple,
@@ -167,7 +167,7 @@ class ParkedTracker:
                 if parked_car["timeout"] > self.parked_timeout:
                     del self.parked_cars[track_id]
 
-    def get_tracked_vehicles(self):
+    def get_tracked_cars(self):
         return [track_id for track_id in self.track_history if track_id not in self.parked_cars]
 
     def calculate_stop_duration(
@@ -248,18 +248,18 @@ def process_frame(
     return frame, boxes
 
 
-def visualize(frame, tracked_vehicles, track_history, stopsign_line, boxes):
+def visualize(frame, tracked_cars, track_history, stopsign_line, boxes):
     # Plot the stop sign line
     cv2.line(frame, stopsign_line[0], stopsign_line[1], (0, 0, 255), 2)
 
     # Filter out parked cars from boxes before plotting
-    non_parked_boxes = [box for box in boxes if box.id.item() in tracked_vehicles]
+    non_parked_boxes = [box for box in boxes if box.id.item() in tracked_cars]
 
     # Plot the boxes on the frame
     annotated_frame = draw_boxes(frame, non_parked_boxes)
 
     # Path tracking code
-    for track_id in tracked_vehicles:
+    for track_id in tracked_cars:
         points = np.array(track_history[track_id], dtype=np.int32).reshape((-1, 1, 2))
         cv2.polylines(annotated_frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
     return annotated_frame
@@ -303,9 +303,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     model = YOLO(MODEL_PATH)
     print("Model loaded successfully")
 
-    # Initialize VehicleTracker
     stopsign_line = ((650, 450), (500, 500))
-
     parked_threshold = 500  # pixels
     parked_frames_threshold = 150
     parked_timeout = 100
@@ -313,7 +311,7 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
     exclusion_radius = 50  # pixels
     parked_buffer_frames = 10  # Buffer period for parked detection
 
-    parked_tracker = ParkedTracker(
+    parked_tracker = CarTracker(
         stopsign_line=stopsign_line,
         parked_threshold=parked_threshold,
         parked_frames_threshold=parked_frames_threshold,
@@ -369,21 +367,21 @@ def main(input_source, draw_grid=False, grid_increment=100, scale=1.0, crop_top_
 
             # Update track history and detect parked cars
             parked_tracker.update(boxes, timestamp)
-            tracked_vehicles = parked_tracker.get_tracked_vehicles()
+            tracked_cars = parked_tracker.get_tracked_cars()
 
-            # Calculate stop duration for each vehicle
-            for track_id in tracked_vehicles:
+            # Calculate stop duration for each car
+            for track_id in tracked_cars:
                 stop_duration = parked_tracker.calculate_stop_duration(
                     track_id, fps, stopsign.stop_box, stopsign.min_stop_duration
                 )  # Pass min_stop_duration here
                 if stop_duration >= stopsign.min_stop_duration:
-                    print(f"Vehicle {track_id} stopped for {stop_duration:.2f} seconds.")
+                    print(f"car {track_id} stopped for {stop_duration:.2f} seconds.")
                 else:
-                    print(f"Vehicle {track_id} did not stop completely.")
+                    print(f"car {track_id} did not stop completely.")
 
             annotated_frame = visualize(
                 frame,
-                tracked_vehicles,
+                tracked_cars,
                 parked_tracker.track_history,
                 stopsign.stopsign_line,
                 boxes,
