@@ -1,7 +1,7 @@
 video_processing:
   scale: 0.75
-  crop_top_ratio: 0.5
-  crop_side_ratio: 0.1667
+  crop_top_ratio: 0
+  crop_side_ratio: 0
   buffer_size: 5 # number of frames to buffer
 
 stopsign_detection:
