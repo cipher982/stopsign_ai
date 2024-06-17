@@ -84,6 +84,12 @@ class Car:
         if self.frames_parked >= self.stationary_frame_limit:
             self.is_parked = True
 
+        pass
+
+    def __repr__(self):
+        x, y = self.location
+        return f"Car {self.id} @ ({x:.2f}, {y:.2f}) (Speed: {self.speed:.1f}px/s, Parked: {self.is_parked})"
+
 
 class Stopsign:
     def __init__(
@@ -153,6 +159,7 @@ def process_frame(
     crop_side_ratio: float,
     vehicle_classes: list,
 ) -> tuple:
+    # Initial frame preprocessing
     frame = crop_scale_frame(frame, scale, crop_top_ratio, crop_side_ratio)
 
     # Run YOLO inference
@@ -164,6 +171,7 @@ def process_frame(
         classes=vehicle_classes,
     )
 
+    # Filter out non-vehicle classes
     boxes = results[0].boxes
     if boxes:
         boxes = [obj for obj in boxes if obj.cls in vehicle_classes]
@@ -261,6 +269,7 @@ def main(input_source, config: Config):
                 print("End of video file reached.")
                 break
 
+            # Get the timestamp for the frame
             if input_source == "live":
                 current_time = time.time()
                 timestamp = current_time - prev_frame_time
@@ -276,6 +285,7 @@ def main(input_source, config: Config):
 
             print(f"Frame {frame_count} - Timestamp: {timestamp:.2f}s")
 
+            # Crop, Scale, Model the frame
             frame, boxes = process_frame(
                 model=model,
                 frame=frame,
@@ -302,6 +312,7 @@ def main(input_source, config: Config):
                     previous_point = car.track[-1]
                     distance = np.linalg.norm(np.array(location) - np.array(previous_point))
                     speed = float(distance / timestamp if timestamp > 0 else 0)
+                    print(f"Car {track_id} - dist: {distance:.2f}px, speed: {speed:.2f}px/s")
                 else:
                     speed = 0.0
 
@@ -328,15 +339,14 @@ def main(input_source, config: Config):
                 print("Pausing...")
 
             if config.save_video:
-                print(f"Frame shape: {frame.shape}")
                 assert frame.size > 0, "Error: Frame is empty"
                 video_writer.write(annotated_frame)
-                print(f"Frame {frame_count} written")
 
             frame_count += 1
 
     except Exception as e:
         print(f"An error occurred: {str(e)}")
+        raise e
 
     finally:
         cap.release()
