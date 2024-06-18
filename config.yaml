@@ -11,6 +11,9 @@ stopsign_detection:
   movement_allowance: 5  # pixels / second
   frames_before_parked: 15
 
+tracking:
+  use_kf: false
+
 output:
   save_video: true
 
