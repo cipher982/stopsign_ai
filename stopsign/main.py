@@ -12,7 +12,7 @@ from ultralytics import YOLO
 
 from stopsign.kalman_filter import KalmanFilterWrapper
 from stopsign.utils.video import crop_scale_frame
-from stopsign.utils.video import draw_boxes
+from stopsign.utils.video import draw_box
 from stopsign.utils.video import draw_gridlines
 from stopsign.utils.video import open_rtsp_stream
 from stopsign.utils.video import signal_handler
@@ -181,25 +181,30 @@ def process_frame(
     return frame, boxes
 
 
-def visualize(frame, tracked_cars, track_history, stopsign_line, boxes, frame_number) -> np.ndarray:
+def visualize(frame, cars, boxes, stopsign_line, n_frame) -> np.ndarray:
     # Plot the stop sign line
     cv2.line(frame, stopsign_line[0], stopsign_line[1], (0, 0, 255), 2)
 
-    # Filter out parked cars from boxes before plotting
-    non_parked_boxes = [box for box in boxes if box.id.item() in tracked_cars]
-
-    # Plot the boxes on the frame
-    annotated_frame = draw_boxes(frame, non_parked_boxes)
+    # Draw boxes for each car
+    for box in boxes:
+        car = cars[int(box.id.item())]
+        if car.is_parked:
+            draw_box(frame, car, box, color=(255, 255, 255), thickness=1)  # parked cars
+        else:
+            draw_box(frame, car, box, color=(0, 255, 0), thickness=2)  # moving cars
 
     # Path tracking code
-    for track_id in tracked_cars:
-        points = np.array(track_history[track_id], dtype=np.int32).reshape((-1, 1, 2))
-        cv2.polylines(annotated_frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
+    for id in cars:
+        car = cars[id]
+        if cars[id].is_parked:
+            continue
+        points = np.array(car.track, dtype=np.int32).reshape((-1, 1, 2))
+        cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
 
     # Display the frame number on image
-    cv2.putText(annotated_frame, f"Frame: {frame_number}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    cv2.putText(frame, f"Frame: {n_frame}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-    return annotated_frame
+    return frame
 
 
 def main(input_source, config: Config):
@@ -317,13 +322,11 @@ def main(input_source, config: Config):
                 car.update(location, speed)
 
             # Visualize only non-parked cars
-            non_parked_cars = [car for car in cars.values() if not car.is_parked]
             annotated_frame = visualize(
                 frame,
-                [car.id for car in non_parked_cars],
-                {car.id: car.track for car in non_parked_cars},
+                cars,
+                boxes,
                 stopsign.stopsign_line,
-                [box for box in boxes if int(box.id.item()) in [car.id for car in non_parked_cars]],
                 frame_count,
             )
 
@@ -334,7 +337,7 @@ def main(input_source, config: Config):
             cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
 
-            if frame_count == 45:
+            if frame_count == 100:
                 print("Pausing...")
 
             if config.save_video:
@@ -367,9 +370,4 @@ if __name__ == "__main__":
     main(
         input_source=args.input_source,
         config=config,
-        # draw_grid=True,
-        # grid_increment=100,
-        # crop_top_ratio=0,
-        # crop_side_ratio=0,
-        # scale=0.75,
     )
