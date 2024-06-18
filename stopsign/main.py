@@ -10,6 +10,7 @@ import numpy as np
 import yaml
 from ultralytics import YOLO
 
+from stopsign.kalman_filter import KalmanFilterWrapper
 from stopsign.utils.video import crop_scale_frame
 from stopsign.utils.video import draw_boxes
 from stopsign.utils.video import draw_gridlines
@@ -40,7 +41,7 @@ class Config:
         self.stop_box_tolerance = config["stopsign_detection"]["stop_box_tolerance"]
         self.min_stop_duration = config["stopsign_detection"]["min_stop_duration"]
         self.movement_allowance = config["stopsign_detection"]["movement_allowance"]
-        self.stationary_frame_limit = config["stopsign_detection"]["stationary_frame_limit"]
+        self.frames_before_parked = config["stopsign_detection"]["frames_before_parked"]
 
         self.save_video = config["output"]["save_video"]
 
@@ -64,16 +65,16 @@ class Car:
         self.frames_parked = 0
         self.track = []  # Store track history
         self.movement_allowance = config.movement_allowance
-        self.stationary_frame_limit = config.stationary_frame_limit
+        self.frames_before_parked = config.frames_before_parked
 
-    def update(
-        self,
-        location: tuple,
-        speed: float,
-    ):
-        self.location = location
+        # Initialize Kalman filter
+        self.kalman_filter = KalmanFilterWrapper()
+
+    def update(self, location: tuple, speed: float):
+        self.kalman_filter.predict()
+        self.location = self.kalman_filter.update(location)
         self.speed = speed
-        self.track.append(location)  # Update track history
+        self.track.append(tuple(self.location))  # Update track history
 
         if self.speed < self.movement_allowance:
             self.frames_parked += 1
@@ -81,7 +82,7 @@ class Car:
             self.frames_parked = 0
             self.is_parked = False  # Reset parked status if the car moves
 
-        if self.frames_parked >= self.stationary_frame_limit:
+        if self.frames_parked >= self.frames_before_parked:
             self.is_parked = True
 
         pass
@@ -180,7 +181,7 @@ def process_frame(
     return frame, boxes
 
 
-def visualize(frame, tracked_cars, track_history, stopsign_line, boxes) -> np.ndarray:
+def visualize(frame, tracked_cars, track_history, stopsign_line, boxes, frame_number) -> np.ndarray:
     # Plot the stop sign line
     cv2.line(frame, stopsign_line[0], stopsign_line[1], (0, 0, 255), 2)
 
@@ -194,6 +195,10 @@ def visualize(frame, tracked_cars, track_history, stopsign_line, boxes) -> np.nd
     for track_id in tracked_cars:
         points = np.array(track_history[track_id], dtype=np.int32).reshape((-1, 1, 2))
         cv2.polylines(annotated_frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
+
+    # Display the frame number on image
+    cv2.putText(annotated_frame, f"Frame: {frame_number}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
     return annotated_frame
 
 
@@ -244,7 +249,7 @@ def main(input_source, config: Config):
 
     # stopsign_line = ((650, 450), (500, 500))
     # movement_allowance = 500  # pixels
-    # stationary_frame_limit = 150
+    # frames_before_parked = 150
 
     # stop_box_tolerance = 50  # pixels
     # min_stop_duration = 2  # seconds
@@ -326,6 +331,7 @@ def main(input_source, config: Config):
                 {car.id: car.track for car in non_parked_cars},
                 stopsign.stopsign_line,
                 [box for box in boxes if int(box.id.item()) in [car.id for car in non_parked_cars]],
+                frame_count,
             )
 
             # Draw the gridlines for debugging
@@ -335,7 +341,7 @@ def main(input_source, config: Config):
             cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
 
-            if frame_count == 108:
+            if frame_count == 45:
                 print("Pausing...")
 
             if config.save_video:
