@@ -247,13 +247,6 @@ def main(input_source, config: Config):
     model = YOLO(MODEL_PATH)
     print("Model loaded successfully")
 
-    # stopsign_line = ((650, 450), (500, 500))
-    # movement_allowance = 500  # pixels
-    # frames_before_parked = 150
-
-    # stop_box_tolerance = 50  # pixels
-    # min_stop_duration = 2  # seconds
-
     stopsign = Stopsign(
         stopsign_line=config.stopsign_line,
         stop_box_tolerance=config.stop_box_tolerance,
