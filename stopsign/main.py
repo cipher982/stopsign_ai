@@ -43,6 +43,8 @@ class Config:
         self.movement_allowance = config["stopsign_detection"]["movement_allowance"]
         self.frames_before_parked = config["stopsign_detection"]["frames_before_parked"]
 
+        self.use_kf = config["tracking"]["use_kf"]
+
         self.save_video = config["output"]["save_video"]
 
         self.draw_grid = config["debugging_visualization"]["draw_grid"]
@@ -68,11 +70,17 @@ class Car:
         self.frames_before_parked = config.frames_before_parked
 
         # Initialize Kalman filter
-        self.kalman_filter = KalmanFilterWrapper()
+        self.kalman_filter = KalmanFilterWrapper(
+            process_noise=1e6,
+            measurement_noise=1e6,
+        )
 
     def update(self, location: tuple, speed: float):
-        self.kalman_filter.predict()
-        self.location = self.kalman_filter.update(location)
+        if config.use_kf:
+            self.kalman_filter.predict()
+            self.location = self.kalman_filter.update(location)
+        else:
+            self.location = location
         self.speed = speed
         self.track.append(tuple(self.location))  # Update track history
 
