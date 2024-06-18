@@ -3,7 +3,7 @@ from filterpy.kalman import KalmanFilter
 
 
 class KalmanFilterWrapper:
-    def __init__(self, process_noise=1.0, measurement_noise=2.0):
+    def __init__(self, process_noise: float, measurement_noise: float):
         self.kf = KalmanFilter(dim_x=4, dim_z=2)
         self.kf.x = np.array([0, 0, 0, 0])  # initial state (location and velocity)
         self.kf.F = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]])  # state transition matrix
@@ -15,6 +15,6 @@ class KalmanFilterWrapper:
     def predict(self):
         self.kf.predict()
 
-    def update(self, location):
+    def update(self, location: np.ndarray) -> np.ndarray:
         self.kf.update(location)
         return self.kf.x[:2]  # smoothed location

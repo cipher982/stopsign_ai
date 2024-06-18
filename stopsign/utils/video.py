@@ -53,3 +53,57 @@ def draw_box(frame, car, box, color=(0, 255, 0), thickness=2) -> None:
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
     label = f"{int(box.id.item())}: {car.speed:.1f} px/s, ({int(box.conf.item() * 100)}%)"
     cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, thickness)
+
+
+def apply_perspective_transform(frame, src_corners):
+    """
+    Apply a perspective transform to the frame using source corners.
+    :param frame: The image frame to transform.
+    :param src_corners: A list of tuples [(x1, y1), (x2, y2), (x3, y3), (x4, y4)] representing the source corners.
+    """
+    # Ensure src_corners has exactly four points
+    if len(src_corners) != 4:
+        raise ValueError("src_corners must contain exactly four coordinate pairs")
+
+    # Points selected from the original image
+    src_points = np.float32(src_corners)
+
+    # Calculate dst_points based on src_corners and desired output aspect ratio
+    width = np.linalg.norm(np.array(src_corners[0]) - np.array(src_corners[1]))
+    height = np.linalg.norm(np.array(src_corners[0]) - np.array(src_corners[3]))
+    dst_points = np.float32([[0, 0], [width, 0], [width, height], [0, height]])  # type: ignore
+
+    # Compute the perspective transform matrix
+    matrix = cv2.getPerspectiveTransform(src_points, dst_points)  # type: ignore
+
+    # Apply the perspective warp
+    warped_frame = cv2.warpPerspective(frame, matrix, (int(width), int(height)))
+
+    return warped_frame
+
+
+def select_points(frame):
+    """
+    Display the frame and allow the user to select points.
+    :param frame: The image frame to select points from.
+    :return: A list of selected points [(x1, y1), (x2, y2), (x3, y3), (x4, y4)].
+    """
+    points = []
+
+    # Function to capture mouse click events
+    def click_event(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            points.append((x, y))
+            cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+            cv2.imshow("Select Points", frame)
+
+    # Display the frame and set the mouse callback function
+    cv2.imshow("Select Points", frame)
+    cv2.setMouseCallback("Select Points", click_event)
+
+    # Wait until four points are selected
+    while len(points) < 4:
+        cv2.waitKey(1)
+
+    cv2.destroyWindow("Select Points")
+    return points

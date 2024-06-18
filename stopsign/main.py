@@ -32,6 +32,7 @@ class Config:
         with open(config_path, "r") as file:
             config = yaml.safe_load(file)
 
+        self.src_corners = config["video_processing"]["src_corners"]
         self.scale = config["video_processing"]["scale"]
         self.crop_top_ratio = config["video_processing"]["crop_top_ratio"]
         self.crop_side_ratio = config["video_processing"]["crop_side_ratio"]
@@ -64,15 +65,15 @@ class Car:
         self.location = (0, 0)
         self.speed = 0
         self.is_parked = False
-        self.frames_parked = 0
+        self.frames_parked = 60
         self.track = []  # Store track history
         self.movement_allowance = config.movement_allowance
         self.frames_before_parked = config.frames_before_parked
 
         # Initialize Kalman filter
         self.kalman_filter = KalmanFilterWrapper(
-            process_noise=1e6,
-            measurement_noise=1e6,
+            process_noise=10,
+            measurement_noise=10,
         )
 
     def update(self, location: tuple, speed: float):
@@ -81,17 +82,22 @@ class Car:
             self.location = self.kalman_filter.update(location)
         else:
             self.location = location
-        self.speed = speed
+
+        # Adjust speed based on y-coordinate to handle perspective
+        perspective_factor = 15
+        x_position_factor = 1 + (1 - self.location[0] / max_x) * perspective_factor
+        adjusted_speed = speed * x_position_factor  # Multiply to increase speed as x decreases
+        print(f"Car {self.id}: speed: {speed:.2f}, adjusted speed: {adjusted_speed:.2f}")
+
+        self.speed = adjusted_speed
         self.track.append(tuple(self.location))  # Update track history
 
         if self.speed < self.movement_allowance:
             self.frames_parked += 1
         else:
             self.frames_parked = 0
-            self.is_parked = False  # Reset parked status if the car moves
 
-        if self.frames_parked >= self.frames_before_parked:
-            self.is_parked = True
+        self.is_parked = self.frames_parked >= self.frames_before_parked
 
         pass
 
@@ -123,18 +129,6 @@ class Stopsign:
 def stop_score(car: Car, stop_box: tuple, min_stop_frames: int, fps: int) -> int:
     """
     Calculate a stop score for a car based on its behavior at a stop sign.
-
-    Score is determined by an algorithm considering speed and stop duration,
-    ranging from 1 (no stop) to 10 (perfect stop).
-
-    Args:
-        car (Car): The car object.
-        stop_box (tuple): Tuple defining the top-left and bottom-right corners of the stop box.
-        min_stop_frames (int): Minimum number of frames stopped to be considered a complete stop.
-        fps (int): Frames per second of the video.
-
-    Returns:
-        int: A score from 1 to 10 based on the car's stopping behavior.
     """
 
     left_x, top_y = stop_box[0]
@@ -216,7 +210,7 @@ def visualize(frame, cars, boxes, stopsign_line, n_frame) -> np.ndarray:
 
 
 def main(input_source, config: Config):
-    global cap, video_writer
+    global cap, video_writer, max_x
 
     if input_source == "live":
         if not RTSP_URL:
@@ -242,6 +236,7 @@ def main(input_source, config: Config):
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
+    max_x = w
 
     if config.save_video:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
@@ -294,7 +289,7 @@ def main(input_source, config: Config):
             if len(frame_buffer) > buffer_size:
                 frame_buffer.pop(0)
 
-            print(f"Frame {frame_count} - Timestamp: {timestamp:.2f}s")
+            # print(f"Frame {frame_count} - Timestamp: {timestamp:.2f}s")
 
             # Crop, Scale, Model the frame
             frame, boxes = process_frame(
@@ -308,35 +303,41 @@ def main(input_source, config: Config):
 
             # Update or create car objects
             for box in boxes:
-                track_id = int(box.id.item())
-                x, y, w, h = box.xywh[0]  # type: ignore
-                location = (float(x), float(y))
+                try:
+                    track_id = int(box.id.item())
+                    x, y, w, h = box.xywh[0]  # type: ignore
+                    location = (float(x), float(y))
 
-                if track_id in cars:
-                    car = cars[track_id]
-                else:
-                    car = Car(id=track_id, config=config)
-                    cars[track_id] = car
+                    if track_id in cars:
+                        car = cars[track_id]
+                    else:
+                        car = Car(id=track_id, config=config)
+                        cars[track_id] = car
 
-                # Calculate speed (using car's track history)
-                if car.track:
-                    previous_point = car.track[-1]
-                    distance = np.linalg.norm(np.array(location) - np.array(previous_point))
-                    speed = float(distance / timestamp if timestamp > 0 else 0)
-                    print(f"Car {track_id} - dist: {distance:.2f}px, speed: {speed:.2f}px/s")
-                else:
-                    speed = 0.0
+                    # Calculate speed (using car's track history)
+                    if car.track:
+                        previous_point = car.track[-1]
+                        distance = np.linalg.norm(np.array(location) - np.array(previous_point))
+                        speed = float(distance / timestamp if timestamp > 0 else 0)
+                        # print(f"Car {track_id} - dist: {distance:.2f}px, speed: {speed:.2f}px/s")
+                    else:
+                        speed = 0.0
 
-                car.update(location, speed)
+                    car.update(location, speed)
+                except Exception:
+                    pass
 
             # Visualize only non-parked cars
-            annotated_frame = visualize(
-                frame,
-                cars,
-                boxes,
-                stopsign.stopsign_line,
-                frame_count,
-            )
+            try:
+                annotated_frame = visualize(
+                    frame,
+                    cars,
+                    boxes,
+                    stopsign.stopsign_line,
+                    frame_count,
+                )
+            except Exception:
+                annotated_frame = frame
 
             # Draw the gridlines for debugging
             if config.draw_grid:
@@ -353,6 +354,8 @@ def main(input_source, config: Config):
                 video_writer.write(annotated_frame)
 
             frame_count += 1
+
+            # time.sleep(0.3)
 
     except Exception as e:
         print(f"An error occurred: {str(e)}")

@@ -1,4 +1,5 @@
 video_processing:
+  src_corners: [[892, 616], [564, 674], [1733, 826], [1705, 714]]
   scale: 0.75
   crop_top_ratio: 0
   crop_side_ratio: 0
@@ -8,11 +9,11 @@ stopsign_detection:
   stopsign_line: [[650, 450], [500, 500]]
   stop_box_tolerance: 50 # pixels
   min_stop_duration: 2  # seconds
-  movement_allowance: 5  # pixels / second
-  frames_before_parked: 15
+  movement_allowance: 1  # pixels / second
+  frames_before_parked: 30
 
 tracking:
-  use_kf: false
+  use_kf: true
 
 output:
   save_video: true
