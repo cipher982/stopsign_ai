@@ -8,8 +8,8 @@ stopsign_detection:
   stopsign_line: [[650, 450], [500, 500]]
   stop_box_tolerance: 50 # pixels
   min_stop_duration: 2  # seconds
-  movement_allowance: 500  # pixels
-  stationary_frame_limit: 150
+  movement_allowance: 1  # pixels / second
+  frames_before_parked: 15
 
 output:
   save_video: true
