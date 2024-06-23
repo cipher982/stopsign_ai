@@ -64,9 +64,13 @@ class Car:
         self.id = id
         self.location = (0, 0)
         self.speed = 0
-        self.is_parked = False
+        self.is_parked = True
         self.frames_parked = 60
-        self.track = []  # Store track history
+        self.track = []  # List of (position, timestamp) tuples
+        self.speed_history = []
+        self.distance_history = []
+        self.last_update_time = None
+        self.speed_threshold = config.movement_allowance
         self.movement_allowance = config.movement_allowance
         self.frames_before_parked = config.frames_before_parked
 
@@ -76,29 +80,39 @@ class Car:
             measurement_noise=10,
         )
 
-    def update(self, location: tuple, speed: float):
-        if config.use_kf:
-            self.kalman_filter.predict()
-            self.location = self.kalman_filter.update(location)
+    def update(self, location: tuple, timestamp: float):
+        self.location = location
+        self.track.append((location, timestamp))
+
+        # Calculate speed and distance
+        if self.last_update_time is not None:
+            time_diff = timestamp - self.last_update_time
+            if time_diff > 0:
+                prev_pos = self.track[-2][0]
+                curr_pos = location
+                distance = np.linalg.norm(np.array(curr_pos) - np.array(prev_pos))
+                self.speed = distance / time_diff
+
+                self.speed_history.append(self.speed)
+                self.distance_history.append(distance)
+            else:
+                self.speed = 0
         else:
-            self.location = location
+            self.speed = 0
 
-        # Adjust speed based on y-coordinate to handle perspective
-        perspective_factor = 15
-        x_position_factor = 1 + (1 - self.location[0] / max_x) * perspective_factor
-        adjusted_speed = speed * x_position_factor  # Multiply to increase speed as x decreases
-        print(f"Car {self.id}: speed: {speed:.2f}, adjusted speed: {adjusted_speed:.2f}")
+        self.last_update_time = timestamp
 
-        self.speed = adjusted_speed
-        self.track.append(tuple(self.location))  # Update track history
-
-        if self.speed < self.movement_allowance:
+        # Check if the car is parked
+        if self.speed < self.speed_threshold:
             self.frames_parked += 1
         else:
             self.frames_parked = 0
+            self.is_parked = False
 
         self.is_parked = self.frames_parked >= self.frames_before_parked
 
+        if self.id == 5:
+            5
         pass
 
     def __repr__(self):
@@ -314,16 +328,7 @@ def main(input_source, config: Config):
                         car = Car(id=track_id, config=config)
                         cars[track_id] = car
 
-                    # Calculate speed (using car's track history)
-                    if car.track:
-                        previous_point = car.track[-1]
-                        distance = np.linalg.norm(np.array(location) - np.array(previous_point))
-                        speed = float(distance / timestamp if timestamp > 0 else 0)
-                        # print(f"Car {track_id} - dist: {distance:.2f}px, speed: {speed:.2f}px/s")
-                    else:
-                        speed = 0.0
-
-                    car.update(location, speed)
+                    car.update(location, timestamp)
                 except Exception:
                     pass
 
@@ -346,7 +351,7 @@ def main(input_source, config: Config):
             cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
 
-            if frame_count == 100:
+            if frame_count == 20:
                 print("Pausing...")
 
             if config.save_video:
