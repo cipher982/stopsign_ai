@@ -81,7 +81,9 @@ class Car:
         )
 
     def update(self, location: tuple, timestamp: float):
-        self.location = location
+        self.kalman_filter.predict()
+        smoothed_location = self.kalman_filter.update(np.array(location))
+        self.location = tuple(smoothed_location)
         self.track.append((location, timestamp))
 
         history_length = min(len(self.track), 10)  # Look at up to the last 10 positions
