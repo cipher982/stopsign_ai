@@ -84,17 +84,18 @@ class Car:
         self.location = location
         self.track.append((location, timestamp))
 
-        # Calculate speed and distance
-        if self.last_update_time is not None:
-            time_diff = timestamp - self.last_update_time
-            if time_diff > 0:
-                prev_pos = self.track[-2][0]
-                curr_pos = location
-                distance = np.linalg.norm(np.array(curr_pos) - np.array(prev_pos))
-                self.speed = distance / time_diff
+        history_length = min(len(self.track), 10)  # Look at up to the last 10 positions
+        if history_length > 1:
+            # Calculate average position over the history
+            past_positions = np.array([pos for pos, _ in self.track[-history_length:]])
+            avg_past_position = np.mean(past_positions, axis=0)
 
-                self.speed_history.append(self.speed)
-                self.distance_history.append(distance)
+            # Calculate displacement from the average past position
+            distance = np.linalg.norm(np.array(location) - avg_past_position)
+
+            time_diff = timestamp - self.track[-history_length][1]
+            if time_diff > 0:
+                self.speed = distance / time_diff
             else:
                 self.speed = 0
         else:
