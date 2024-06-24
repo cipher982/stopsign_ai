@@ -365,7 +365,7 @@ def main(input_source: str, config: Config):
             cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
 
-            if frame_count == 30:
+            if frame_count == 25:
                 print("Pausing...")
 
             if config.save_video:
