@@ -20,7 +20,7 @@ Tracking stopsign runners with an IP camera and AI
 **AI Model:**
 - Function: Analyze the video feed in real-time to detect and classify the cars.
 - Frameworks: PyTorch for model implementation.
-- Models: Pre-trained YOLO models?
+- Model: YOLOv8-10
 - Libraries: OpenCV for video processing, TensorRT for optimized inference on NVIDIA GPUs in the backend (3090).
 
 **Storage System:**
@@ -30,8 +30,7 @@ Options:
 
 **Frontend:**
 - Function: Display the recently detected and classified cars.
-Frameworks: React.
-
+Frameworks: ??
 
 ### Workflow
 **Video Capture and Streaming:**
