@@ -48,8 +48,8 @@ class Config:
         self.stop_box_tolerance = stop_sign["stop_box_tolerance"]
         self.min_stop_time = stop_sign["min_stop_time"]
         self.max_movement_speed = stop_sign["max_movement_speed"]
-        self.parked_frame_threshold = stop_sign["frames_before_parked"]
-        self.unparked_frame_threshold = stop_sign["unparked_threshold"]
+        self.parked_frame_threshold = stop_sign["parked_frame_threshold"]
+        self.unparked_frame_threshold = stop_sign["unparked_frame_threshold"]
 
         # Tracking
         self.use_kalman_filter = config["tracking"]["use_kalman_filter"]
