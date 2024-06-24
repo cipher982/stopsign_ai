@@ -10,7 +10,8 @@ stopsign_detection:
   stop_box_tolerance: 50 # pixels
   min_stop_duration: 2  # seconds
   movement_allowance: 5  # pixels / second
-  frames_before_parked: 30
+  frames_before_parked: 20
+  unparked_threshold: 10
 
 tracking:
   use_kf: true

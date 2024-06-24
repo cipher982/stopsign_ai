@@ -3,6 +3,10 @@ import os
 import signal
 import sys
 import time
+from dataclasses import dataclass
+from dataclasses import field
+from typing import List
+from typing import Tuple
 
 import cv2
 import dotenv
@@ -43,6 +47,7 @@ class Config:
         self.min_stop_duration = config["stopsign_detection"]["min_stop_duration"]
         self.movement_allowance = config["stopsign_detection"]["movement_allowance"]
         self.frames_before_parked = config["stopsign_detection"]["frames_before_parked"]
+        self.unparked_threshold = config["stopsign_detection"]["unparked_threshold"]
 
         self.use_kf = config["tracking"]["use_kf"]
 
@@ -55,72 +60,70 @@ class Config:
         self.vehicle_classes = config["stream_settings"]["vehicle_classes"]
 
 
+@dataclass
+class CarState:
+    location: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
+    speed: float = 0.0
+    is_parked: bool = True
+    consecutive_moving_frames: int = 0
+    consecutive_stationary_frames: int = 0
+    track: List[Tuple[Tuple[float, float], float]] = field(default_factory=list)
+    last_update_time: float = 0.0
+
+
 class Car:
-    def __init__(
-        self,
-        id: int,
-        config: Config,
-    ):
+    def __init__(self, id: int, config: Config):
         self.id = id
-        self.location = (0, 0)
-        self.speed = 0
-        self.is_parked = True
-        self.frames_parked = 60
-        self.track = []  # List of (position, timestamp) tuples
-        self.speed_history = []
-        self.distance_history = []
-        self.last_update_time = None
-        self.speed_threshold = config.movement_allowance
-        self.movement_allowance = config.movement_allowance
-        self.frames_before_parked = config.frames_before_parked
+        self.state = CarState()
+        self.kalman_filter = KalmanFilterWrapper(process_noise=10, measurement_noise=10)
+        self.config = config
 
-        # Initialize Kalman filter
-        self.kalman_filter = KalmanFilterWrapper(
-            process_noise=10,
-            measurement_noise=10,
-        )
-
-    def update(self, location: tuple, timestamp: float):
+    def update(self, location: Tuple[float, float], timestamp: float):
         self.kalman_filter.predict()
         smoothed_location = self.kalman_filter.update(np.array(location))
-        self.location = tuple(smoothed_location)
-        self.track.append((location, timestamp))
+        self.state.location = (float(smoothed_location[0]), float(smoothed_location[1]))
+        self.state.track.append((location, timestamp))
 
-        history_length = min(len(self.track), 10)  # Look at up to the last 10 positions
+        self._update_speed(timestamp)
+        self._update_movement_status()
+        self._update_parked_status()
+
+        self.state.last_update_time = timestamp
+
+    def _update_speed(self, timestamp: float):
+        history_length = min(len(self.state.track), 10)
         if history_length > 1:
-            # Calculate average position over the history
-            past_positions = np.array([pos for pos, _ in self.track[-history_length:]])
+            past_positions = np.array([pos for pos, _ in self.state.track[-history_length:]])
             avg_past_position = np.mean(past_positions, axis=0)
-
-            # Calculate displacement from the average past position
-            distance = np.linalg.norm(np.array(location) - avg_past_position)
-
-            time_diff = timestamp - self.track[-history_length][1]
-            if time_diff > 0:
-                self.speed = distance / time_diff
-            else:
-                self.speed = 0
+            distance = np.linalg.norm(np.array(self.state.location) - avg_past_position)
+            time_diff = timestamp - self.state.track[-history_length][1]
+            self.state.speed = float(distance / time_diff) if time_diff > 0 else 0.0
         else:
-            self.speed = 0
+            self.state.speed = 0
 
-        self.last_update_time = timestamp
-
-        # Check if the car is parked
-        if self.speed < self.speed_threshold:
-            self.frames_parked += 1
+    def _update_movement_status(self):
+        if self.state.speed < self.config.movement_allowance:
+            self.state.consecutive_moving_frames = 0
+            self.state.consecutive_stationary_frames += 1
         else:
-            self.frames_parked = 0
-            self.is_parked = False
+            self.state.consecutive_moving_frames += 1
+            self.state.consecutive_stationary_frames = 0
 
-        self.is_parked = self.frames_parked >= self.frames_before_parked
-
-        if self.id == 5:
-            5
-        pass
+    def _update_parked_status(self):
+        if self.state.is_parked:
+            if self.state.consecutive_moving_frames >= self.config.unparked_threshold:
+                self.state.is_parked = False
+                self.state.consecutive_stationary_frames = 0
+        else:
+            if self.state.consecutive_stationary_frames >= self.config.frames_before_parked:
+                self.state.is_parked = True
+                self.state.consecutive_moving_frames = 0
 
     def __repr__(self):
-        x, y = self.location
-        return f"Car {self.id} @ ({x:.2f}, {y:.2f}) (Speed: {self.speed:.1f}px/s, Parked: {self.is_parked})"
+        return (
+            f"Car {self.id} @ ({self.state.location[0]:.2f}, {self.state.location[1]:.2f}) "
+            f"(Speed: {self.state.speed:.1f}px/s, Parked: {self.state.is_parked})"
+        )
 
 
 class Stopsign:
@@ -152,22 +155,22 @@ def stop_score(car: Car, stop_box: tuple, min_stop_frames: int, fps: int) -> int
     right_x, bottom_y = stop_box[1]
 
     # Check if the car is within the stop box
-    if left_x <= car.location[0] <= right_x and top_y <= car.location[1] <= bottom_y:
-        if car.speed == 0:
-            car.frames_parked += 1
+    if left_x <= car.state.location[0] <= right_x and top_y <= car.state.location[1] <= bottom_y:
+        if car.state.speed == 0:
+            car.state.consecutive_stationary_frames += 1
         else:
-            car.frames_parked = 0
+            car.state.consecutive_stationary_frames = 0
 
         # Score algorithm:
         # - Full points if stopped for minimum duration
         # - Deductions based on speed (higher speed = lower score)
         # - Minimum score of 1
-        stop_duration_score = min(car.frames_parked / min_stop_frames, 1) * 10
-        speed_score = max(10 - int(car.speed), 1)  # Assuming speed is in pixels/frame, adjust as needed
+        stop_duration_score = min(car.state.consecutive_stationary_frames / min_stop_frames, 1) * 10
+        speed_score = max(10 - int(car.state.speed), 1)  # Assuming speed is in pixels/frame, adjust as needed
         score = int(stop_duration_score * 0.7 + speed_score * 0.3)  # Weighting towards stop duration
         return min(score, 10)  # Cap at 10
     else:
-        car.frames_parked = 0
+        car.state.consecutive_stationary_frames = 0
         return 1  # Not at the stop sign yet
 
 
@@ -207,7 +210,7 @@ def visualize(frame, cars, boxes, stopsign_line, n_frame) -> np.ndarray:
     # Draw boxes for each car
     for box in boxes:
         car = cars[int(box.id.item())]
-        if car.is_parked:
+        if car.state.is_parked:
             draw_box(frame, car, box, color=(255, 255, 255), thickness=1)  # parked cars
         else:
             draw_box(frame, car, box, color=(0, 255, 0), thickness=2)  # moving cars
@@ -215,9 +218,9 @@ def visualize(frame, cars, boxes, stopsign_line, n_frame) -> np.ndarray:
     # Path tracking code
     for id in cars:
         car = cars[id]
-        if cars[id].is_parked:
+        if cars[id].state.is_parked:
             continue
-        locations = [loc for loc, _ in car.track]  # Extract locations from track
+        locations = [loc for loc, _ in car.state.track]  # Extract locations from track
         points = np.array(locations, dtype=np.int32).reshape((-1, 1, 2))
         cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
 
@@ -345,8 +348,9 @@ def main(input_source, config: Config):
                     stopsign.stopsign_line,
                     frame_count,
                 )
-            except Exception:
+            except Exception as e:
                 annotated_frame = frame
+                print(f"Visualization failed: {e}")
 
             # Draw the gridlines for debugging
             if config.draw_grid:
@@ -355,7 +359,7 @@ def main(input_source, config: Config):
             cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
 
-            if frame_count == 20:
+            if frame_count == 30:
                 print("Pausing...")
 
             if config.save_video:

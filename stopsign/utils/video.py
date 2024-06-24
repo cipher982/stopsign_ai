@@ -51,7 +51,7 @@ def draw_gridlines(frame: np.ndarray, grid_increment: int) -> None:
 def draw_box(frame, car, box, color=(0, 255, 0), thickness=2) -> None:
     x1, y1, x2, y2 = map(int, box.xyxy[0])
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-    label = f"{int(box.id.item())}: {car.speed:.1f} px/s, ({int(box.conf.item() * 100)}%)"
+    label = f"{int(box.id.item())}: {car.state.speed:.1f} px/s, ({int(box.conf.item() * 100)}%)"
     cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, thickness)
 
 
