@@ -1,27 +1,26 @@
 video_processing:
-  src_corners: [[892, 616], [564, 674], [1733, 826], [1705, 714]]
   scale: 0.75
-  crop_top_ratio: 0
-  crop_side_ratio: 0
-  buffer_size: 5 # number of frames to buffer
+  crop_top: 0
+  crop_side: 0
+  frame_buffer_size: 5 # number of frames to buffer
 
 stopsign_detection:
   stopsign_line: [[650, 450], [500, 500]]
   stop_box_tolerance: 50 # pixels
-  min_stop_duration: 2  # seconds
-  movement_allowance: 5  # pixels / second
-  frames_before_parked: 20
-  unparked_threshold: 10
+  min_stop_time: 2  # seconds
+  max_movement_speed: 5  # pixels / second
+  parked_frame_threshold: 20
+  unparked_frame_threshold: 10
 
 tracking:
-  use_kf: true
+  use_kalman_filter: true
 
 output:
   save_video: true
 
 debugging_visualization:
   draw_grid: true
-  grid_increment: 100
+  grid_size: 100
 
 stream_settings:
   fps: 15
