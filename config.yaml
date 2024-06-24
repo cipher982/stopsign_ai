@@ -8,8 +8,8 @@ stopsign_detection:
   stop_line: [[650, 450], [500, 500]]
   stop_box_tolerance: 50 # pixels
   min_stop_time: 2  # seconds
-  max_movement_speed: 5  # pixels / second
-  parked_frame_threshold: 20
+  max_movement_speed: 20  # pixels / second
+  parked_frame_threshold: 60
   unparked_frame_threshold: 10
 
 tracking:
