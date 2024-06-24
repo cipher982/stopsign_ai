@@ -135,20 +135,20 @@ class Car:
 class Stopsign:
     def __init__(
         self,
-        stopsign_line: tuple,
+        stop_line: tuple,
         stop_box_tolerance: int,
         min_stop_duration: int,
     ):
         # Some constants for stop sign detection
-        self.stopsign_line = stopsign_line
+        self.stop_line = stop_line
         self.stop_box_tolerance = stop_box_tolerance  # pixels
         self.min_stop_duration = min_stop_duration  # seconds
 
         # Calculate stop box coordinates
-        left_x = min(self.stopsign_line[0][0], self.stopsign_line[1][0]) - self.stop_box_tolerance
-        right_x = max(self.stopsign_line[0][0], self.stopsign_line[1][0]) + self.stop_box_tolerance
-        top_y = min(self.stopsign_line[0][1], self.stopsign_line[1][1])
-        bottom_y = max(self.stopsign_line[0][1], self.stopsign_line[1][1])
+        left_x = min(self.stop_line[0][0], self.stop_line[1][0]) - self.stop_box_tolerance
+        right_x = max(self.stop_line[0][0], self.stop_line[1][0]) + self.stop_box_tolerance
+        top_y = min(self.stop_line[0][1], self.stop_line[1][1])
+        bottom_y = max(self.stop_line[0][1], self.stop_line[1][1])
         self.stop_box = ((left_x, top_y), (right_x, bottom_y))
 
 
@@ -283,7 +283,7 @@ def main(input_source: str, config: Config):
     print("Model loaded successfully")
 
     stopsign = Stopsign(
-        stopsign_line=config.stop_line,
+        stop_line=config.stop_line,
         stop_box_tolerance=config.stop_box_tolerance,
         min_stop_duration=config.min_stop_time,
     )
@@ -351,7 +351,7 @@ def main(input_source: str, config: Config):
                     frame,
                     cars,
                     boxes,
-                    stopsign.stopsign_line,
+                    stopsign.stop_line,
                     frame_count,
                 )
             except Exception as e:
