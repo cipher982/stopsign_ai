@@ -12,7 +12,6 @@ Tracking stopsign runners with an IP camera and AI
 **IP Camera:**
 - Function: Capture and stream video feed.
 - Protocol: RTSP (Real-Time Streaming Protocol).
-- Location: Positioned on front porch.
 
 **Backend Server:**
 - Function: Receive and record the RTSP feed.
