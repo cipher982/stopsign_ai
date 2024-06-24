@@ -36,26 +36,32 @@ class Config:
         with open(config_path, "r") as file:
             config = yaml.safe_load(file)
 
-        self.src_corners = config["video_processing"]["src_corners"]
+        # Video processing
         self.scale = config["video_processing"]["scale"]
-        self.crop_top_ratio = config["video_processing"]["crop_top_ratio"]
-        self.crop_side_ratio = config["video_processing"]["crop_side_ratio"]
-        self.buffer_size = config["video_processing"]["buffer_size"]
+        self.crop_top = config["video_processing"]["crop_top_ratio"]
+        self.crop_side = config["video_processing"]["crop_side_ratio"]
+        self.frame_buffer_size = config["video_processing"]["buffer_size"]
 
-        self.stopsign_line = tuple(tuple(i) for i in config["stopsign_detection"]["stopsign_line"])
-        self.stop_box_tolerance = config["stopsign_detection"]["stop_box_tolerance"]
-        self.min_stop_duration = config["stopsign_detection"]["min_stop_duration"]
-        self.movement_allowance = config["stopsign_detection"]["movement_allowance"]
-        self.frames_before_parked = config["stopsign_detection"]["frames_before_parked"]
-        self.unparked_threshold = config["stopsign_detection"]["unparked_threshold"]
+        # Stop sign detection
+        stop_sign = config["stopsign_detection"]
+        self.stop_line = tuple(tuple(i) for i in stop_sign["stopsign_line"])
+        self.stop_box_tolerance = stop_sign["stop_box_tolerance"]
+        self.min_stop_time = stop_sign["min_stop_duration"]
+        self.max_movement_speed = stop_sign["movement_allowance"]
+        self.parked_frame_threshold = stop_sign["frames_before_parked"]
+        self.unparked_frame_threshold = stop_sign["unparked_threshold"]
 
-        self.use_kf = config["tracking"]["use_kf"]
+        # Tracking
+        self.use_kalman_filter = config["tracking"]["use_kf"]
 
+        # Output
         self.save_video = config["output"]["save_video"]
 
+        # Visualization
         self.draw_grid = config["debugging_visualization"]["draw_grid"]
-        self.grid_increment = config["debugging_visualization"]["grid_increment"]
+        self.grid_size = config["debugging_visualization"]["grid_increment"]
 
+        # Stream settings
         self.fps = config["stream_settings"]["fps"]
         self.vehicle_classes = config["stream_settings"]["vehicle_classes"]
 
@@ -102,7 +108,7 @@ class Car:
             self.state.speed = 0
 
     def _update_movement_status(self):
-        if self.state.speed < self.config.movement_allowance:
+        if self.state.speed < self.config.max_movement_speed:
             self.state.consecutive_moving_frames = 0
             self.state.consecutive_stationary_frames += 1
         else:
@@ -111,11 +117,11 @@ class Car:
 
     def _update_parked_status(self):
         if self.state.is_parked:
-            if self.state.consecutive_moving_frames >= self.config.unparked_threshold:
+            if self.state.consecutive_moving_frames >= self.config.unparked_frame_threshold:
                 self.state.is_parked = False
                 self.state.consecutive_stationary_frames = 0
         else:
-            if self.state.consecutive_stationary_frames >= self.config.frames_before_parked:
+            if self.state.consecutive_stationary_frames >= self.config.parked_frame_threshold:
                 self.state.is_parked = True
                 self.state.consecutive_moving_frames = 0
 
@@ -277,9 +283,9 @@ def main(input_source, config: Config):
     print("Model loaded successfully")
 
     stopsign = Stopsign(
-        stopsign_line=config.stopsign_line,
+        stopsign_line=config.stop_line,
         stop_box_tolerance=config.stop_box_tolerance,
-        min_stop_duration=config.min_stop_duration,
+        min_stop_duration=config.min_stop_time,
     )
 
     # Begin streaming loop
@@ -317,8 +323,8 @@ def main(input_source, config: Config):
                 model=model,
                 frame=frame,
                 scale=config.scale,
-                crop_top_ratio=config.crop_top_ratio,
-                crop_side_ratio=config.crop_side_ratio,
+                crop_top_ratio=config.crop_top,
+                crop_side_ratio=config.crop_side,
                 vehicle_classes=config.vehicle_classes,
             )
 
@@ -354,7 +360,7 @@ def main(input_source, config: Config):
 
             # Draw the gridlines for debugging
             if config.draw_grid:
-                draw_gridlines(annotated_frame, config.grid_increment)
+                draw_gridlines(annotated_frame, config.grid_size)
 
             cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
