@@ -217,7 +217,8 @@ def visualize(frame, cars, boxes, stopsign_line, n_frame) -> np.ndarray:
         car = cars[id]
         if cars[id].is_parked:
             continue
-        points = np.array(car.track, dtype=np.int32).reshape((-1, 1, 2))
+        locations = [loc for loc, _ in car.track]  # Extract locations from track
+        points = np.array(locations, dtype=np.int32).reshape((-1, 1, 2))
         cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
 
     # Display the frame number on image
