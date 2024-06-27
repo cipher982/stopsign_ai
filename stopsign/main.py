@@ -396,9 +396,15 @@ def process_frame(
     return frame, boxes
 
 
-def visualize(frame, cars, boxes, stopsign_line, n_frame) -> np.ndarray:
+def visualize(frame, cars, boxes, stop_zone, n_frame) -> np.ndarray:
+    # Draw the stop box as a semi-transparent rectangle
+    overlay = frame.copy()
+    cv2.rectangle(overlay, stop_zone.stop_box[0], stop_zone.stop_box[1], (0, 0, 255), -1)
+    alpha = 0.3
+    frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+
     # Plot the stop sign line
-    cv2.line(frame, stopsign_line[0], stopsign_line[1], (0, 0, 255), 2)
+    cv2.line(frame, stop_zone.stop_line[0], stop_zone.stop_line[1], (0, 0, 255), 2)
 
     # Draw boxes for each car
     for box in boxes:
@@ -534,7 +540,7 @@ def main(input_source: str, config: Config):
                     frame,
                     cars,
                     boxes,
-                    stop_zone.stop_line,
+                    stop_zone,
                     frame_count,
                 )
             except Exception as e:
