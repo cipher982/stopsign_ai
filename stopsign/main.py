@@ -66,6 +66,10 @@ class Config:
         self.vehicle_classes = config["stream_settings"]["vehicle_classes"]
 
 
+Point = Tuple[float, float]
+Line = Tuple[Point, Point]
+
+
 @dataclass
 class CarState:
     location: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
@@ -86,49 +90,79 @@ class CarState:
     stop_position: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
 
 
+@dataclass
 class StopZone:
-    def __init__(self, config):
-        self.stop_line = config.stop_line
-        self.stop_box_tolerance = config.stop_box_tolerance
-        self.min_stop_duration = config.min_stop_time
+    stop_line: Line
+    stop_box_tolerance: int
+    min_stop_duration: float
+    zone_length: int = 200
 
-        # Calculate entry, exit, and stop box
-        self.entry = (
-            (self.stop_line[0][0] - 100, self.stop_line[0][1]),
-            (self.stop_line[1][0] + 100, self.stop_line[1][1]),
-        )
-        self.exit = (
-            (self.stop_line[0][0] - 50, self.stop_line[0][1] + 50),
-            (self.stop_line[1][0] + 50, self.stop_line[1][1] + 50),
-        )
-        self._calculate_stop_box()
-        self._calculate_bounding_box()
+    def __post_init__(self):
+        self._calculate_geometry()
 
-    def _calculate_stop_box(self):
+    def _calculate_geometry(self):
+        self.midpoint = self._midpoint(self.stop_line)
+        self.zone_width = np.linalg.norm(np.array(self.stop_line[1]) - np.array(self.stop_line[0]))
+        self.corners = self._calculate_corners()
+        self.entry, self.exit = self._calculate_entry_exit()
+        self.stop_box = self._calculate_stop_box()
+        self.bounding_box = self._calculate_bounding_box()
+
+    @property
+    def angle(self) -> float:
+        dx, dy = np.array(self.stop_line[1]) - np.array(self.stop_line[0])
+        return np.arctan2(dy, dx)
+
+    def _midpoint(self, line: Line) -> Point:
+        mid = (np.array(line[0]) + np.array(line[1])) / 2
+        return (float(mid[0]), float(mid[1]))
+
+    def _calculate_corners(self) -> np.ndarray:
+        perp_vector = np.array([-np.sin(self.angle), np.cos(self.angle)])
+        direction = np.array([np.cos(self.angle), np.sin(self.angle)])
+        half_width, half_length = self.zone_width / 2, self.zone_length / 2
+
+        corners = [
+            self.midpoint + half_width * direction + half_length * perp_vector,
+            self.midpoint - half_width * direction + half_length * perp_vector,
+            self.midpoint - half_width * direction - half_length * perp_vector,
+            self.midpoint + half_width * direction - half_length * perp_vector,
+        ]
+        return np.array(corners, dtype=np.int32)
+
+    def _calculate_entry_exit(self) -> Tuple[Line, Line]:
+        entry_offset, exit_offset = 100, 50
+        perp_vector = np.array([-np.sin(self.angle), np.cos(self.angle)])
+        direction = np.array([np.cos(self.angle), np.sin(self.angle)])
+
+        entry_mid = self.midpoint - entry_offset * perp_vector
+        exit_mid = self.midpoint + exit_offset * perp_vector
+
+        half_width = self.zone_width / 2 + 50
+
+        entry: Line = (
+            (float(entry_mid[0] - half_width * direction[0]), float(entry_mid[1] - half_width * direction[1])),
+            (float(entry_mid[0] + half_width * direction[0]), float(entry_mid[1] + half_width * direction[1])),
+        )
+        exit: Line = (
+            (float(exit_mid[0] - half_width * direction[0]), float(exit_mid[1] - half_width * direction[1])),
+            (float(exit_mid[0] + half_width * direction[0]), float(exit_mid[1] + half_width * direction[1])),
+        )
+        return entry, exit
+
+    def _calculate_stop_box(self) -> Tuple[Tuple[int, int], Tuple[int, int]]:
         left_x = min(self.stop_line[0][0], self.stop_line[1][0]) - self.stop_box_tolerance
         right_x = max(self.stop_line[0][0], self.stop_line[1][0]) + self.stop_box_tolerance
         top_y = min(self.stop_line[0][1], self.stop_line[1][1])
         bottom_y = max(self.stop_line[0][1], self.stop_line[1][1])
-        self.stop_box = ((left_x, top_y), (right_x, bottom_y))
+        return ((int(left_x), int(top_y)), (int(right_x), int(bottom_y)))
 
-    def _calculate_bounding_box(self):
-        x_coords = [
-            self.entry[0][0],
-            self.entry[1][0],
-            self.stop_line[0][0],
-            self.stop_line[1][0],
-            self.exit[0][0],
-            self.exit[1][0],
-        ]
-        y_coords = [
-            self.entry[0][1],
-            self.entry[1][1],
-            self.stop_line[0][1],
-            self.stop_line[1][1],
-            self.exit[0][1],
-            self.exit[1][1],
-        ]
-        self.bounding_box = ((min(x_coords), min(y_coords)), (max(x_coords), max(y_coords)))
+    def _calculate_bounding_box(self) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+        x_coords, y_coords = self.corners[:, 0], self.corners[:, 1]
+        return ((min(x_coords), min(y_coords)), (max(x_coords), max(y_coords)))
+
+    def is_in_stop_zone(self, point: Tuple[int, int]) -> bool:
+        return cv2.pointPolygonTest(self.corners, point, False) >= 0
 
 
 class Car:
@@ -475,7 +509,11 @@ def main(input_source: str, config: Config):
     model = YOLO(MODEL_PATH)
     print("Model loaded successfully")
 
-    stop_zone = StopZone(config)
+    stop_zone = StopZone(
+        stop_line=config.stop_line,
+        stop_box_tolerance=config.stop_box_tolerance,
+        min_stop_duration=config.min_stop_time,
+    )
 
     # Begin streaming loop
     print("Streaming...")
