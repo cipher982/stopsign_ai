@@ -508,7 +508,7 @@ def main(input_source: str, config: Config):
     print("Model loaded successfully")
 
     stop_zone = StopZone(
-        stop_line=config.stop_line,
+        stop_line=config.stop_line,  # type: ignore
         stop_box_tolerance=config.stop_box_tolerance,
         min_stop_duration=config.min_stop_time,
     )
