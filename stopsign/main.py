@@ -74,6 +74,7 @@ Line = Tuple[Point, Point]
 class CarState:
     location: Point = field(default_factory=lambda: (0.0, 0.0))
     speed: float = 0.0
+    prev_speed: float = 0.0
     is_parked: bool = True
     consecutive_moving_frames: int = 0
     consecutive_stationary_frames: int = 0
@@ -192,12 +193,47 @@ class Car:
         history_length = min(len(self.state.track), 10)
         if history_length > 1:
             past_positions = np.array([pos for pos, _ in self.state.track[-history_length:]])
-            avg_past_position = np.mean(past_positions, axis=0)
-            distance = np.linalg.norm(np.array(self.state.location) - avg_past_position)
-            time_diff = timestamp - self.state.track[-history_length][1]
-            self.state.speed = float(distance / time_diff) if time_diff > 0 else 0.0
+            past_times = np.array([t for _, t in self.state.track[-history_length:]])
+
+            time_diffs = np.diff(past_times)
+            position_diffs = np.diff(past_positions, axis=0)
+
+            speeds = np.linalg.norm(position_diffs, axis=1) / time_diffs
+
+            # Apply moving average filter
+            window_size = min(10, len(speeds))
+            smoothed_speed = np.convolve(speeds, np.ones(window_size) / window_size, mode="valid")
+
+            # Calculate median speed
+            median_speed = np.median(speeds)
+
+            # Use median speed if available, otherwise use smoothed speed
+            if len(speeds) > 0:
+                self.state.speed = float(median_speed)
+            elif len(smoothed_speed) > 0:
+                self.state.speed = float(smoothed_speed[-1])
+            else:
+                self.state.speed = 0.0
         else:
-            self.state.speed = 0
+            self.state.speed = 0.0
+
+        # Ensure speed is non-negative
+        self.state.speed = abs(self.state.speed)
+
+        # Add a maximum speed limit to filter out unrealistic spikes
+        max_speed_limit = 200  # pixels per second
+        self.state.speed = min(self.state.speed, max_speed_limit)
+
+        # Apply a low-pass filter
+        alpha = 0.2
+        prev_speed = getattr(self.state, "prev_speed", self.state.speed)
+        self.state.speed = alpha * self.state.speed + (1 - alpha) * prev_speed
+        self.state.prev_speed = self.state.speed
+
+        # Set a minimum speed threshold
+        min_speed_threshold = 1.0  # pixels per second
+        if self.state.speed < min_speed_threshold:
+            self.state.speed = 0.0
 
     def _update_movement_status(self):
         if self.state.speed < self.config.max_movement_speed:
