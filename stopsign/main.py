@@ -72,12 +72,12 @@ Line = Tuple[Point, Point]
 
 @dataclass
 class CarState:
-    location: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
+    location: Point = field(default_factory=lambda: (0.0, 0.0))
     speed: float = 0.0
     is_parked: bool = True
     consecutive_moving_frames: int = 0
     consecutive_stationary_frames: int = 0
-    track: List[Tuple[Tuple[float, float], float]] = field(default_factory=list)
+    track: List[Tuple[Point, float]] = field(default_factory=list)
     last_update_time: float = 0.0
     stop_score: int = 0
     scored: bool = False
@@ -87,7 +87,7 @@ class CarState:
     exit_time: float = 0.0
     min_speed_in_zone: float = float("inf")
     time_at_zero: float = 0.0
-    stop_position: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
+    stop_position: Point = field(default_factory=lambda: (0.0, 0.0))
 
 
 @dataclass
@@ -115,7 +115,7 @@ class StopZone:
 
     def _midpoint(self, line: Line) -> Point:
         mid = (np.array(line[0]) + np.array(line[1])) / 2
-        return (float(mid[0]), float(mid[1]))
+        return float(mid[0]), float(mid[1])
 
     def _calculate_corners(self) -> np.ndarray:
         perp_vector = np.array([-np.sin(self.angle), np.cos(self.angle)])
@@ -224,18 +224,16 @@ class Car:
         )
 
 
-def is_point_in_rectangle(
-    point: Tuple[float, float], rectangle: Tuple[Tuple[float, float], Tuple[float, float]]
-) -> bool:
+def is_point_in_rectangle(point: Point, rectangle: Tuple[Point, Point]) -> bool:
     x, y = point
     (x1, y1), (x2, y2) = rectangle
     return x1 <= x <= x2 and y1 <= y <= y2
 
 
 def is_crossing_line(
-    prev_point: Tuple[float, float],
-    current_point: Tuple[float, float],
-    line: Tuple[Tuple[float, float], Tuple[float, float]],
+    prev_point: Point,
+    current_point: Point,
+    line: Line,
 ) -> bool:
     (x1, y1), (x2, y2) = line
 
@@ -330,7 +328,7 @@ def calculate_stop_score(car: Car, stop_zone: StopZone, config: Config) -> int:
     return normalized_score
 
 
-def min_distance_to_line(point: Tuple[float, float], line: Tuple[Tuple[float, float], Tuple[float, float]]) -> float:
+def min_distance_to_line(point: Point, line: Line) -> float:
     """
     Calculate the minimum distance from a point to a line segment.
     """
@@ -353,7 +351,7 @@ def min_distance_to_line(point: Tuple[float, float], line: Tuple[Tuple[float, fl
     return min(d1, d2, d_line)
 
 
-def get_speed_at_line_crossing(car: Car, line: Tuple[Tuple[float, float], Tuple[float, float]]) -> float:
+def get_speed_at_line_crossing(car: Car, line: Line) -> float:
     """
     Get the speed of the car when it crossed the stop line.
     """
@@ -396,7 +394,7 @@ def distance(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
     return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
 
 
-def update_car(car: Car, location: Tuple[float, float], current_time: float, stop_zone: StopZone):
+def update_car(car: Car, location: Point, current_time: float, stop_zone: StopZone):
     car.update(location, current_time)
     update_car_in_stop_zone(car, stop_zone, current_time)
 
