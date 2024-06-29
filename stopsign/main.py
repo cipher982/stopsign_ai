@@ -387,7 +387,7 @@ def calculate_smoothness(track: List[Tuple[Tuple[float, float], float]]) -> floa
     return smoothness
 
 
-def distance(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
+def distance(point1: Point, point2: Point) -> float:
     """
     Calculate the Euclidean distance between two points.
     """
