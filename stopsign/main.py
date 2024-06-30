@@ -458,9 +458,19 @@ def process_frame(
 
 
 def visualize(frame, cars, boxes, stop_zone, n_frame) -> np.ndarray:
-    # Draw the stop box as a semi-transparent rectangle
+    # Create a copy of the frame for the overlay
     overlay = frame.copy()
-    cv2.rectangle(overlay, stop_zone.stop_box[0], stop_zone.stop_box[1], (0, 0, 255), -1)
+
+    # Check if any moving car is inside the stop zone
+    car_in_stop_zone = any(
+        stop_zone.is_in_stop_zone(car.state.location) for car in cars.values() if not car.state.is_parked
+    )
+
+    # Set the color based on whether a moving car is in the stop zone
+    color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)  # Green if car inside, white otherwise
+
+    # Draw the stop box as a semi-transparent rectangle
+    cv2.rectangle(overlay, stop_zone.stop_box[0], stop_zone.stop_box[1], color, -1)
     alpha = 0.3
     frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
 
@@ -476,9 +486,8 @@ def visualize(frame, cars, boxes, stop_zone, n_frame) -> np.ndarray:
             draw_box(frame, car, box, color=(0, 255, 0), thickness=2)  # moving cars
 
     # Path tracking code
-    for id in cars:
-        car = cars[id]
-        if cars[id].state.is_parked:
+    for car in cars.values():
+        if car.state.is_parked:
             continue
         locations = [loc for loc, _ in car.state.track]  # Extract locations from track
         points = np.array(locations, dtype=np.int32).reshape((-1, 1, 2))
