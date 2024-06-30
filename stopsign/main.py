@@ -1,10 +1,12 @@
 import argparse
+import logging
 import os
 import signal
 import sys
 import time
 from dataclasses import dataclass
 from dataclasses import field
+from typing import Dict
 from typing import List
 from typing import Tuple
 
@@ -29,6 +31,13 @@ SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
 OUTPUT_VIDEO_DIR = os.getenv("OUTPUT_VIDEO_DIR")
 
 os.environ["DISPLAY"] = ":0"
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+Point = Tuple[float, float]
+Line = Tuple[Point, Point]
 
 
 class Config:
@@ -64,10 +73,6 @@ class Config:
         # Stream settings
         self.fps = config["stream_settings"]["fps"]
         self.vehicle_classes = config["stream_settings"]["vehicle_classes"]
-
-
-Point = Tuple[float, float]
-Line = Tuple[Point, Point]
 
 
 @dataclass
@@ -173,7 +178,7 @@ class Car:
         self.kalman_filter = KalmanFilterWrapper(process_noise=10, measurement_noise=10)
         self.config = config
 
-    def update(self, location: Tuple[float, float], timestamp: float):
+    def update(self, location: Tuple[float, float], timestamp: float, stop_zone: StopZone):
         self.kalman_filter.predict()
         smoothed_location = self.kalman_filter.update(np.array(location))
         self.state.location = (float(smoothed_location[0]), float(smoothed_location[1]))
@@ -182,8 +187,35 @@ class Car:
         self._update_speed(timestamp)
         self._update_movement_status()
         self._update_parked_status()
+        self._update_stop_zone(stop_zone, timestamp)
 
         self.state.last_update_time = timestamp
+
+    def _update_stop_zone(self, stop_zone: StopZone, current_time: float):
+        prev_location = self.state.track[-2][0] if len(self.state.track) > 1 else self.state.location
+
+        if self.state.stop_zone_state == "APPROACHING":
+            if is_crossing_line(prev_location, self.state.location, stop_zone.stop_line):
+                self.state.stop_zone_state = "IN_STOP_ZONE"
+                self.state.entry_time = current_time
+
+        elif self.state.stop_zone_state == "IN_STOP_ZONE":
+            self.state.min_speed_in_zone = min(self.state.min_speed_in_zone, self.state.speed)
+
+            if self.state.speed == 0:
+                self.state.time_at_zero += current_time - self.state.last_update_time
+                if self.state.stop_position == (0.0, 0.0):
+                    self.state.stop_position = self.state.location
+
+            if is_crossing_line(prev_location, self.state.location, stop_zone.exit):
+                self.state.stop_zone_state = "EXITING"
+                self.state.exit_time = current_time
+
+        elif self.state.stop_zone_state == "EXITING":
+            if not is_point_in_rectangle(self.state.location, stop_zone.bounding_box):
+                self.state.stop_zone_state = "SCORED"
+                self.state.stop_score = calculate_stop_score(self, stop_zone, self.config)
+                self.state.scored = True
 
     def set_stop_score(self, score: int):
         self.state.stop_score = score
@@ -260,6 +292,29 @@ class Car:
         )
 
 
+class CarTracker:
+    def __init__(self, config: Config):
+        self.cars: Dict[int, Car] = {}
+        self.config = config
+
+    def update_cars(self, boxes: List, timestamp: float, stop_zone: StopZone) -> None:
+        for box in boxes:
+            try:
+                car_id = int(box.id.item())
+                x, y, w, h = box.xywh[0]
+                location = (float(x), float(y))
+
+                if car_id not in self.cars:
+                    self.cars[car_id] = Car(id=car_id, config=self.config)
+
+                self.cars[car_id].update(location, timestamp, stop_zone)
+            except Exception as e:
+                logger.error(f"Error updating car {box.id.item()}: {str(e)}")
+
+    def get_cars(self) -> Dict[int, Car]:
+        return self.cars
+
+
 def is_point_in_rectangle(point: Point, rectangle: Tuple[Point, Point]) -> bool:
     x, y = point
     (x1, y1), (x2, y2) = rectangle
@@ -289,34 +344,34 @@ def is_crossing_line(
     return True
 
 
-def update_car_in_stop_zone(car: Car, stop_zone: StopZone, current_time: float):
-    prev_location = car.state.track[-2][0] if len(car.state.track) > 1 else car.state.location
+# def update_car_in_stop_zone(car: Car, stop_zone: StopZone, current_time: float):
+#     prev_location = car.state.track[-2][0] if len(car.state.track) > 1 else car.state.location
 
-    if car.state.stop_zone_state == "APPROACHING":
-        if is_crossing_line(prev_location, car.state.location, stop_zone.stop_line):
-            car.state.stop_zone_state = "IN_STOP_ZONE"
-            car.state.entry_time = current_time
+#     if car.state.stop_zone_state == "APPROACHING":
+#         if is_crossing_line(prev_location, car.state.location, stop_zone.stop_line):
+#             car.state.stop_zone_state = "IN_STOP_ZONE"
+#             car.state.entry_time = current_time
 
-    elif car.state.stop_zone_state == "IN_STOP_ZONE":
-        car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, car.state.speed)
+#     elif car.state.stop_zone_state == "IN_STOP_ZONE":
+#         car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, car.state.speed)
 
-        if car.state.speed == 0:
-            car.state.time_at_zero += current_time - car.state.last_update_time
-            if car.state.stop_position == (0.0, 0.0):
-                car.state.stop_position = car.state.location
+#         if car.state.speed == 0:
+#             car.state.time_at_zero += current_time - car.state.last_update_time
+#             if car.state.stop_position == (0.0, 0.0):
+#                 car.state.stop_position = car.state.location
 
-        if is_crossing_line(prev_location, car.state.location, stop_zone.exit):
-            car.state.stop_zone_state = "EXITING"
-            car.state.exit_time = current_time
+#         if is_crossing_line(prev_location, car.state.location, stop_zone.exit):
+#             car.state.stop_zone_state = "EXITING"
+#             car.state.exit_time = current_time
 
-    elif car.state.stop_zone_state == "EXITING":
-        if not is_point_in_rectangle(car.state.location, stop_zone.bounding_box):
-            car.state.stop_zone_state = "SCORED"
-            car.state.stop_score = calculate_stop_score(car, stop_zone, car.config)
-            car.state.scored = True
+#     elif car.state.stop_zone_state == "EXITING":
+#         if not is_point_in_rectangle(car.state.location, stop_zone.bounding_box):
+#             car.state.stop_zone_state = "SCORED"
+#             car.state.stop_score = calculate_stop_score(car, stop_zone, car.config)
+#             car.state.scored = True
 
-    if car.id == 3:
-        print(f"{car.id}: {car.state.stop_zone_state}")
+#     if car.id == 3:
+#         print(f"{car.id}: {car.state.stop_zone_state}")
 
 
 def calculate_stop_score(car: Car, stop_zone: StopZone, config: Config) -> int:
@@ -430,11 +485,6 @@ def distance(point1: Point, point2: Point) -> float:
     return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
 
 
-def update_car(car: Car, location: Point, current_time: float, stop_zone: StopZone):
-    car.update(location, current_time)
-    update_car_in_stop_zone(car, stop_zone, current_time)
-
-
 def process_frame(
     model: YOLO,
     frame: np.ndarray,
@@ -522,7 +572,7 @@ def main(input_source: str, config: Config):
         sys.exit(1)
 
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    # h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     max_x = w
 
@@ -548,6 +598,8 @@ def main(input_source: str, config: Config):
         stop_box_tolerance=config.stop_box_tolerance,
         min_stop_duration=config.min_stop_time,
     )
+
+    car_tracker = CarTracker(config)
 
     # Begin streaming loop
     print("Streaming...")
@@ -577,8 +629,6 @@ def main(input_source: str, config: Config):
             if len(frame_buffer) > buffer_size:
                 frame_buffer.pop(0)
 
-            # print(f"Frame {frame_count} - Timestamp: {timestamp:.2f}s")
-
             # Crop, Scale, Model the frame
             frame, boxes = process_frame(
                 model=model,
@@ -589,22 +639,8 @@ def main(input_source: str, config: Config):
                 vehicle_classes=config.vehicle_classes,
             )
 
-            # Update or create car objects
-            for box in boxes:
-                try:
-                    track_id = int(box.id.item())
-                    x, y, w, h = box.xywh[0]  # type: ignore
-                    location = (float(x), float(y))
-
-                    if track_id in cars:
-                        car = cars[track_id]
-                    else:
-                        car = Car(id=track_id, config=config)
-                        cars[track_id] = car
-
-                    update_car(car, location, timestamp, stop_zone)
-                except Exception:
-                    pass
+            # Update the car tracker
+            car_tracker.update_cars(boxes, timestamp, stop_zone)
 
             # Visualize only non-parked cars
             try:
