@@ -344,36 +344,6 @@ def is_crossing_line(
     return True
 
 
-# def update_car_in_stop_zone(car: Car, stop_zone: StopZone, current_time: float):
-#     prev_location = car.state.track[-2][0] if len(car.state.track) > 1 else car.state.location
-
-#     if car.state.stop_zone_state == "APPROACHING":
-#         if is_crossing_line(prev_location, car.state.location, stop_zone.stop_line):
-#             car.state.stop_zone_state = "IN_STOP_ZONE"
-#             car.state.entry_time = current_time
-
-#     elif car.state.stop_zone_state == "IN_STOP_ZONE":
-#         car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, car.state.speed)
-
-#         if car.state.speed == 0:
-#             car.state.time_at_zero += current_time - car.state.last_update_time
-#             if car.state.stop_position == (0.0, 0.0):
-#                 car.state.stop_position = car.state.location
-
-#         if is_crossing_line(prev_location, car.state.location, stop_zone.exit):
-#             car.state.stop_zone_state = "EXITING"
-#             car.state.exit_time = current_time
-
-#     elif car.state.stop_zone_state == "EXITING":
-#         if not is_point_in_rectangle(car.state.location, stop_zone.bounding_box):
-#             car.state.stop_zone_state = "SCORED"
-#             car.state.stop_score = calculate_stop_score(car, stop_zone, car.config)
-#             car.state.scored = True
-
-#     if car.id == 3:
-#         print(f"{car.id}: {car.state.stop_zone_state}")
-
-
 def calculate_stop_score(car: Car, stop_zone: StopZone, config: Config) -> int:
     """
     Calculate the stop score for a car based on its behavior in the stop zone.
@@ -603,7 +573,6 @@ def main(input_source: str, config: Config):
 
     # Begin streaming loop
     print("Streaming...")
-    cars = {}
     frame_count = 0
     frame_buffer = []
     buffer_size = 5
@@ -643,17 +612,13 @@ def main(input_source: str, config: Config):
             car_tracker.update_cars(boxes, timestamp, stop_zone)
 
             # Visualize only non-parked cars
-            try:
-                annotated_frame = visualize(
-                    frame,
-                    cars,
-                    boxes,
-                    stop_zone,
-                    frame_count,
-                )
-            except Exception as e:
-                annotated_frame = frame
-                print(f"Visualization failed: {e}")
+            annotated_frame = visualize(
+                frame,
+                car_tracker.cars,
+                boxes,
+                stop_zone,
+                frame_count,
+            )
 
             # Draw the gridlines for debugging
             if config.draw_grid:
