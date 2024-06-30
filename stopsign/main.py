@@ -9,6 +9,7 @@ from dataclasses import field
 from typing import Dict
 from typing import List
 from typing import Tuple
+from typing import cast
 
 import cv2
 import dotenv
@@ -156,19 +157,45 @@ class StopZone:
         )
         return entry, exit
 
-    def _calculate_stop_box(self) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    def _calculate_stop_box(self) -> Tuple[Point, Point]:
         left_x = min(self.stop_line[0][0], self.stop_line[1][0]) - self.stop_box_tolerance
         right_x = max(self.stop_line[0][0], self.stop_line[1][0]) + self.stop_box_tolerance
         top_y = min(self.stop_line[0][1], self.stop_line[1][1])
         bottom_y = max(self.stop_line[0][1], self.stop_line[1][1])
         return ((int(left_x), int(top_y)), (int(right_x), int(bottom_y)))
 
-    def _calculate_bounding_box(self) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    def _calculate_bounding_box(self) -> Tuple[Point, Point]:
         x_coords, y_coords = self.corners[:, 0], self.corners[:, 1]
         return ((min(x_coords), min(y_coords)), (max(x_coords), max(y_coords)))
 
-    def is_in_stop_zone(self, point: Tuple[int, int]) -> bool:
+    def is_in_stop_zone(self, point: Point) -> bool:
         return cv2.pointPolygonTest(self.corners, point, False) >= 0
+
+    def is_crossing_line(self, prev_point: Point, current_point: Point, line: Line) -> bool:
+        def ccw(A, B, C):
+            return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+
+        (x1, y1), (x2, y2) = line
+        return ccw(prev_point, (x1, y1), (x2, y2)) != ccw(current_point, (x1, y1), (x2, y2)) and ccw(
+            prev_point, current_point, (x1, y1)
+        ) != ccw(prev_point, current_point, (x2, y2))
+
+    def min_distance_to_line(self, point: Point, line: Line) -> float:
+        x, y = point
+        (x1, y1), (x2, y2) = line
+
+        d1 = ((x - x1) ** 2 + (y - y1) ** 2) ** 0.5
+        d2 = ((x - x2) ** 2 + (y - y2) ** 2) ** 0.5
+
+        line_length = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+        if line_length == 0:
+            return min(d1, d2)
+
+        t = max(0, min(1, ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / (line_length**2)))
+        projection = (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+        d_line = ((x - projection[0]) ** 2 + (y - projection[1]) ** 2) ** 0.5
+
+        return min(d1, d2, d_line)
 
 
 class Car:
@@ -178,96 +205,55 @@ class Car:
         self.kalman_filter = KalmanFilterWrapper(process_noise=10, measurement_noise=10)
         self.config = config
 
-    def update(self, location: Tuple[float, float], timestamp: float, stop_zone: StopZone):
+    def update(self, location: Tuple[float, float], timestamp: float) -> None:
+        """Update the car's state with new location data."""
+        self._update_location(location, timestamp)
+        self._update_speed(timestamp)
+        self._update_movement_status()
+        self._update_parked_status()
+
+    def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
+        """Update the car's location using Kalman filter."""
         self.kalman_filter.predict()
         smoothed_location = self.kalman_filter.update(np.array(location))
         self.state.location = (float(smoothed_location[0]), float(smoothed_location[1]))
         self.state.track.append((location, timestamp))
-
-        self._update_speed(timestamp)
-        self._update_movement_status()
-        self._update_parked_status()
-        self._update_stop_zone(stop_zone, timestamp)
-
         self.state.last_update_time = timestamp
 
-    def _update_stop_zone(self, stop_zone: StopZone, current_time: float):
-        prev_location = self.state.track[-2][0] if len(self.state.track) > 1 else self.state.location
-
-        if self.state.stop_zone_state == "APPROACHING":
-            if is_crossing_line(prev_location, self.state.location, stop_zone.stop_line):
-                self.state.stop_zone_state = "IN_STOP_ZONE"
-                self.state.entry_time = current_time
-
-        elif self.state.stop_zone_state == "IN_STOP_ZONE":
-            self.state.min_speed_in_zone = min(self.state.min_speed_in_zone, self.state.speed)
-
-            if self.state.speed == 0:
-                self.state.time_at_zero += current_time - self.state.last_update_time
-                if self.state.stop_position == (0.0, 0.0):
-                    self.state.stop_position = self.state.location
-
-            if is_crossing_line(prev_location, self.state.location, stop_zone.exit):
-                self.state.stop_zone_state = "EXITING"
-                self.state.exit_time = current_time
-
-        elif self.state.stop_zone_state == "EXITING":
-            if not is_point_in_rectangle(self.state.location, stop_zone.bounding_box):
-                self.state.stop_zone_state = "SCORED"
-                self.state.stop_score = calculate_stop_score(self, stop_zone, self.config)
-                self.state.scored = True
-
-    def set_stop_score(self, score: int):
-        self.state.stop_score = score
-        self.state.scored = True
-
-    def _update_speed(self, timestamp: float):
+    def _update_speed(self, current_timestamp: float) -> None:
+        """Calculate and update the car's speed."""
         history_length = min(len(self.state.track), 10)
         if history_length > 1:
-            past_positions = np.array([pos for pos, _ in self.state.track[-history_length:]])
-            past_times = np.array([t for _, t in self.state.track[-history_length:]])
+            # Use only the last 10 positions (or less if not available)
+            recent_track = self.state.track[-history_length:]
 
-            time_diffs = np.diff(past_times)
-            position_diffs = np.diff(past_positions, axis=0)
+            # Calculate time differences and distances
+            time_diffs = [current_timestamp - t for _, t in recent_track]
+            positions = np.array([pos for pos, _ in recent_track])
+            distances = np.linalg.norm(np.diff(positions, axis=0), axis=1)
 
-            speeds = np.linalg.norm(position_diffs, axis=1) / time_diffs
+            # Calculate speeds
+            speeds = distances / np.diff(time_diffs)
 
-            # Apply moving average filter
-            window_size = min(10, len(speeds))
-            smoothed_speed = np.convolve(speeds, np.ones(window_size) / window_size, mode="valid")
-
-            # Calculate median speed
+            # Use median speed to reduce impact of outliers
             median_speed = np.median(speeds)
-
-            # Use median speed if available, otherwise use smoothed speed
-            if len(speeds) > 0:
-                self.state.speed = float(median_speed)
-            elif len(smoothed_speed) > 0:
-                self.state.speed = float(smoothed_speed[-1])
-            else:
-                self.state.speed = 0.0
+            self.state.speed = float(median_speed) if len(speeds) > 0 else 0.0
         else:
             self.state.speed = 0.0
 
-        # Ensure speed is non-negative
         self.state.speed = abs(self.state.speed)
+        self.state.speed = min(self.state.speed, 200)  # Max speed limit
 
-        # Add a maximum speed limit to filter out unrealistic spikes
-        max_speed_limit = 200  # pixels per second
-        self.state.speed = min(self.state.speed, max_speed_limit)
-
-        # Apply a low-pass filter
+        # Apply low-pass filter
         alpha = 0.2
-        prev_speed = getattr(self.state, "prev_speed", self.state.speed)
-        self.state.speed = alpha * self.state.speed + (1 - alpha) * prev_speed
+        self.state.speed = alpha * self.state.speed + (1 - alpha) * self.state.prev_speed
         self.state.prev_speed = self.state.speed
 
-        # Set a minimum speed threshold
-        min_speed_threshold = 1.0  # pixels per second
-        if self.state.speed < min_speed_threshold:
-            self.state.speed = 0.0
+        # Set minimum speed threshold
+        self.state.speed = 0.0 if self.state.speed < 1.0 else self.state.speed
 
-    def _update_movement_status(self):
+    def _update_movement_status(self) -> None:
+        """Update the car's movement status based on its speed."""
         if self.state.speed < self.config.max_movement_speed:
             self.state.consecutive_moving_frames = 0
             self.state.consecutive_stationary_frames += 1
@@ -275,7 +261,8 @@ class Car:
             self.state.consecutive_moving_frames += 1
             self.state.consecutive_stationary_frames = 0
 
-    def _update_parked_status(self):
+    def _update_parked_status(self) -> None:
+        """Update the car's parked status based on its movement."""
         if self.state.is_parked:
             if self.state.consecutive_moving_frames >= self.config.unparked_frame_threshold:
                 self.state.is_parked = False
@@ -285,7 +272,7 @@ class Car:
                 self.state.is_parked = True
                 self.state.consecutive_moving_frames = 0
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"Car {self.id} @ ({self.state.location[0]:.2f}, {self.state.location[1]:.2f}) "
             f"(Speed: {self.state.speed:.1f}px/s, Parked: {self.state.is_parked})"
@@ -297,162 +284,148 @@ class CarTracker:
         self.cars: Dict[int, Car] = {}
         self.config = config
 
-    def update_cars(self, boxes: List, timestamp: float, stop_zone: StopZone) -> None:
+    def update_cars(self, boxes: List, timestamp: float) -> None:
         for box in boxes:
-            try:
-                car_id = int(box.id.item())
-                x, y, w, h = box.xywh[0]
-                location = (float(x), float(y))
+            # try:
+            car_id = int(box.id.item())
+            x, y, w, h = box.xywh[0]
+            location = (float(x), float(y))
 
-                if car_id not in self.cars:
-                    self.cars[car_id] = Car(id=car_id, config=self.config)
+            if car_id not in self.cars:
+                self.cars[car_id] = Car(id=car_id, config=self.config)
 
-                self.cars[car_id].update(location, timestamp, stop_zone)
-            except Exception as e:
-                logger.error(f"Error updating car {box.id.item()}: {str(e)}")
+            self.cars[car_id].update(location, timestamp)
+            # except Exception as e:
+            #     logger.error(f"Error updating car {box.id.item()}: {str(e)}")
 
     def get_cars(self) -> Dict[int, Car]:
         return self.cars
 
 
-def is_point_in_rectangle(point: Point, rectangle: Tuple[Point, Point]) -> bool:
-    x, y = point
-    (x1, y1), (x2, y2) = rectangle
-    return x1 <= x <= x2 and y1 <= y <= y2
+class StopDetector:
+    def __init__(self, config: Config):
+        self.config = config
+        self.stop_zone = self._create_stop_zone()
 
+    def _create_stop_zone(self) -> StopZone:
+        stop_line: Line = (
+            cast(Point, tuple(self.config.stop_line[0])),  # First point
+            cast(Point, tuple(self.config.stop_line[1])),  # Second point
+        )
+        return StopZone(
+            stop_line=stop_line,
+            stop_box_tolerance=self.config.stop_box_tolerance,
+            min_stop_duration=self.config.min_stop_time,
+        )
 
-def is_crossing_line(
-    prev_point: Point,
-    current_point: Point,
-    line: Line,
-) -> bool:
-    (x1, y1), (x2, y2) = line
+    def update_car_stop_status(self, car: Car, timestamp: float) -> None:
+        if self.stop_zone.is_in_stop_zone(car.state.location):
+            self._handle_car_in_stop_zone(car, timestamp)
+        else:
+            self._handle_car_outside_stop_zone(car)
 
-    def ccw(A, B, C):
-        return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+    def _handle_car_in_stop_zone(self, car: Car, timestamp: float) -> None:
+        if car.state.stop_zone_state == "APPROACHING":
+            car.state.stop_zone_state = "ENTERED"
+            car.state.entry_time = timestamp
+        elif car.state.stop_zone_state == "ENTERED":
+            car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, car.state.speed)
+            if car.state.speed == 0:
+                car.state.time_at_zero += timestamp - car.state.last_update_time
+            if self._is_crossing_stop_line(car):
+                car.state.stop_zone_state = "EXITING"
+                car.state.exit_time = timestamp
 
-    # Check if the line segment between prev_point and current_point intersects with the given line
-    intersects = ccw(prev_point, (x1, y1), (x2, y2)) != ccw(current_point, (x1, y1), (x2, y2)) and ccw(
-        prev_point, current_point, (x1, y1)
-    ) != ccw(prev_point, current_point, (x2, y2))
+    def _handle_car_outside_stop_zone(self, car: Car) -> None:
+        if car.state.stop_zone_state in ["ENTERED", "EXITING"]:
+            car.state.stop_zone_state = "EXITED"
+            if not car.state.scored:
+                car.state.stop_score = self.calculate_stop_score(car)
+                car.state.scored = True
+        elif car.state.stop_zone_state == "EXITED":
+            car.state.stop_zone_state = "APPROACHING"
+            car.state.min_speed_in_zone = float("inf")
+            car.state.time_at_zero = 0.0
+            car.state.entry_time = 0.0
+            car.state.exit_time = 0.0
+            car.state.scored = False
 
-    # If not intersecting, check if the current point is very close to the line
-    if not intersects:
-        distance = min_distance_to_line(current_point, line)
-        return distance < 5  # Adjust this threshold as needed
+    def _is_crossing_stop_line(self, car: Car) -> bool:
+        if len(car.state.track) < 2:
+            return False
+        prev_point, _ = car.state.track[-2]
+        current_point = car.state.location
+        return self.stop_zone.is_crossing_line(prev_point, current_point, self.stop_zone.stop_line)
 
-    return True
+    def calculate_stop_score(self, car: Car) -> int:
+        base_score = 10
 
+        # Stopping
+        if car.state.min_speed_in_zone == 0:
+            full_stop_bonus = 3
+            rolling_stop_penalty = 0
+        else:
+            full_stop_bonus = 0
+            rolling_stop_penalty = min(car.state.min_speed_in_zone * 2, 3)
 
-def calculate_stop_score(car: Car, stop_zone: StopZone, config: Config) -> int:
-    """
-    Calculate the stop score for a car based on its behavior in the stop zone.
-    """
-    base_score = 10
+        # Stop position
+        if car.state.stop_position != (0.0, 0.0):
+            distance_from_line = self.stop_zone.min_distance_to_line(car.state.stop_position, self.stop_zone.stop_line)
+            position_penalty = min(distance_from_line / self.config.stop_box_tolerance, 2)
+        else:
+            position_penalty = 2
 
-    # Stopping
-    if car.state.min_speed_in_zone == 0:
-        full_stop_bonus = 3
-        rolling_stop_penalty = 0
-    else:
-        full_stop_bonus = 0
-        rolling_stop_penalty = min(car.state.min_speed_in_zone * 2, 3)
+        # Stop duration
+        stop_duration_score = min(car.state.time_at_zero / self.config.min_stop_time, 1) * 3
 
-    # Stop position
-    if car.state.stop_position != (0.0, 0.0):
-        distance_from_line = min_distance_to_line(car.state.stop_position, stop_zone.stop_line)
-        position_penalty = min(distance_from_line / config.stop_box_tolerance, 2)
-    else:
-        position_penalty = 2
+        # Speed at stop line crossing
+        stop_line_crossing_speed = self._get_speed_at_line_crossing(car)
+        line_crossing_penalty = min(stop_line_crossing_speed / self.config.max_movement_speed, 2)
 
-    # Stop duration
-    stop_duration_score = min(car.state.time_at_zero / config.min_stop_time, 1) * 3
+        # Smooth deceleration and acceleration
+        smoothness_score = self._calculate_smoothness(car.state.track) * 2
 
-    # Speed at stop line crossing
-    stop_line_crossing_speed = get_speed_at_line_crossing(car, stop_zone.stop_line)
-    line_crossing_penalty = min(stop_line_crossing_speed / config.max_movement_speed, 2)
+        final_score = (
+            base_score
+            + full_stop_bonus
+            - rolling_stop_penalty
+            - position_penalty
+            + stop_duration_score
+            - line_crossing_penalty
+            + smoothness_score
+        )
 
-    # Smooth deceleration and acceleration
-    smoothness_score = calculate_smoothness(car.state.track) * 2
+        return max(min(round(final_score), 10), 0)  # Ensure score is between 0 and 10
 
-    final_score = (
-        base_score
-        + full_stop_bonus
-        - rolling_stop_penalty
-        - position_penalty
-        + stop_duration_score
-        - line_crossing_penalty
-        + smoothness_score
-    )
+    def _get_speed_at_line_crossing(self, car: Car) -> float:
+        for i in range(1, len(car.state.track)):
+            prev_point, prev_time = car.state.track[i - 1]
+            curr_point, curr_time = car.state.track[i]
+            if self.stop_zone.is_crossing_line(prev_point, curr_point, self.stop_zone.stop_line):
+                return car.state.speed  # Assuming speed is updated at each track point
+        return 0.0  # Return 0 if line crossing not found (shouldn't happen in normal operation)
 
-    normalized_score = max(min(round(final_score), 10), 0)  # Ensure score is between 0 and 10
-    return normalized_score
+    def _calculate_smoothness(self, track: List[Tuple[Tuple[float, float], float]]) -> float:
+        if len(track) < 3:
+            return 1.0  # Not enough data for smoothness calculation
 
+        accelerations = []
+        for i in range(1, len(track) - 1):
+            prev_pos, prev_time = track[i - 1]
+            curr_pos, curr_time = track[i]
+            next_pos, next_time = track[i + 1]
 
-def min_distance_to_line(point: Point, line: Line) -> float:
-    """
-    Calculate the minimum distance from a point to a line segment.
-    """
-    x, y = point
-    (x1, y1), (x2, y2) = line
+            prev_speed = np.linalg.norm(np.array(curr_pos) - np.array(prev_pos)) / (curr_time - prev_time)
+            next_speed = np.linalg.norm(np.array(next_pos) - np.array(curr_pos)) / (next_time - curr_time)
 
-    # Calculate the distance to each endpoint
-    d1 = ((x - x1) ** 2 + (y - y1) ** 2) ** 0.5
-    d2 = ((x - x2) ** 2 + (y - y2) ** 2) ** 0.5
+            acceleration = (next_speed - prev_speed) / (next_time - prev_time)
+            accelerations.append(acceleration)
 
-    # Calculate the distance to the line itself
-    line_length = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-    if line_length == 0:
-        return min(d1, d2)
+        # Calculate smoothness as the inverse of acceleration variance
+        acceleration_variance = np.var(accelerations)
+        smoothness = float(1 / (1 + acceleration_variance))
 
-    t = max(0, min(1, ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / (line_length**2)))
-    projection = (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
-    d_line = ((x - projection[0]) ** 2 + (y - projection[1]) ** 2) ** 0.5
-
-    return min(d1, d2, d_line)
-
-
-def get_speed_at_line_crossing(car: Car, line: Line) -> float:
-    """
-    Get the speed of the car when it crossed the stop line.
-    """
-    for i in range(1, len(car.state.track)):
-        prev_point, prev_time = car.state.track[i - 1]
-        curr_point, curr_time = car.state.track[i]
-        if is_crossing_line(prev_point, curr_point, line):
-            return car.state.speed  # Assuming speed is updated at each track point
-    return 0.0  # Return 0 if line crossing not found (shouldn't happen in normal operation)
-
-
-def calculate_smoothness(track: List[Tuple[Tuple[float, float], float]]) -> float:
-    """
-    Calculate the smoothness of the car's movement through the stop zone.
-    """
-    if len(track) < 3:
-        return 1.0  # Not enough data for smoothness calculation
-
-    accelerations = []
-    for i in range(1, len(track) - 1):
-        prev_pos, prev_time = track[i - 1]
-        curr_pos, curr_time = track[i]
-        next_pos, next_time = track[i + 1]
-
-        prev_speed = distance(prev_pos, curr_pos) / (curr_time - prev_time)
-        next_speed = distance(curr_pos, next_pos) / (next_time - curr_time)
-
-        acceleration = (next_speed - prev_speed) / (next_time - prev_time)
-        accelerations.append(abs(acceleration))
-
-    avg_acceleration = sum(accelerations) / len(accelerations)
-    smoothness = 1 / (1 + avg_acceleration)  # Normalize to 0-1 range
-    return smoothness
-
-
-def distance(point1: Point, point2: Point) -> float:
-    """
-    Calculate the Euclidean distance between two points.
-    """
-    return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
+        return smoothness
 
 
 def process_frame(
@@ -609,7 +582,7 @@ def main(input_source: str, config: Config):
             )
 
             # Update the car tracker
-            car_tracker.update_cars(boxes, timestamp, stop_zone)
+            car_tracker.update_cars(boxes, timestamp)
 
             # Visualize only non-parked cars
             annotated_frame = visualize(
