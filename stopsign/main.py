@@ -457,7 +457,7 @@ def process_frame(
     return frame, boxes
 
 
-def visualize(frame, cars, boxes, stop_zone, n_frame) -> np.ndarray:
+def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_frame: int) -> np.ndarray:
     # Create a copy of the frame for the overlay
     overlay = frame.copy()
 
@@ -470,12 +470,16 @@ def visualize(frame, cars, boxes, stop_zone, n_frame) -> np.ndarray:
     color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)  # Green if car inside, white otherwise
 
     # Draw the stop box as a semi-transparent rectangle
-    cv2.rectangle(overlay, stop_zone.stop_box[0], stop_zone.stop_box[1], color, -1)
+    top_left = tuple(map(int, stop_zone.stop_box[0]))
+    bottom_right = tuple(map(int, stop_zone.stop_box[1]))
+    cv2.rectangle(overlay, top_left, bottom_right, color, -1)
     alpha = 0.3
     frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
 
     # Plot the stop sign line
-    cv2.line(frame, stop_zone.stop_line[0], stop_zone.stop_line[1], (0, 0, 255), 2)
+    start_point = tuple(map(int, stop_zone.stop_line[0]))
+    end_point = tuple(map(int, stop_zone.stop_line[1]))
+    cv2.line(frame, start_point, end_point, (0, 0, 255), 2)
 
     # Draw boxes for each car
     for box in boxes:
