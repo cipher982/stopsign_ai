@@ -97,32 +97,29 @@ class CarState:
     stop_position: Point = field(default_factory=lambda: (0.0, 0.0))
 
 
-@dataclass
 class StopZone:
-    stop_line: Line
-    stop_box_tolerance: int
-    min_stop_duration: float
-    zone_length: int = 200
-
-    def __post_init__(self):
+    def __init__(self, stop_line: Line, stop_box_tolerance: int, min_stop_duration: float):
+        self.stop_line = stop_line
+        self.stop_box_tolerance = stop_box_tolerance
+        self.min_stop_duration = min_stop_duration
+        self.zone_length = 200
         self._calculate_geometry()
 
     def _calculate_geometry(self):
         self.midpoint = self._midpoint(self.stop_line)
+        self._angle = self._calculate_angle()
         self.zone_width = np.linalg.norm(np.array(self.stop_line[1]) - np.array(self.stop_line[0]))
         self.corners = self._calculate_corners()
         self.entry, self.exit = self._calculate_entry_exit()
         self.stop_box = self._calculate_stop_box()
-        self.bounding_box = self._calculate_bounding_box()
-
-    @property
-    def angle(self) -> float:
-        dx, dy = np.array(self.stop_line[1]) - np.array(self.stop_line[0])
-        return np.arctan2(dy, dx)
 
     def _midpoint(self, line: Line) -> Point:
         mid = (np.array(line[0]) + np.array(line[1])) / 2
         return float(mid[0]), float(mid[1])
+
+    def _calculate_angle(self) -> float:
+        dx, dy = np.array(self.stop_line[1]) - np.array(self.stop_line[0])
+        return np.arctan2(dy, dx)
 
     def _calculate_corners(self) -> np.ndarray:
         perp_vector = np.array([-np.sin(self.angle), np.cos(self.angle)])
@@ -136,6 +133,25 @@ class StopZone:
             self.midpoint + half_width * direction - half_length * perp_vector,
         ]
         return np.array(corners, dtype=np.int32)
+
+    def _calculate_stop_box(self) -> List[Point]:
+        perp_vector = np.array([-np.sin(self.angle), np.cos(self.angle)])
+        direction = np.array([np.cos(self.angle), np.sin(self.angle)])
+        half_width = self.zone_width / 2 + self.stop_box_tolerance
+        half_length = self.stop_box_tolerance
+
+        corners = [
+            self.midpoint + half_width * direction + half_length * perp_vector,
+            self.midpoint - half_width * direction + half_length * perp_vector,
+            self.midpoint - half_width * direction - half_length * perp_vector,
+            self.midpoint + half_width * direction - half_length * perp_vector,
+        ]
+        return [cast(Point, tuple(corner)) for corner in corners]
+
+    @property
+    def angle(self) -> float:
+        dx, dy = np.array(self.stop_line[1]) - np.array(self.stop_line[0])
+        return np.arctan2(dy, dx)
 
     def _calculate_entry_exit(self) -> Tuple[Line, Line]:
         entry_offset, exit_offset = 100, 50
@@ -156,13 +172,6 @@ class StopZone:
             (float(exit_mid[0] + half_width * direction[0]), float(exit_mid[1] + half_width * direction[1])),
         )
         return entry, exit
-
-    def _calculate_stop_box(self) -> Tuple[Point, Point]:
-        left_x = min(self.stop_line[0][0], self.stop_line[1][0]) - self.stop_box_tolerance
-        right_x = max(self.stop_line[0][0], self.stop_line[1][0]) + self.stop_box_tolerance
-        top_y = min(self.stop_line[0][1], self.stop_line[1][1])
-        bottom_y = max(self.stop_line[0][1], self.stop_line[1][1])
-        return ((int(left_x), int(top_y)), (int(right_x), int(bottom_y)))
 
     def _calculate_bounding_box(self) -> Tuple[Point, Point]:
         x_coords, y_coords = self.corners[:, 0], self.corners[:, 1]
@@ -470,11 +479,13 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
     color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)  # Green if car inside, white otherwise
 
     # Draw the stop box as a semi-transparent rectangle
-    top_left = tuple(map(int, stop_zone.stop_box[0]))
-    bottom_right = tuple(map(int, stop_zone.stop_box[1]))
-    cv2.rectangle(overlay, top_left, bottom_right, color, -1)
+    stop_box_corners = np.array(stop_zone._calculate_stop_box(), dtype=np.int32)
+    cv2.fillPoly(overlay, [stop_box_corners], color)
     alpha = 0.3
     frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+
+    # Draw the outline of the stop box
+    cv2.polylines(frame, [stop_box_corners], isClosed=True, color=color, thickness=2)
 
     # Plot the stop sign line
     start_point = tuple(map(int, stop_zone.stop_line[0]))
