@@ -331,7 +331,7 @@ class StopDetector:
         if self.stop_zone.is_in_stop_zone(car.state.location):
             self._handle_car_in_stop_zone(car, timestamp)
         else:
-            self._handle_car_outside_stop_zone(car)
+            self._handle_car_outside_stop_zone(car, timestamp)
 
     def _handle_car_in_stop_zone(self, car: Car, timestamp: float) -> None:
         if car.state.stop_zone_state == "APPROACHING":
@@ -344,20 +344,24 @@ class StopDetector:
             if self._is_crossing_stop_line(car):
                 car.state.stop_zone_state = "EXITING"
                 car.state.exit_time = timestamp
+                car.state.stop_position = car.state.location
 
-    def _handle_car_outside_stop_zone(self, car: Car) -> None:
+    def _handle_car_outside_stop_zone(self, car: Car, timestamp: float) -> None:
         if car.state.stop_zone_state in ["ENTERED", "EXITING"]:
             car.state.stop_zone_state = "EXITED"
-            if not car.state.scored:
+            if not car.state.scored and car.state.entry_time > 0:
                 car.state.stop_score = self.calculate_stop_score(car)
                 car.state.scored = True
+                print(f"Car {car.id} stop score: {car.state.stop_score}")  # Debug print
         elif car.state.stop_zone_state == "EXITED":
+            # Reset for next approach
             car.state.stop_zone_state = "APPROACHING"
             car.state.min_speed_in_zone = float("inf")
             car.state.time_at_zero = 0.0
             car.state.entry_time = 0.0
             car.state.exit_time = 0.0
             car.state.scored = False
+            car.state.stop_position = (0.0, 0.0)
 
     def _is_crossing_stop_line(self, car: Car) -> bool:
         if len(car.state.track) < 2:
@@ -564,6 +568,7 @@ def main(input_source: str, config: Config):
     )
 
     car_tracker = CarTracker(config)
+    stop_detector = StopDetector(config)
 
     # Begin streaming loop
     print("Streaming...")
@@ -604,6 +609,11 @@ def main(input_source: str, config: Config):
 
             # Update the car tracker
             car_tracker.update_cars(boxes, timestamp)
+
+            # Update stop status for each car
+            for car in car_tracker.get_cars().values():
+                if not car.state.is_parked:
+                    stop_detector.update_car_stop_status(car, timestamp)
 
             # Visualize only non-parked cars
             annotated_frame = visualize(
