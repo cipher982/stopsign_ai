@@ -299,17 +299,20 @@ class CarTracker:
 
     def update_cars(self, boxes: List, timestamp: float) -> None:
         for box in boxes:
-            # try:
-            car_id = int(box.id.item())
-            x, y, w, h = box.xywh[0]
-            location = (float(x), float(y))
+            if box.id is None:
+                logger.warning("Skipping box without ID")
+                continue
+            try:
+                car_id = int(box.id.item())
+                x, y, w, h = box.xywh[0]
+                location = (float(x), float(y))
 
-            if car_id not in self.cars:
-                self.cars[car_id] = Car(id=car_id, config=self.config)
+                if car_id not in self.cars:
+                    self.cars[car_id] = Car(id=car_id, config=self.config)
 
-            self.cars[car_id].update(location, timestamp)
-            # except Exception as e:
-            #     logger.error(f"Error updating car {box.id.item()}: {str(e)}")
+                self.cars[car_id].update(location, timestamp)
+            except Exception as e:
+                logger.error(f"Error updating car {box.id}: {str(e)}")
 
     def get_cars(self) -> Dict[int, Car]:
         return self.cars
@@ -499,11 +502,21 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
 
     # Draw boxes for each car
     for box in boxes:
-        car = cars[int(box.id.item())]
-        if car.state.is_parked:
-            draw_box(frame, car, box, color=(255, 255, 255), thickness=1)  # parked cars
-        else:
-            draw_box(frame, car, box, color=(0, 255, 0), thickness=2)  # moving cars
+        if box.id is None:
+            logger.warning("Skipping box without ID in visualize function")
+            continue
+        try:
+            car_id = int(box.id.item())
+            if car_id in cars:
+                car = cars[car_id]
+                if car.state.is_parked:
+                    draw_box(frame, car, box, color=(255, 255, 255), thickness=1)  # parked cars
+                else:
+                    draw_box(frame, car, box, color=(0, 255, 0), thickness=2)  # moving cars
+            else:
+                logger.warning(f"Car with ID {car_id} not found in cars dictionary")
+        except Exception as e:
+            logger.error(f"Error processing box in visualize function: {str(e)}")
 
     # Path tracking code
     for car in cars.values():
