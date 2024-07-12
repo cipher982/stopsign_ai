@@ -530,19 +530,33 @@ async def get():
     return HTMLResponse(content=html_content)
 
 
+def process_frame_task():
+    return process_and_annotate_frame()
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
 
+    frame_interval = max(1, int(config.fps / 10))
+    frame_count = 0
+    last_send_time = time.time()
+
     while True:
-        annotated_frame = process_and_annotate_frame()
+        frame_count += 1
+        annotated_frame = await asyncio.to_thread(process_frame_task)
+
         if annotated_frame is None:
             break
 
-        _, buffer = cv2.imencode(".jpg", annotated_frame)
-        jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-        await websocket.send_text(jpg_as_text)
-        await asyncio.sleep(1 / config.fps)
+        current_time = time.time()
+        if frame_count % frame_interval == 0 and current_time - last_send_time >= 0.1:
+            _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            jpg_as_text = base64.b64encode(buffer).decode("utf-8")
+            await websocket.send_text(jpg_as_text)
+            last_send_time = current_time
+
+        await asyncio.sleep(0.001)
 
 
 def initialize_video_capture(input_source):
