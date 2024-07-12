@@ -554,14 +554,14 @@ def initialize_video_capture(input_source):
         return open_rtsp_stream(RTSP_URL)
     elif input_source == "file":
         print(f"Opening video file: {SAMPLE_FILE_PATH}")
-        return cv2.VideoCapture(SAMPLE_FILE_PATH)
+        return cv2.VideoCapture(SAMPLE_FILE_PATH)  # type: ignore
     else:
         print("Error: Invalid input source")
         sys.exit(1)
 
 
 def initialize_components(config):
-    global model, car_tracker, stop_detector, video_writer
+    global model, car_tracker, stop_detector, video_writer, output_file_name
 
     if not MODEL_PATH:
         print("Error: YOLO_MODEL_PATH environment variable is not set.")
@@ -573,7 +573,7 @@ def initialize_components(config):
     stop_detector = StopDetector(config)
 
     if config.save_video:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
         output_file_name = f"{OUTPUT_VIDEO_DIR}/output_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
         video_writer = cv2.VideoWriter(
             filename=output_file_name,
@@ -584,6 +584,7 @@ def initialize_components(config):
         )
     else:
         video_writer = None
+        output_file_name = None
 
     return video_writer
 
@@ -661,7 +662,7 @@ def main(input_source: str, config: Config, web_mode: bool):
         finally:
             cap.release()
             if config.save_video and video_writer:
-                print(f"Output video saved to: {video_writer.filename}")
+                print(f"Output video saved to: {output_file_name}")
                 video_writer.release()
             cv2.destroyAllWindows()
 
