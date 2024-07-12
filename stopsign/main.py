@@ -476,16 +476,13 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
     )
 
     # Set the color based on whether a moving car is in the stop zone
-    color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)  # Green if car inside, white otherwise
+    color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)  # Green if car inside, white else
 
     # Draw the stop box as a semi-transparent rectangle
     stop_box_corners = np.array(stop_zone._calculate_stop_box(), dtype=np.int32)
     cv2.fillPoly(overlay, [stop_box_corners], color)
     alpha = 0.3
     frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
-
-    # Draw the outline of the stop box
-    cv2.polylines(frame, [stop_box_corners], isClosed=True, color=color, thickness=2)
 
     # Plot the stop sign line
     start_point = tuple(map(int, stop_zone.stop_line[0]))
@@ -624,7 +621,7 @@ def main(input_source: str, config: Config):
             cv2.imshow("Output", annotated_frame)
             cv2.waitKey(1)
 
-            if frame_count == 25:
+            if frame_count == 40:
                 print("Pausing...")
 
             if config.save_video:
