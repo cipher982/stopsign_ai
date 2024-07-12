@@ -1,7 +1,8 @@
 import argparse
+import asyncio
+import base64
 import logging
 import os
-import signal
 import sys
 import time
 from dataclasses import dataclass
@@ -15,6 +16,10 @@ import cv2
 import dotenv
 import numpy as np
 import yaml
+from fastapi import FastAPI
+from fastapi import WebSocket
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
 
 from stopsign.kalman_filter import KalmanFilterWrapper
@@ -22,7 +27,6 @@ from stopsign.utils.video import crop_scale_frame
 from stopsign.utils.video import draw_box
 from stopsign.utils.video import draw_gridlines
 from stopsign.utils.video import open_rtsp_stream
-from stopsign.utils.video import signal_handler
 
 dotenv.load_dotenv()
 
@@ -515,37 +519,61 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
     return frame
 
 
-def main(input_source: str, config: Config):
-    global cap, video_writer, max_x
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="stopsign"), name="static")
 
+
+@app.get("/")
+async def get():
+    with open("stopsign/index.html", "r") as f:
+        html_content = f.read()
+    return HTMLResponse(content=html_content)
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+
+    while True:
+        annotated_frame = process_and_annotate_frame()
+        if annotated_frame is None:
+            break
+
+        _, buffer = cv2.imencode(".jpg", annotated_frame)
+        jpg_as_text = base64.b64encode(buffer).decode("utf-8")
+        await websocket.send_text(jpg_as_text)
+        await asyncio.sleep(1 / config.fps)
+
+
+def initialize_video_capture(input_source):
     if input_source == "live":
         if not RTSP_URL:
             print("Error: RTSP_URL environment variable is not set.")
             sys.exit(1)
         print(f"Opening RTSP stream: {RTSP_URL}")
-        cap = open_rtsp_stream(RTSP_URL)
+        return open_rtsp_stream(RTSP_URL)
     elif input_source == "file":
         print(f"Opening video file: {SAMPLE_FILE_PATH}")
-        cap = cv2.VideoCapture(SAMPLE_FILE_PATH)  # type: ignore
+        return cv2.VideoCapture(SAMPLE_FILE_PATH)
     else:
         print("Error: Invalid input source")
         sys.exit(1)
 
-    if not cap.isOpened():
-        print("Error: Could not open video stream")
-        sys.exit()
+
+def initialize_components(config):
+    global model, car_tracker, stop_detector, video_writer
 
     if not MODEL_PATH:
         print("Error: YOLO_MODEL_PATH environment variable is not set.")
         sys.exit(1)
+    model = YOLO(MODEL_PATH)
+    print("Model loaded successfully")
 
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    # h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    max_x = w
+    car_tracker = CarTracker(config)
+    stop_detector = StopDetector(config)
 
     if config.save_video:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         output_file_name = f"{OUTPUT_VIDEO_DIR}/output_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
         video_writer = cv2.VideoWriter(
             filename=output_file_name,
@@ -554,104 +582,88 @@ def main(input_source: str, config: Config):
             fps=config.fps,
             frameSize=(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))),
         )
+    else:
+        video_writer = None
 
-    signal.signal(signal.SIGINT, signal_handler)
+    return video_writer
 
-    # Create the model
-    model = YOLO(MODEL_PATH)
-    print("Model loaded successfully")
 
-    stop_zone = StopZone(
-        stop_line=config.stop_line,  # type: ignore
-        stop_box_tolerance=config.stop_box_tolerance,
-        min_stop_duration=config.min_stop_time,
+def process_and_annotate_frame():
+    global frame_count
+    ret, frame = cap.read()
+    if not ret:
+        print("End of video file reached.")
+        return None
+
+    frame, boxes = process_frame(
+        model=model,
+        frame=frame,
+        scale=config.scale,
+        crop_top_ratio=config.crop_top,
+        crop_side_ratio=config.crop_side,
+        vehicle_classes=config.vehicle_classes,
     )
 
-    car_tracker = CarTracker(config)
-    stop_detector = StopDetector(config)
+    car_tracker.update_cars(boxes, time.time())
+    for car in car_tracker.get_cars().values():
+        if not car.state.is_parked:
+            stop_detector.update_car_stop_status(car, time.time())
 
-    # Begin streaming loop
-    print("Streaming...")
+    annotated_frame = visualize(
+        frame,
+        car_tracker.cars,
+        boxes,
+        stop_detector.stop_zone,
+        frame_count,
+    )
+
+    if config.draw_grid:
+        draw_gridlines(annotated_frame, config.grid_size)
+
+    frame_count += 1
+    return annotated_frame
+
+
+def main(input_source: str, config: Config, web_mode: bool):
+    global cap, frame_count
+
+    cap = initialize_video_capture(input_source)
+    if not cap.isOpened():
+        print("Error: Could not open video stream")
+        sys.exit()
+
+    video_writer = initialize_components(config)
     frame_count = 0
-    frame_buffer = []
-    buffer_size = 5
-    prev_frame_time = time.time()
-    try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("End of video file reached.")
-                break
 
-            # Get the timestamp for the frame
-            if input_source == "live":
-                current_time = time.time()
-                timestamp = current_time - prev_frame_time
-                prev_frame_time = current_time
-            else:  # Video file
-                frame_number = cap.get(cv2.CAP_PROP_POS_FRAMES)
-                timestamp = frame_number / fps
+    if web_mode:
+        import uvicorn
 
-            # Add the frame to the buffer
-            frame_buffer.append((frame, timestamp))
-            if len(frame_buffer) > buffer_size:
-                frame_buffer.pop(0)
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+    else:
+        try:
+            while True:
+                annotated_frame = process_and_annotate_frame()
+                if annotated_frame is None:
+                    break
 
-            # Crop, Scale, Model the frame
-            frame, boxes = process_frame(
-                model=model,
-                frame=frame,
-                scale=config.scale,
-                crop_top_ratio=config.crop_top,
-                crop_side_ratio=config.crop_side,
-                vehicle_classes=config.vehicle_classes,
-            )
+                cv2.imshow("Output", annotated_frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
 
-            # Update the car tracker
-            car_tracker.update_cars(boxes, timestamp)
+                if config.save_video and video_writer:
+                    assert annotated_frame.size > 0, "Error: Frame is empty"
+                    video_writer.write(annotated_frame)
 
-            # Update stop status for each car
-            for car in car_tracker.get_cars().values():
-                if not car.state.is_parked:
-                    stop_detector.update_car_stop_status(car, timestamp)
+        except Exception as e:
+            print(f"An error occurred: {str(e)}")
+            raise e
 
-            # Visualize only non-parked cars
-            annotated_frame = visualize(
-                frame,
-                car_tracker.cars,
-                boxes,
-                stop_zone,
-                frame_count,
-            )
-
-            # Draw the gridlines for debugging
-            if config.draw_grid:
-                draw_gridlines(annotated_frame, config.grid_size)
-
-            cv2.imshow("Output", annotated_frame)
-            cv2.waitKey(1)
-
-            if frame_count == 40:
-                print("Pausing...")
-
-            if config.save_video:
-                assert frame.size > 0, "Error: Frame is empty"
-                video_writer.write(annotated_frame)
-
-            frame_count += 1
-
-            # time.sleep(0.3)
-
-    except Exception as e:
-        print(f"An error occurred: {str(e)}")
-        raise e
-
-    finally:
-        cap.release()
-        if config.save_video:
-            print(f"Output video saved to: {output_file_name}")  # type: ignore
-            video_writer.release()
-        cv2.destroyAllWindows()
+        finally:
+            cap.release()
+            if config.save_video and video_writer:
+                print(f"Output video saved to: {video_writer.filename}")
+                video_writer.release()
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
@@ -659,11 +671,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "input_source", choices=["live", "file"], help="Input source type (live RTSP stream or video file)"
     )
+    parser.add_argument("--web", action="store_true", help="Run in web mode")
     args = parser.parse_args()
 
     config = Config("./config.yaml")
 
-    main(
-        input_source=args.input_source,
-        config=config,
-    )
+    main(input_source=args.input_source, config=config, web_mode=args.web)
