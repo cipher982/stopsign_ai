@@ -10,7 +10,7 @@ stopsign_detection:
   min_stop_time: 2  # seconds
   max_movement_speed: 20  # pixels / second
   parked_frame_threshold: 60
-  unparked_frame_threshold: 10
+  unparked_frame_threshold: 20
 
 tracking:
   use_kalman_filter: true
