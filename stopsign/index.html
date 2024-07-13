@@ -2,15 +2,33 @@
 <html>
 <head>
     <title>Stop Sign Compliance</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        #video {
+            width: 640px;
+            height: 480px;
+        }
+    </style>
 </head>
 <body>
     <h1>Stop Sign Compliance Stream</h1>
-    <img id="video-stream" src="">
+    <video id="video" controls></video>
     <script>
-        var ws = new WebSocket("ws://" + location.host + "/ws");
-        ws.onmessage = function(event) {
-            document.getElementById("video-stream").src = "data:image/jpeg;base64," + event.data;
-        };
+        var video = document.getElementById('video');
+        if (Hls.isSupported()) {
+            var hls = new Hls();
+            hls.loadSource('/static/stream.m3u8');
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                video.play();
+            });
+        }
+        else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = '/static/stream.m3u8';
+            video.addEventListener('loadedmetadata', function() {
+                video.play();
+            });
+        }
     </script>
 </body>
 </html>
