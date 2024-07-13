@@ -15,6 +15,7 @@ from typing import cast
 import cv2
 import dotenv
 import numpy as np
+import uvicorn
 import yaml
 from fastapi import FastAPI
 from fastapi import WebSocket
@@ -23,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
 
 from stopsign.kalman_filter import KalmanFilterWrapper
+from stopsign.stream_out import VideoStreamer
 from stopsign.utils.video import crop_scale_frame
 from stopsign.utils.video import draw_box
 from stopsign.utils.video import draw_gridlines
@@ -33,7 +35,7 @@ dotenv.load_dotenv()
 RTSP_URL = os.getenv("RTSP_URL")
 MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
 SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
-OUTPUT_VIDEO_DIR = os.getenv("OUTPUT_VIDEO_DIR")
+STREAM_BUFFER_DIR = "tmp_stream_buffer"
 
 os.environ["DISPLAY"] = ":0"
 
@@ -532,15 +534,29 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
     return frame
 
 
+async def process_frames():
+    global frame_count
+    while True:
+        annotated_frame = process_and_annotate_frame()
+        if annotated_frame is None:
+            break
+        await asyncio.sleep(1 / config.fps)  # Adjust sleep time based on desired frame rate
+
+
+async def run_server():
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000)
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="stopsign"), name="static")
+os.makedirs(STREAM_BUFFER_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=os.path.abspath(STREAM_BUFFER_DIR)), name="static")
 
 
 @app.get("/")
 async def get():
-    with open("stopsign/index.html", "r") as f:
-        html_content = f.read()
-    return HTMLResponse(content=html_content)
+    return HTMLResponse(content=open("stopsign/index.html", "r").read())
 
 
 def process_frame_task():
@@ -587,8 +603,8 @@ def initialize_video_capture(input_source):
         sys.exit(1)
 
 
-def initialize_components(config):
-    global model, car_tracker, stop_detector, video_writer, output_file_name
+def initialize_components(config: Config) -> None:
+    global model, car_tracker, stop_detector, streamer
 
     if not MODEL_PATH:
         print("Error: YOLO_MODEL_PATH environment variable is not set.")
@@ -599,21 +615,11 @@ def initialize_components(config):
     car_tracker = CarTracker(config)
     stop_detector = StopDetector(config)
 
-    if config.save_video:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
-        output_file_name = f"{OUTPUT_VIDEO_DIR}/output_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
-        video_writer = cv2.VideoWriter(
-            filename=output_file_name,
-            apiPreference=cv2.CAP_FFMPEG,
-            fourcc=fourcc,
-            fps=config.fps,
-            frameSize=(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))),
-        )
-    else:
-        video_writer = None
-        output_file_name = None
-
-    return video_writer
+    # Initialize VideoStreamer
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    streamer = VideoStreamer(STREAM_BUFFER_DIR, config.fps, width, height)
+    streamer.start()
 
 
 def process_and_annotate_frame():
@@ -648,25 +654,35 @@ def process_and_annotate_frame():
     if config.draw_grid:
         draw_gridlines(annotated_frame, config.grid_size)
 
+    streamer.add_frame(annotated_frame)
+
     frame_count += 1
     return annotated_frame
 
 
-def main(input_source: str, config: Config, web_mode: bool):
-    global cap, frame_count
+def cleanup():
+    global cap, streamer
+    cap.release()
+    cv2.destroyAllWindows()
+    streamer.stop()
 
+
+def main(input_source: str, config: Config, web_mode: bool):
+    global cap, frame_count, streamer
+
+    os.makedirs(STREAM_BUFFER_DIR, exist_ok=True)
     cap = initialize_video_capture(input_source)
     if not cap.isOpened():
         print("Error: Could not open video stream")
         sys.exit()
 
-    video_writer = initialize_components(config)
+    initialize_components(config)
     frame_count = 0
 
     if web_mode:
-        import uvicorn
-
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+        loop = asyncio.get_event_loop()
+        loop.create_task(process_frames())
+        loop.run_until_complete(run_server())
     else:
         try:
             while True:
@@ -678,20 +694,11 @@ def main(input_source: str, config: Config, web_mode: bool):
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
-                if config.save_video and video_writer:
-                    assert annotated_frame.size > 0, "Error: Frame is empty"
-                    video_writer.write(annotated_frame)
-
         except Exception as e:
             print(f"An error occurred: {str(e)}")
             raise e
-
         finally:
-            cap.release()
-            if config.save_video and video_writer:
-                print(f"Output video saved to: {output_file_name}")
-                video_writer.release()
-            cv2.destroyAllWindows()
+            cleanup()
 
 
 if __name__ == "__main__":
