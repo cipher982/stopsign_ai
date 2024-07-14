@@ -1,3 +1,4 @@
+import logging
 import os
 import queue
 import subprocess
@@ -12,6 +13,8 @@ class VideoStreamer:
         self.height = height
         self.frame_queue = queue.Queue(maxsize=100)
         self.stop_event = threading.Event()
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
 
     def start(self):
         os.makedirs(self.output_dir, exist_ok=True)
@@ -59,10 +62,11 @@ class VideoStreamer:
             os.path.join(self.output_dir, "stream.m3u8"),
         ]
 
+        self.logger.info(f"Starting FFmpeg process with command: {' '.join(command)}")
         process = subprocess.Popen(command, stdin=subprocess.PIPE)
 
         if process.stdin is None:
-            print("Error: Unable to open stdin for FFmpeg process")
+            self.logger.error("Error: Unable to open stdin for FFmpeg process")
             return
 
         while not self.stop_event.is_set():
@@ -74,3 +78,9 @@ class VideoStreamer:
 
         process.stdin.close()
         process.wait()
+
+        # Log FFmpeg output
+        output, error = process.communicate()
+        if error:
+            self.logger.error(f"FFmpeg error: {error.decode()}")
+        self.logger.info("FFmpeg process finished")

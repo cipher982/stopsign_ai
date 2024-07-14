@@ -35,7 +35,7 @@ dotenv.load_dotenv()
 RTSP_URL = os.getenv("RTSP_URL")
 MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
 SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
-STREAM_BUFFER_DIR = "tmp_stream_buffer"
+STREAM_BUFFER_DIR = os.path.join(os.path.dirname(__file__), "tmp_stream_buffer")
 
 os.environ["DISPLAY"] = ":0"
 
@@ -620,6 +620,7 @@ def initialize_components(config: Config) -> None:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     streamer = VideoStreamer(STREAM_BUFFER_DIR, config.fps, width, height)
     streamer.start()
+    print(f"VideoStreamer initialized with output directory: {STREAM_BUFFER_DIR}")
 
 
 def process_and_annotate_frame():
@@ -699,6 +700,10 @@ def main(input_source: str, config: Config, web_mode: bool):
             raise e
         finally:
             cleanup()
+
+    # Ensure the streamer is stopped
+    if streamer:
+        streamer.stop()
 
 
 if __name__ == "__main__":
