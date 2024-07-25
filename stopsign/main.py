@@ -1,6 +1,8 @@
 import argparse
 import asyncio
 import base64
+import contextlib
+import io
 import logging
 import os
 import sys
@@ -462,13 +464,15 @@ def process_frame(
     frame = crop_scale_frame(frame, scale, crop_top_ratio, crop_side_ratio)
 
     # Run YOLO inference
-    results = model.track(
-        source=frame,
-        tracker="./trackers/bytetrack.yaml",
-        stream=False,
-        persist=True,
-        classes=vehicle_classes,
-    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = model.track(
+            source=frame,
+            tracker="./trackers/bytetrack.yaml",
+            stream=False,
+            persist=True,
+            classes=vehicle_classes,
+            verbose=False,
+        )
 
     # Filter out non-vehicle classes
     boxes = results[0].boxes
@@ -609,7 +613,7 @@ def initialize_components(config: Config) -> None:
     if not MODEL_PATH:
         print("Error: YOLO_MODEL_PATH environment variable is not set.")
         sys.exit(1)
-    model = YOLO(MODEL_PATH)
+    model = YOLO(MODEL_PATH, verbose=False)
     print("Model loaded successfully")
 
     car_tracker = CarTracker(config)

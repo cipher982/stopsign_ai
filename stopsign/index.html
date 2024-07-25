@@ -22,6 +22,9 @@
             hls.on(Hls.Events.MANIFEST_PARSED, function() {
                 video.play();
             });
+            hls.on(Hls.Events.ERROR, function(event, data) {
+                console.error('HLS.js error:', data);
+            });
         }
         else if (video.canPlayType('application/vnd.apple.mpegurl')) {
             video.src = '/static/stream.m3u8';

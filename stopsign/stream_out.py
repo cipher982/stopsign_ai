@@ -47,18 +47,28 @@ class VideoStreamer:
             str(self.frame_rate),
             "-i",
             "-",
+            "-vf",
+            "format=yuv420p",
             "-c:v",
             "libx264",
             "-preset",
-            "ultrafast",
+            "veryfast",
+            "-tune",
+            "zerolatency",
+            "-g",
+            "30",  # Add this line (GOP size)
+            "-b:v",
+            "2M",  # Set video bitrate
             "-f",
             "hls",
             "-hls_time",
-            "2",
+            "4",
             "-hls_list_size",
             "5",
             "-hls_flags",
-            "delete_segments",
+            "delete_segments+omit_endlist",  # Modify this line
+            "-hls_segment_type",
+            "mpegts",  # Add this line
             os.path.join(self.output_dir, "stream.m3u8"),
         ]
 
@@ -69,18 +79,25 @@ class VideoStreamer:
             self.logger.error("Error: Unable to open stdin for FFmpeg process")
             return
 
-        while not self.stop_event.is_set():
-            try:
-                frame = self.frame_queue.get(timeout=1)
-                process.stdin.write(frame.tobytes())
-            except queue.Empty:
-                continue
-
-        process.stdin.close()
-        process.wait()
+        try:
+            while not self.stop_event.is_set():
+                try:
+                    frame = self.frame_queue.get(timeout=1)
+                    process.stdin.write(frame.tobytes())
+                except queue.Empty:
+                    continue
+                except BrokenPipeError:
+                    self.logger.error("BrokenPipeError: FFmpeg process may have terminated unexpectedly")
+                    break
+        except Exception as e:
+            self.logger.error(f"Error in encoding stream: {str(e)}")
+        finally:
+            process.stdin.close()
+            process.wait()
 
         # Log FFmpeg output
         output, error = process.communicate()
+        if output:
+            self.logger.info(f"FFmpeg output: {output.decode()}")
         if error:
             self.logger.error(f"FFmpeg error: {error.decode()}")
-        self.logger.info("FFmpeg process finished")
