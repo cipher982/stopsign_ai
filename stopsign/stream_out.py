@@ -3,6 +3,10 @@ import os
 import queue
 import subprocess
 import threading
+import time
+
+import cv2
+import numpy as np
 
 
 class VideoStreamer:
@@ -13,6 +17,8 @@ class VideoStreamer:
         self.height = height
         self.frame_queue = queue.Queue(maxsize=100)
         self.stop_event = threading.Event()
+        self.debug_mode = False
+        self.debug_frame = None
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
@@ -26,49 +32,41 @@ class VideoStreamer:
         self.encoding_thread.join()
 
     def add_frame(self, frame):
+        if self.debug_mode:
+            if self.debug_frame is None:
+                self.debug_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+                cv2.putText(
+                    self.debug_frame, "Debug Static Image", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2
+                )
+            frame = self.debug_frame
+
         if not self.frame_queue.full():
             self.frame_queue.put(frame)
         else:
-            print(f"Warning: Frame queue is full. Current size: {self.frame_queue.qsize()}")
+            self.logger.warning(f"Frame queue is full. Current size: {self.frame_queue.qsize()}")
 
     def _encode_stream(self):
+        # fmt: off
         command = [
             "ffmpeg",
             "-y",
-            "-f",
-            "rawvideo",
-            "-vcodec",
-            "rawvideo",
-            "-pix_fmt",
-            "bgr24",
-            "-s",
-            f"{self.width}x{self.height}",
-            "-r",
-            str(self.frame_rate),
-            "-i",
-            "-",
-            "-vf",
-            "format=yuv420p",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-tune",
-            "zerolatency",
-            "-g",
-            "30",  # Add this line (GOP size)
-            "-b:v",
-            "2M",  # Set video bitrate
-            "-f",
-            "hls",
-            "-hls_time",
-            "4",
-            "-hls_list_size",
-            "5",
-            "-hls_flags",
-            "delete_segments+omit_endlist",  # Modify this line
-            "-hls_segment_type",
-            "mpegts",  # Add this line
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{self.width}x{self.height}",
+            "-r", str(self.frame_rate),
+            "-i", "-",
+            "-vf", "format=yuv420p",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-tune", "zerolatency",
+            "-g", "30",  # GOP size
+            "-b:v", "2M",  # Video bitrate
+            "-f", "hls",
+            "-hls_time", "4",
+            "-hls_list_size", "5",
+            "-hls_flags", "delete_segments+omit_endlist",
+            "-hls_segment_type", "mpegts",
             os.path.join(self.output_dir, "stream.m3u8"),
         ]
 
@@ -101,3 +99,15 @@ class VideoStreamer:
             self.logger.info(f"FFmpeg output: {output.decode()}")
         if error:
             self.logger.error(f"FFmpeg error: {error.decode()}")
+
+    def debug_static_image(self, duration_seconds=30):
+        # Create a simple static image
+        static_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        cv2.putText(static_frame, "Debug Static Image", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+        start_time = time.time()
+        while time.time() - start_time < duration_seconds:
+            self.add_frame(static_frame)
+            time.sleep(1 / self.frame_rate)
+
+        self.logger.info("Finished sending static debug image")

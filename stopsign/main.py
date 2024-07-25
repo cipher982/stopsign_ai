@@ -5,6 +5,7 @@ import contextlib
 import io
 import logging
 import os
+import signal
 import sys
 import time
 from dataclasses import dataclass
@@ -31,6 +32,18 @@ from stopsign.utils.video import crop_scale_frame
 from stopsign.utils.video import draw_box
 from stopsign.utils.video import draw_gridlines
 from stopsign.utils.video import open_rtsp_stream
+
+exit_flag = False
+
+
+def signal_handler(signum, frame):
+    global exit_flag
+    exit_flag = True
+    print("Exiting gracefully...")
+
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 dotenv.load_dotenv()
 
@@ -607,7 +620,7 @@ def initialize_video_capture(input_source):
         sys.exit(1)
 
 
-def initialize_components(config: Config) -> None:
+def initialize_components(config: Config, debug_mode: bool) -> None:
     global model, car_tracker, stop_detector, streamer
 
     if not MODEL_PATH:
@@ -623,6 +636,7 @@ def initialize_components(config: Config) -> None:
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     streamer = VideoStreamer(STREAM_BUFFER_DIR, config.fps, width, height)
+    streamer.debug_mode = debug_mode
     streamer.start()
     print(f"VideoStreamer initialized with output directory: {STREAM_BUFFER_DIR}")
 
@@ -659,6 +673,13 @@ def process_and_annotate_frame():
     if config.draw_grid:
         draw_gridlines(annotated_frame, config.grid_size)
 
+    # Ensure the frame is in BGR format
+    if len(annotated_frame.shape) == 2:  # If grayscale
+        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_GRAY2BGR)
+    elif annotated_frame.shape[2] == 4:  # If RGBA
+        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGBA2BGR)
+        print("Converted RGBA to BGR")
+
     streamer.add_frame(annotated_frame)
 
     frame_count += 1
@@ -672,8 +693,8 @@ def cleanup():
     streamer.stop()
 
 
-def main(input_source: str, config: Config, web_mode: bool):
-    global cap, frame_count, streamer
+def main(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
+    global cap, frame_count, streamer, exit_flag
 
     os.makedirs(STREAM_BUFFER_DIR, exist_ok=True)
     cap = initialize_video_capture(input_source)
@@ -681,16 +702,22 @@ def main(input_source: str, config: Config, web_mode: bool):
         print("Error: Could not open video stream")
         sys.exit()
 
-    initialize_components(config)
+    initialize_components(config, debug_mode)
     frame_count = 0
 
     if web_mode:
         loop = asyncio.get_event_loop()
         loop.create_task(process_frames())
-        loop.run_until_complete(run_server())
+        try:
+            loop.run_until_complete(run_server())
+        except KeyboardInterrupt:
+            print("Keyboard interrupt received, shutting down...")
+        finally:
+            exit_flag = True
+            cleanup()
     else:
         try:
-            while True:
+            while not exit_flag:
                 annotated_frame = process_and_annotate_frame()
                 if annotated_frame is None:
                     break
@@ -701,7 +728,6 @@ def main(input_source: str, config: Config, web_mode: bool):
 
         except Exception as e:
             print(f"An error occurred: {str(e)}")
-            raise e
         finally:
             cleanup()
 
@@ -716,8 +742,9 @@ if __name__ == "__main__":
         "input_source", choices=["live", "file"], help="Input source type (live RTSP stream or video file)"
     )
     parser.add_argument("--web", action="store_true", help="Run in web mode")
+    parser.add_argument("--debug", action="store_true", help="Run in debug mode with static image")
     args = parser.parse_args()
 
     config = Config("./config.yaml")
 
-    main(input_source=args.input_source, config=config, web_mode=args.web)
+    main(input_source=args.input_source, config=config, web_mode=args.web, debug_mode=args.debug)
