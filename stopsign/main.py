@@ -605,16 +605,23 @@ async def websocket_endpoint(websocket: WebSocket):
         await asyncio.sleep(0.001)
 
 
+config = Config("./config.yaml")
+
+
 def initialize_video_capture(input_source):
     if input_source == "live":
         if not RTSP_URL:
             print("Error: RTSP_URL environment variable is not set.")
             sys.exit(1)
         print(f"Opening RTSP stream: {RTSP_URL}")
-        return open_rtsp_stream(RTSP_URL)
+        cap = open_rtsp_stream(RTSP_URL)
+        cap.set(cv2.CAP_PROP_FPS, config.fps)  # Set FPS here
+        return cap
     elif input_source == "file":
         print(f"Opening video file: {SAMPLE_FILE_PATH}")
-        return cv2.VideoCapture(SAMPLE_FILE_PATH)  # type: ignore
+        cap = cv2.VideoCapture(SAMPLE_FILE_PATH)  # type: ignore
+        cap.set(cv2.CAP_PROP_FPS, config.fps)  # Set FPS here
+        return cap
     else:
         print("Error: Invalid input source")
         sys.exit(1)
