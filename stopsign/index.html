@@ -2,36 +2,31 @@
 <html>
 <head>
     <title>Stop Sign Compliance</title>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-        #video {
+        #videoCanvas {
             width: 640px;
             height: 480px;
+            border: 1px solid black;
         }
     </style>
 </head>
 <body>
     <h1>Stop Sign Compliance Stream</h1>
-    <video id="video" controls></video>
+    <canvas id="videoCanvas"></canvas>
     <script>
-        var video = document.getElementById('video');
-        if (Hls.isSupported()) {
-            var hls = new Hls();
-            hls.loadSource('/static/stream.m3u8');
-            hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                video.play();
-            });
-            hls.on(Hls.Events.ERROR, function(event, data) {
-                console.error('HLS.js error:', data);
-            });
-        }
-        else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = '/static/stream.m3u8';
-            video.addEventListener('loadedmetadata', function() {
-                video.play();
-            });
-        }
+        const canvas = document.getElementById('videoCanvas');
+        const ctx = canvas.getContext('2d');
+        const ws = new WebSocket('ws://' + window.location.host + '/ws');
+
+        ws.onmessage = function(event) {
+            const img = new Image();
+            img.onload = function() {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+            }
+            img.src = 'data:image/jpeg;base64,' + event.data;
+        };
     </script>
 </body>
 </html>
