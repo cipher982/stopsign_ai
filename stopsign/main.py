@@ -23,11 +23,9 @@ import yaml
 from fastapi import FastAPI
 from fastapi import WebSocket
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
 
 from stopsign.kalman_filter import KalmanFilterWrapper
-from stopsign.stream_out import VideoStreamer
 from stopsign.utils.video import crop_scale_frame
 from stopsign.utils.video import draw_box
 from stopsign.utils.video import draw_gridlines
@@ -551,13 +549,13 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
     return frame
 
 
-async def process_frames():
-    global frame_count
-    while True:
-        annotated_frame = process_and_annotate_frame()
-        if annotated_frame is None:
-            break
-        await asyncio.sleep(1 / config.fps)  # Adjust sleep time based on desired frame rate
+# async def process_frames():
+#     global frame_count
+#     while True:
+#         annotated_frame = process_and_annotate_frame()
+#         if annotated_frame is None:
+#             break
+#         await asyncio.sleep(1 / config.fps)  # Adjust sleep time based on desired frame rate
 
 
 async def run_server():
@@ -567,8 +565,8 @@ async def run_server():
 
 
 app = FastAPI()
-os.makedirs(STREAM_BUFFER_DIR, exist_ok=True)
-app.mount("/static", StaticFiles(directory=os.path.abspath(STREAM_BUFFER_DIR)), name="static")
+# os.makedirs(STREAM_BUFFER_DIR, exist_ok=True)
+# app.mount("/static", StaticFiles(directory=os.path.abspath(STREAM_BUFFER_DIR)), name="static")
 
 
 @app.get("/")
@@ -588,21 +586,29 @@ async def websocket_endpoint(websocket: WebSocket):
     frame_count = 0
     last_send_time = time.time()
 
-    while True:
-        frame_count += 1
-        annotated_frame = await asyncio.to_thread(process_frame_task)
+    try:
+        while not exit_flag:
+            frame_count += 1
+            try:
+                annotated_frame = await asyncio.wait_for(asyncio.to_thread(process_frame_task), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
 
-        if annotated_frame is None:
-            break
+            if annotated_frame is None:
+                break
 
-        current_time = time.time()
-        if frame_count % frame_interval == 0 and current_time - last_send_time >= 0.1:
-            _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-            await websocket.send_text(jpg_as_text)
-            last_send_time = current_time
+            current_time = time.time()
+            if frame_count % frame_interval == 0 and current_time - last_send_time >= 0.1:
+                _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                jpg_as_text = base64.b64encode(buffer).decode("utf-8")
+                await websocket.send_text(jpg_as_text)
+                last_send_time = current_time
 
-        await asyncio.sleep(0.001)
+            await asyncio.sleep(0.001)
+    except asyncio.CancelledError:
+        print("WebSocket connection closed")
+    finally:
+        await websocket.close()
 
 
 config = Config("./config.yaml")
@@ -640,12 +646,12 @@ def initialize_components(config: Config, debug_mode: bool) -> None:
     stop_detector = StopDetector(config)
 
     # Initialize VideoStreamer
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    streamer = VideoStreamer(STREAM_BUFFER_DIR, config.fps, width, height)
-    streamer.debug_mode = debug_mode
-    streamer.start()
-    print(f"VideoStreamer initialized with output directory: {STREAM_BUFFER_DIR}")
+    # width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    # height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    # streamer = VideoStreamer(STREAM_BUFFER_DIR, config.fps, width, height)
+    # streamer.debug_mode = debug_mode
+    # streamer.start()
+    # print(f"VideoStreamer initialized with output directory: {STREAM_BUFFER_DIR}")
 
 
 def process_and_annotate_frame():
@@ -687,23 +693,30 @@ def process_and_annotate_frame():
         annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGBA2BGR)
         print("Converted RGBA to BGR")
 
-    streamer.add_frame(annotated_frame)
+    # streamer.add_frame(annotated_frame)
 
     frame_count += 1
     return annotated_frame
 
 
 def cleanup():
-    global cap, streamer
+    global cap
     cap.release()
     cv2.destroyAllWindows()
-    streamer.stop()
+
+
+async def shutdown(signal, loop):
+    print(f"Received exit signal {signal.name}...")
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    [task.cancel() for task in tasks]
+    print(f"Cancelling {len(tasks)} outstanding tasks")
+    await asyncio.gather(*tasks, return_exceptions=True)
+    loop.stop()
 
 
 def main(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
-    global cap, frame_count, streamer, exit_flag
+    global cap, frame_count, exit_flag
 
-    os.makedirs(STREAM_BUFFER_DIR, exist_ok=True)
     cap = initialize_video_capture(input_source)
     if not cap.isOpened():
         print("Error: Could not open video stream")
@@ -714,13 +727,14 @@ def main(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
 
     if web_mode:
         loop = asyncio.get_event_loop()
-        loop.create_task(process_frames())
+        signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+        for s in signals:
+            loop.add_signal_handler(s, lambda s=s: asyncio.create_task(shutdown(s, loop)))
+
         try:
             loop.run_until_complete(run_server())
-        except KeyboardInterrupt:
-            print("Keyboard interrupt received, shutting down...")
         finally:
-            exit_flag = True
+            loop.close()
             cleanup()
     else:
         try:
@@ -733,14 +747,12 @@ def main(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
+        except KeyboardInterrupt:
+            print("Interrupted by user. Shutting down...")
         except Exception as e:
             print(f"An error occurred: {str(e)}")
         finally:
             cleanup()
-
-    # Ensure the streamer is stopped
-    if streamer:
-        streamer.stop()
 
 
 if __name__ == "__main__":
