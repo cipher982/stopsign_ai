@@ -8,7 +8,6 @@ import os
 import signal
 import sys
 import time
-from asyncio import CancelledError
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Dict
@@ -32,27 +31,20 @@ from stopsign.utils.video import draw_box
 from stopsign.utils.video import draw_gridlines
 from stopsign.utils.video import open_rtsp_stream
 
-exit_flag = False
-
-
-def signal_handler(signum, frame):
-    global exit_flag
-    exit_flag = True
-    print("Exiting gracefully...")
-
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
+# Set environment variables
 dotenv.load_dotenv()
-
 RTSP_URL = os.getenv("RTSP_URL")
 MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
 SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
 STREAM_BUFFER_DIR = os.path.join(os.path.dirname(__file__), "tmp_stream_buffer")
 
-os.environ["DISPLAY"] = ":0"
+# Create FastAPI app
+app = FastAPI()
 
+# Global flag to signal shutdown
+shutdown_event = asyncio.Event()
+
+# Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -551,12 +543,19 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
 
 
 async def run_server():
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000)
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
     server = uvicorn.Server(config)
-    await server.serve()
 
+    # Setup signal handlers
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        asyncio.get_running_loop().add_signal_handler(sig, lambda: asyncio.create_task(shutdown(sig, server)))
 
-app = FastAPI()
+    try:
+        await server.serve()
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+    finally:
+        await server.shutdown()
 
 
 @app.get("/")
@@ -571,14 +570,8 @@ def process_frame_task():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-
-    frame_interval = max(1, int(config.fps / 10))
-    frame_count = 0
-    last_send_time = time.time()
-
     try:
-        while not exit_flag:
-            frame_count += 1
+        while not shutdown_event.is_set():
             try:
                 annotated_frame = await asyncio.wait_for(asyncio.to_thread(process_frame_task), timeout=1.0)
             except asyncio.TimeoutError:
@@ -587,13 +580,9 @@ async def websocket_endpoint(websocket: WebSocket):
             if annotated_frame is None:
                 break
 
-            current_time = time.time()
-            if frame_count % frame_interval == 0 and current_time - last_send_time >= 0.1:
-                _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-                await websocket.send_text(jpg_as_text)
-                last_send_time = current_time
-
+            _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 30])
+            jpg_as_text = base64.b64encode(buffer).decode("utf-8")
+            await websocket.send_text(jpg_as_text)
             await asyncio.sleep(0.001)
     except asyncio.CancelledError:
         print("WebSocket connection closed")
@@ -620,8 +609,8 @@ def initialize_video_capture(input_source):
         sys.exit(1)
 
 
-def initialize_components(config: Config, debug_mode: bool) -> None:
-    global model, car_tracker, stop_detector, streamer
+def initialize_components(config: Config) -> None:
+    global model, car_tracker, stop_detector
 
     if not MODEL_PATH:
         print("Error: YOLO_MODEL_PATH environment variable is not set.")
@@ -672,8 +661,6 @@ def process_and_annotate_frame():
         annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGBA2BGR)
         print("Converted RGBA to BGR")
 
-    # streamer.add_frame(annotated_frame)
-
     frame_count += 1
     return annotated_frame
 
@@ -684,60 +671,28 @@ def cleanup():
     cv2.destroyAllWindows()
 
 
-async def shutdown(signal, loop):
-    print(f"Received exit signal {signal.name}...")
-    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    [task.cancel() for task in tasks]
-    print(f"Cancelling {len(tasks)} outstanding tasks")
-    await asyncio.gather(*tasks, return_exceptions=True)
-    loop.stop()
+async def shutdown(sig: signal.Signals, server: uvicorn.Server):
+    logger.info(f"Received exit signal {sig.name}...")
+    await server.shutdown()
 
 
-async def main_async(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
-    global cap, frame_count, exit_flag
+async def main_async(input_source: str, config: Config):
+    global cap, frame_count
 
     cap = initialize_video_capture(input_source)
     if not cap.isOpened():
         print("Error: Could not open video stream")
         return
 
-    initialize_components(config, debug_mode)
+    initialize_components(config)
     frame_count = 0
 
-    if web_mode:
-        loop = asyncio.get_running_loop()
-        signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
-        for s in signals:
-            loop.add_signal_handler(s, lambda s=s: asyncio.create_task(shutdown(s, loop)))
-
-        try:
-            await run_server()
-        except CancelledError:
-            print("Server shutdown initiated")
-        finally:
-            cleanup()
-    else:
-        try:
-            while not exit_flag:
-                annotated_frame = process_and_annotate_frame()
-                if annotated_frame is None:
-                    break
-
-                cv2.imshow("Output", annotated_frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-
-        except KeyboardInterrupt:
-            print("Interrupted by user. Shutting down...")
-        except Exception as e:
-            print(f"An error occurred: {str(e)}")
-        finally:
-            cleanup()
+    await run_server()
 
 
-def main(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
+def main(input_source: str, config: Config):
     try:
-        asyncio.run(main_async(input_source, config, web_mode, debug_mode))
+        asyncio.run(main_async(input_source, config))
     except KeyboardInterrupt:
         print("Interrupted by user. Shutting down...")
     finally:
@@ -749,10 +704,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "input_source", choices=["live", "file"], help="Input source type (live RTSP stream or video file)"
     )
-    parser.add_argument("--web", action="store_true", help="Run in web mode")
-    parser.add_argument("--debug", action="store_true", help="Run in debug mode with static image")
     args = parser.parse_args()
-
     config = Config("./config.yaml")
-
-    main(input_source=args.input_source, config=config, web_mode=args.web, debug_mode=args.debug)
+    main(input_source=args.input_source, config=config)
