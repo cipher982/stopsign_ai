@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 import time
+from asyncio import CancelledError
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Dict
@@ -714,27 +715,28 @@ async def shutdown(signal, loop):
     loop.stop()
 
 
-def main(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
+async def main_async(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
     global cap, frame_count, exit_flag
 
     cap = initialize_video_capture(input_source)
     if not cap.isOpened():
         print("Error: Could not open video stream")
-        sys.exit()
+        return
 
     initialize_components(config, debug_mode)
     frame_count = 0
 
     if web_mode:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
         for s in signals:
             loop.add_signal_handler(s, lambda s=s: asyncio.create_task(shutdown(s, loop)))
 
         try:
-            loop.run_until_complete(run_server())
+            await run_server()
+        except CancelledError:
+            print("Server shutdown initiated")
         finally:
-            loop.close()
             cleanup()
     else:
         try:
@@ -753,6 +755,15 @@ def main(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
             print(f"An error occurred: {str(e)}")
         finally:
             cleanup()
+
+
+def main(input_source: str, config: Config, web_mode: bool, debug_mode: bool):
+    try:
+        asyncio.run(main_async(input_source, config, web_mode, debug_mode))
+    except KeyboardInterrupt:
+        print("Interrupted by user. Shutting down...")
+    finally:
+        cleanup()
 
 
 if __name__ == "__main__":
