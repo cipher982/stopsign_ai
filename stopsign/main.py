@@ -550,15 +550,6 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
     return frame
 
 
-# async def process_frames():
-#     global frame_count
-#     while True:
-#         annotated_frame = process_and_annotate_frame()
-#         if annotated_frame is None:
-#             break
-#         await asyncio.sleep(1 / config.fps)  # Adjust sleep time based on desired frame rate
-
-
 async def run_server():
     config = uvicorn.Config(app, host="0.0.0.0", port=8000)
     server = uvicorn.Server(config)
@@ -566,8 +557,6 @@ async def run_server():
 
 
 app = FastAPI()
-# os.makedirs(STREAM_BUFFER_DIR, exist_ok=True)
-# app.mount("/static", StaticFiles(directory=os.path.abspath(STREAM_BUFFER_DIR)), name="static")
 
 
 @app.get("/")
@@ -612,9 +601,6 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close()
 
 
-config = Config("./config.yaml")
-
-
 def initialize_video_capture(input_source):
     if input_source == "live":
         if not RTSP_URL:
@@ -645,14 +631,6 @@ def initialize_components(config: Config, debug_mode: bool) -> None:
 
     car_tracker = CarTracker(config)
     stop_detector = StopDetector(config)
-
-    # Initialize VideoStreamer
-    # width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    # height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    # streamer = VideoStreamer(STREAM_BUFFER_DIR, config.fps, width, height)
-    # streamer.debug_mode = debug_mode
-    # streamer.start()
-    # print(f"VideoStreamer initialized with output directory: {STREAM_BUFFER_DIR}")
 
 
 def process_and_annotate_frame():
