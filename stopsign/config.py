@@ -26,6 +26,8 @@ class Config:
 
         # Output
         self.save_video = config["output"]["save_video"]
+        self.frame_skip = config["output"]["frame_skip"]
+        self.jpeg_quality = config["output"]["jpeg_quality"]
 
         # Visualization
         self.draw_grid = config["debugging_visualization"]["draw_grid"]
