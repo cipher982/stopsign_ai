@@ -32,10 +32,10 @@
                     ctx.drawImage(img, 0, 0);
                     previousImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 } else if (type === "delta") {
-                    ctx.drawImage(img, 0, 0);
-                    const currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    
                     if (previousImageData) {
+                        ctx.drawImage(img, 0, 0);
+                        const currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        
                         for (let i = 0; i < currentImageData.data.length; i += 4) {
                             currentImageData.data[i] = (currentImageData.data[i] + previousImageData.data[i]) % 256;
                             currentImageData.data[i+1] = (currentImageData.data[i+1] + previousImageData.data[i+1]) % 256;
@@ -44,13 +44,27 @@
                         ctx.putImageData(currentImageData, 0, 0);
                         previousImageData = currentImageData;
                     } else {
-                        console.error("Received delta frame before full frame");
+                        console.warn("Received delta frame before full frame, waiting for next full frame");
                     }
                 }
             }
+            img.onerror = function() {
+                console.error("Error loading image");
+            }
             img.src = "data:image/jpeg;base64," + data;
         };
-    </script>
+    
+        ws.onopen = function() {
+            console.log("WebSocket connection established");
+        };
+    
+        ws.onerror = function(error) {
+            console.error("WebSocket error:", error);
+        };
+    
+        ws.onclose = function(event) {
+            console.log("WebSocket connection closed:", event.code, event.reason);
+        };
     </script>
 </body>
 </html>
