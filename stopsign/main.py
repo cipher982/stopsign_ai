@@ -162,6 +162,7 @@ def process_frame_task():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    frame_counter = 0
     try:
         while not shutdown_event.is_set():
             try:
@@ -170,11 +171,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             if annotated_frame is None:
+                if not attempt_reconnection():
+                    break
+                continue
+
+            if annotated_frame is None:
                 break
 
-            _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 30])
-            jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-            await websocket.send_text(jpg_as_text)
+            frame_counter += 1
+            if frame_counter % config.frame_skip == 0:
+                _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
+                jpg_as_text = base64.b64encode(buffer).decode("utf-8")
+                await websocket.send_text(jpg_as_text)
+                print(f"Sent frame {frame_counter}")
+
             await asyncio.sleep(0.001)
     except asyncio.CancelledError:
         print("WebSocket connection closed")
@@ -215,10 +225,14 @@ def initialize_components(config: Config) -> None:
 
 
 def process_and_annotate_frame():
-    global frame_count
+    global frame_count, cap
+    if not cap or not cap.isOpened():
+        cap = initialize_video_capture("live")
     ret, frame = cap.read()
     if not ret:
-        print("End of video file reached.")
+        logger.warning("Failed to read frame. Attempting to reconnect...")
+        cap.release()
+        cap = initialize_video_capture("live")
         return None
 
     frame, boxes = process_frame(
@@ -242,6 +256,7 @@ def process_and_annotate_frame():
         stop_detector.stop_zone,
         frame_count,
     )
+    print(f"Annotated frame {frame_count}")
 
     if config.draw_grid:
         draw_gridlines(annotated_frame, config.grid_size)
@@ -257,15 +272,33 @@ def process_and_annotate_frame():
     return annotated_frame
 
 
+def attempt_reconnection(max_attempts=5, delay=5):
+    global cap
+    for attempt in range(max_attempts):
+        logger.info(f"Attempting to reconnect (attempt {attempt + 1}/{max_attempts})...")
+        cap.release()
+        cap = initialize_video_capture("live")
+        if cap.isOpened():
+            logger.info("Reconnection successful")
+            return True
+        time.sleep(delay)
+    logger.error("Failed to reconnect after maximum attempts")
+    return False
+
+
 def cleanup():
     global cap
-    cap.release()
+    if cap:
+        cap.release()
     cv2.destroyAllWindows()
 
 
 async def shutdown(sig: signal.Signals, server: uvicorn.Server):
     logger.info(f"Received exit signal {sig.name}...")
+    shutdown_event.set()  # Set the shutdown event
     await server.shutdown()
+    cleanup()  # Call cleanup function
+    sys.exit(0)  # Force exit
 
 
 async def main_async(input_source: str, config: Config):
@@ -279,7 +312,10 @@ async def main_async(input_source: str, config: Config):
     initialize_components(config)
     frame_count = 0
 
-    await run_server()
+    try:
+        await run_server()
+    finally:
+        cleanup()
 
 
 def main(input_source: str, config: Config):
