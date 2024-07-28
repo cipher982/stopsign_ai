@@ -166,23 +166,18 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while not shutdown_event.is_set():
             try:
-                annotated_frame = await asyncio.wait_for(asyncio.to_thread(process_frame_task), timeout=1.0)
+                result = await asyncio.wait_for(asyncio.to_thread(process_frame_task), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
 
-            if annotated_frame is None:
+            if result is None:
                 if not attempt_reconnection():
                     break
                 continue
 
-            if annotated_frame is None:
-                break
-
             frame_counter += 1
             if frame_counter % config.frame_skip == 0:
-                _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
-                jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-                await websocket.send_text(jpg_as_text)
+                await websocket.send_text(result)
                 print(f"Sent frame {frame_counter}")
 
             await asyncio.sleep(0.001)
@@ -225,7 +220,8 @@ def initialize_components(config: Config) -> None:
 
 
 def process_and_annotate_frame():
-    global frame_count, cap
+    global frame_count, cap, previous_frame
+
     if not cap or not cap.isOpened():
         cap = initialize_video_capture("live")
     ret, frame = cap.read()
@@ -256,7 +252,6 @@ def process_and_annotate_frame():
         stop_detector.stop_zone,
         frame_count,
     )
-    print(f"Annotated frame {frame_count}")
 
     if config.draw_grid:
         draw_gridlines(annotated_frame, config.grid_size)
@@ -269,7 +264,22 @@ def process_and_annotate_frame():
         print("Converted RGBA to BGR")
 
     frame_count += 1
-    return annotated_frame
+
+    # Always send full frame for the first frame
+    if frame_count == 1:
+        _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
+        jpg_as_text = base64.b64encode(buffer).decode("utf-8")
+        result = f"full:{jpg_as_text}"
+        process_and_annotate_frame.previous_frame = annotated_frame.copy()
+    else:
+        # Delta encoding for subsequent frames
+        frame_diff = cv2.absdiff(annotated_frame, process_and_annotate_frame.previous_frame)
+        _, buffer = cv2.imencode(".jpg", frame_diff, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
+        jpg_as_text = base64.b64encode(buffer).decode("utf-8")
+        result = f"delta:{jpg_as_text}"
+        process_and_annotate_frame.previous_frame = annotated_frame.copy()
+
+    return result
 
 
 def attempt_reconnection(max_attempts=5, delay=5):
