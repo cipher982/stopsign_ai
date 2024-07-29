@@ -48,8 +48,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global variables
-last_full_frame = None
 frame_count = 0
+original_width = None
+original_height = None
 
 
 def process_frame(
@@ -165,12 +166,11 @@ def process_frame_task():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    global last_full_frame, frame_count
+    global frame_count, original_width, original_height
     await websocket.accept()
 
-    # Send the last full frame immediately if available
-    if last_full_frame is not None:
-        await websocket.send_text(f"full:{last_full_frame}")
+    # Send the original dimensions only once at the beginning
+    await websocket.send_json({"type": "dimensions", "width": original_width, "height": original_height})
 
     try:
         while not shutdown_event.is_set():
@@ -185,8 +185,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             if frame_count % config.frame_skip == 0:
-                await websocket.send_text(result)
-                print(f"Sent frame {frame_count}")
+                await websocket.send_json({"type": "frame", "data": result})
 
             await asyncio.sleep(0.001)
     except asyncio.CancelledError:
@@ -196,26 +195,28 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 def initialize_video_capture(input_source):
+    global original_width, original_height
     if input_source == "live":
         if not RTSP_URL:
             print("Error: RTSP_URL environment variable is not set.")
             sys.exit(1)
         print(f"Opening RTSP stream: {RTSP_URL}")
         cap = open_rtsp_stream(RTSP_URL)
-        cap.set(cv2.CAP_PROP_FPS, config.fps)  # Set FPS here
-        return cap
     elif input_source == "file":
         print(f"Opening video file: {SAMPLE_FILE_PATH}")
         cap = cv2.VideoCapture(SAMPLE_FILE_PATH)  # type: ignore
-        cap.set(cv2.CAP_PROP_FPS, config.fps)  # Set FPS here
-        return cap
     else:
         print("Error: Invalid input source")
         sys.exit(1)
 
+    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.set(cv2.CAP_PROP_FPS, config.fps)  # Set FPS here
+    return cap
+
 
 def initialize_components(config: Config) -> None:
-    global model, car_tracker, stop_detector, last_full_frame, frame_count
+    global model, car_tracker, stop_detector, frame_count
 
     if not MODEL_PATH:
         print("Error: YOLO_MODEL_PATH environment variable is not set.")
@@ -225,8 +226,6 @@ def initialize_components(config: Config) -> None:
 
     car_tracker = CarTracker(config)
     stop_detector = StopDetector(config)
-
-    last_full_frame = None
     frame_count = 0
 
 
@@ -276,28 +275,9 @@ def process_and_annotate_frame():
 
     frame_count += 1
 
-    # Send full frame every time
     _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
     jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-    result = f"full:{jpg_as_text}"
-    _ = jpg_as_text
-
-    # # Send full frame every 30 frames or if it's the first frame
-    # if frame_count % 30 == 0 or frame_count == 1:
-    #     _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
-    #     jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-    #     result = f"full:{jpg_as_text}"
-    #     last_full_frame = jpg_as_text
-    #     process_and_annotate_frame.previous_frame = annotated_frame.copy()
-    # else:
-    #     # Delta encoding for other frames
-    #     frame_diff = cv2.absdiff(annotated_frame, process_and_annotate_frame.previous_frame)
-    #     _, buffer = cv2.imencode(".jpg", frame_diff, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
-    #     jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-    #     result = f"delta:{jpg_as_text}"
-    #     process_and_annotate_frame.previous_frame = annotated_frame.copy()
-
-    return result
+    return jpg_as_text
 
 
 def attempt_reconnection(max_attempts=5, delay=5):
