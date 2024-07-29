@@ -4,8 +4,8 @@
     <title>Stop Sign Compliance</title>
     <style>
         #videoCanvas {
-            width: 640px;
-            height: 480px;
+            max-width: 100%;
+            height: auto;
             border: 1px solid black;
         }
     </style>
@@ -30,9 +30,11 @@
                     originalHeight = message.height;
                     canvas.width = originalWidth;
                     canvas.height = originalHeight;
+                    console.log("Received dimensions:", originalWidth, "x", originalHeight);
                 } else if (message.type === "frame") {
                     const img = new Image();
                     img.onload = function() {
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
                         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                     }
                     img.src = "data:image/jpeg;base64," + message.data;
