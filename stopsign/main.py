@@ -234,9 +234,15 @@ def process_and_annotate_frame():
 
     if not cap or not cap.isOpened():
         cap = initialize_video_capture("live")
-    ret, frame = cap.read()
-    if not ret:
-        logger.warning("Failed to read frame. Attempting to reconnect...")
+    try:
+        ret, frame = cap.read()
+        if not ret:
+            logger.warning("Failed to read frame. Attempting to reconnect...")
+            cap.release()
+            cap = initialize_video_capture("live")
+            return None
+    except cv2.error as e:
+        logger.error(f"OpenCV error: {str(e)}")
         cap.release()
         cap = initialize_video_capture("live")
         return None
