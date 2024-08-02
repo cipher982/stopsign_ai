@@ -9,10 +9,17 @@
             border: 1px solid black;
         }
     </style>
+    <script>
+        // Prevent automatic favicon requests
+        var link = document.createElement("link");
+        link.type = "image/x-icon";
+        link.rel = "icon";
+        link.href = "data:,";
+        document.getElementsByTagName("head")[0].appendChild(link);
+    </script>
 </head>
 <body>
     <h1>Stop Sign Compliance Stream</h1>
-    <link rel="icon" type="image/x-icon" href="../favicon.ico">
     <canvas id="videoCanvas"></canvas>
     <script>
         const canvas = document.getElementById("videoCanvas");
