@@ -41,6 +41,10 @@ MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
 SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
 STREAM_BUFFER_DIR = os.path.join(os.path.dirname(__file__), "tmp_stream_buffer")
 
+# Initialize config
+config = Config("./config.yaml")
+FRAME_INTERVAL = 1 / config.fps
+
 # Create FastAPI app
 app = FastAPI()
 
@@ -63,34 +67,30 @@ logger = logging.getLogger(__name__)
 frame_count = 0
 original_width = None
 original_height = None
+frame_interval = 1 / config.fps
 
 
 class FrameBuffer:
     def __init__(self, maxsize=30):
         self.buffer = deque(maxlen=maxsize)
         self.lock = threading.Lock()
-        self.new_frame_event = threading.Event()
+        self.new_frame_event = asyncio.Event()
         self.logger = logging.getLogger(__name__)
 
     def put(self, frame):
         with self.lock:
             self.buffer.append(frame)
-            self.logger.debug(f"Frame added. Buffer size: {len(self.buffer)}")
+            self.logger.info(f"Frame added. Buffer size: {len(self.buffer)}")
         self.new_frame_event.set()
 
-    def get(self):
-        with self.lock:
-            if len(self.buffer) == 0:
-                self.logger.debug("Buffer empty. Returning None.")
-                return None
-            frame = self.buffer.popleft()
-            self.logger.debug(f"Frame retrieved. Buffer size: {len(self.buffer)}")
-            return frame
-
-    def wait_for_frame(self):
-        while not self.new_frame_event.is_set():
-            self.new_frame_event.wait(timeout=0.01)
-        self.new_frame_event.clear()
+    async def get(self):
+        while True:
+            with self.lock:
+                if len(self.buffer) > 0:
+                    frame = self.buffer.popleft()
+                    self.logger.info(f"Frame retrieved. Buffer size: {len(self.buffer)}")
+                    return frame
+            await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
 
     def qsize(self):
         with self.lock:
@@ -208,8 +208,8 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
 
 
 async def run_server():
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
-    server = uvicorn.Server(config)
+    uv_config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    server = uvicorn.Server(uv_config)
 
     # Setup signal handlers
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -223,15 +223,10 @@ async def run_server():
         await server.shutdown()
 
 
-def process_frame_task():
+async def process_frame_task():
     try:
-        frame_buffer.wait_for_frame()
-        frame = frame_buffer.get()
-        if frame is None:
-            logger.warning("No frame available in buffer")
-            return None
-        result = process_and_annotate_frame(frame)
-        logger.info("Finished process_frame_task")
+        frame = await frame_buffer.get()
+        result = await asyncio.to_thread(process_and_annotate_frame, frame)
         return result
     except Exception as e:
         logger.error(f"Error in process_frame_task: {str(e)}")
@@ -242,18 +237,24 @@ def process_frame_task():
 async def websocket_endpoint(websocket: WebSocket):
     global frame_count, original_width, original_height
     await websocket.accept()
-
+    last_frame_time = time.time()
     try:
         await websocket.send_json({"type": "dimensions", "width": original_width, "height": original_height})
 
         while not shutdown_event.is_set():
-            try:
-                result = await asyncio.to_thread(process_frame_task)
-                if result is not None:
-                    await websocket.send_json({"type": "frame", "data": result})
-            except Exception as e:
-                logger.error(f"Error in WebSocket loop: {str(e)}")
-                break
+            current_time = time.time()
+            time_since_last_frame = current_time - last_frame_time
+            if time_since_last_frame >= FRAME_INTERVAL:
+                try:
+                    result = await process_frame_task()
+                    if result is not None:
+                        await websocket.send_json({"type": "frame", "data": result})
+                        last_frame_time = current_time
+                except Exception as e:
+                    logger.error(f"Error in WebSocket loop: {str(e)}")
+                    break
+            else:
+                await asyncio.sleep(FRAME_INTERVAL - time_since_last_frame)
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
     finally:
@@ -356,46 +357,45 @@ def process_and_annotate_frame(frame):
             logger.error(f"Error in encode_frame: {str(e)}")
             raise
 
+    # Capture frame with timeout
     try:
-        # Capture frame with timeout
-        raw_frame = frame_buffer.get()
+        raw_frame = frame  # Use the frame passed as an argument
         if raw_frame is None:
             raise ValueError("Failed to capture frame within timeout")
+    except Exception as e:
+        logger.error(f"Error in frame_buffer.get(): {str(e)}")
+        raise
 
-        # Process frame
-        try:
-            processed_frame, boxes = process_frame_wrapper(raw_frame)
-        except Exception as e:
-            logger.error(f"Error in process_frame_wrapper: {str(e)}")
-            raise
+    # Process frame
+    try:
+        processed_frame, boxes = process_frame_wrapper(raw_frame)
+    except Exception as e:
+        logger.error(f"Error in process_frame_wrapper: {str(e)}")
+        raise
 
-        # Update tracking
-        try:
-            update_tracking(boxes)
-        except Exception as e:
-            logger.error(f"Error in update_tracking: {str(e)}")
-            raise
+    # Update tracking
+    try:
+        update_tracking(boxes)
+    except Exception as e:
+        logger.error(f"Error in update_tracking: {str(e)}")
+        raise
 
-        # Annotate frame
-        try:
-            annotated_frame = create_annotated_frame(processed_frame, boxes)
-        except Exception as e:
-            logger.error(f"Error in create_annotated_frame: {str(e)}")
-            raise
+    # Annotate frame
+    try:
+        annotated_frame = create_annotated_frame(processed_frame, boxes)
+    except Exception as e:
+        logger.error(f"Error in create_annotated_frame: {str(e)}")
+        raise
 
-        # Encode frame
-        try:
-            encoded_frame = encode_frame(annotated_frame)
-        except Exception as e:
-            logger.error(f"Error in encode_frame: {str(e)}")
-            raise
+    # Encode frame
+    try:
+        encoded_frame = encode_frame(annotated_frame)
+    except Exception as e:
+        logger.error(f"Error in encode_frame: {str(e)}")
+        raise
 
-        frame_count += 1
-        return encoded_frame
-
-    except Exception:
-        logger.error(f"Error processing frame {frame_count}")
-        return None
+    frame_count += 1
+    return encoded_frame
 
 
 def cleanup():
@@ -438,7 +438,7 @@ async def main_async(input_source: str, config: Config):
         producer_thread.join(timeout=5)  # Wait for the producer thread to finish
 
 
-def main(input_source: str, config: Config):
+def main(input_source: str):
     try:
         asyncio.run(main_async(input_source, config))
     except KeyboardInterrupt:
@@ -453,5 +453,4 @@ if __name__ == "__main__":
         "input_source", choices=["live", "file"], help="Input source type (live RTSP stream or video file)"
     )
     args = parser.parse_args()
-    config = Config("./config.yaml")
-    main(input_source=args.input_source, config=config)
+    main(input_source=args.input_source)
