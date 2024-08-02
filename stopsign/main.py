@@ -7,7 +7,10 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
+from collections import deque
+from threading import Thread
 from typing import Dict
 from typing import List
 
@@ -60,6 +63,48 @@ logger = logging.getLogger(__name__)
 frame_count = 0
 original_width = None
 original_height = None
+
+
+class FrameBuffer:
+    def __init__(self, maxsize=30):
+        self.buffer = deque(maxlen=maxsize)
+        self.lock = threading.Lock()
+        self.new_frame_event = threading.Event()
+        self.logger = logging.getLogger(__name__)
+
+    def put(self, frame):
+        with self.lock:
+            self.buffer.append(frame)
+            self.logger.debug(f"Frame added. Buffer size: {len(self.buffer)}")
+        self.new_frame_event.set()
+
+    def get(self):
+        with self.lock:
+            if len(self.buffer) == 0:
+                self.logger.debug("Buffer empty. Returning None.")
+                return None
+            frame = self.buffer.popleft()
+            self.logger.debug(f"Frame retrieved. Buffer size: {len(self.buffer)}")
+            return frame
+
+    def qsize(self):
+        with self.lock:
+            return len(self.buffer)
+
+
+frame_buffer = FrameBuffer()
+
+
+def frame_producer():
+    global cap
+    while not shutdown_event.is_set():
+        if cap is None or not cap.isOpened():
+            break
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        frame_buffer.put(frame)
+        time.sleep(1 / config.fps)  # Adjust capture rate
 
 
 def process_frame(
@@ -165,7 +210,18 @@ async def run_server():
 
 
 def process_frame_task():
-    return process_and_annotate_frame()
+    try:
+        frame = frame_buffer.get()
+        if frame is None:
+            logger.warning("No frame available in buffer")
+            time.sleep(1)  # Wait for a frame to be available
+            return None
+        result = process_and_annotate_frame(frame)
+        logger.info("Finished process_frame_task")
+        return result
+    except Exception as e:
+        logger.error(f"Error in process_frame_task: {str(e)}")
+        return None
 
 
 @app.websocket("/ws")
@@ -174,25 +230,20 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
 
     try:
-        # Send the original dimensions only once at the beginning
         await websocket.send_json({"type": "dimensions", "width": original_width, "height": original_height})
 
         while not shutdown_event.is_set():
             try:
                 result = await asyncio.wait_for(asyncio.to_thread(process_frame_task), timeout=5.0)
-                if result is None:
-                    if not attempt_reconnection():
-                        break
-                    continue
 
                 if frame_count % config.frame_skip == 0:
                     await websocket.send_json({"type": "frame", "data": result})
 
                 await asyncio.sleep(0.001)
             except asyncio.TimeoutError:
-                logger.warning("Frame processing timed out")
+                logger.warning(f"Frame {frame_count} processing timed out")
             except Exception as e:
-                logger.error(f"Error in WebSocket loop: {str(e)}")
+                logger.error(f"Error in WebSocket loop for frame {frame_count}: {str(e)}")
                 break
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
@@ -235,48 +286,49 @@ def initialize_components(config: Config) -> None:
     frame_count = 0
 
 
-def process_and_annotate_frame():
-    global frame_count, cap
-
-    MAX_RETRIES = 3
-    RETRY_DELAY = 1
-
-    def capture_frame(cap):
-        if not cap or not cap.isOpened():
-            cap = initialize_video_capture("live")
-        ret, frame = cap.read()
-        if not ret:
-            raise ValueError("Failed to read frame")
-        return cap, frame
+def process_and_annotate_frame(frame):
+    global frame_count
 
     def process_frame_wrapper(frame):
-        processed_frame, boxes = process_frame(
-            model=model,
-            frame=frame,
-            scale=config.scale,
-            crop_top_ratio=config.crop_top,
-            crop_side_ratio=config.crop_side,
-            vehicle_classes=config.vehicle_classes,
-        )
-        return processed_frame, boxes
+        try:
+            processed_frame, boxes = process_frame(
+                model=model,
+                frame=frame,
+                scale=config.scale,
+                crop_top_ratio=config.crop_top,
+                crop_side_ratio=config.crop_side,
+                vehicle_classes=config.vehicle_classes,
+            )
+            return processed_frame, boxes
+        except Exception as e:
+            logger.error(f"Error in process_frame_wrapper: {str(e)}")
+            raise
 
     def update_tracking(boxes):
-        car_tracker.update_cars(boxes, time.time())
-        for car in car_tracker.get_cars().values():
-            if not car.state.is_parked:
-                stop_detector.update_car_stop_status(car, time.time())
+        try:
+            car_tracker.update_cars(boxes, time.time())
+            for car in car_tracker.get_cars().values():
+                if not car.state.is_parked:
+                    stop_detector.update_car_stop_status(car, time.time())
+        except Exception as e:
+            logger.error(f"Error in update_tracking: {str(e)}")
+            raise
 
     def create_annotated_frame(processed_frame, boxes):
-        annotated_frame = visualize(
-            processed_frame,
-            car_tracker.cars,
-            boxes,
-            stop_detector.stop_zone,
-            frame_count,
-        )
-        if config.draw_grid:
-            draw_gridlines(annotated_frame, config.grid_size)
-        return ensure_bgr_format(annotated_frame)
+        try:
+            annotated_frame = visualize(
+                processed_frame,
+                car_tracker.cars,
+                boxes,
+                stop_detector.stop_zone,
+                frame_count,
+            )
+            if config.draw_grid:
+                draw_gridlines(annotated_frame, config.grid_size)
+            return ensure_bgr_format(annotated_frame)
+        except Exception as e:
+            logger.error(f"Error in create_annotated_frame: {str(e)}")
+            raise
 
     def ensure_bgr_format(frame):
         if len(frame.shape) == 2:  # If grayscale
@@ -287,60 +339,54 @@ def process_and_annotate_frame():
         return frame
 
     def encode_frame(frame):
-        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
-        return base64.b64encode(buffer).decode("utf-8")
-
-    for attempt in range(MAX_RETRIES):
-        start_time = time.time()
-        logger.info(f"Processing frame {frame_count} (attempt {attempt + 1}/{MAX_RETRIES})")
-
         try:
-            cap, raw_frame = capture_frame(cap)
-            logger.info(f"Frame {frame_count} captured in {time.time() - start_time:.2f} seconds")
-
-            processed_frame, boxes = process_frame_wrapper(raw_frame)
-            logger.info(f"Frame {frame_count} processed in {time.time() - start_time:.2f} seconds")
-
-            update_tracking(boxes)
-            logger.info(f"Frame {frame_count} tracking updated in {time.time() - start_time:.2f} seconds")
-
-            annotated_frame = create_annotated_frame(processed_frame, boxes)
-            logger.info(f"Frame {frame_count} annotated in {time.time() - start_time:.2f} seconds")
-
-            encoded_frame = encode_frame(annotated_frame)
-            logger.info(f"Frame {frame_count} encoded in {time.time() - start_time:.2f} seconds")
-
-            frame_count += 1
+            _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
+            encoded_frame = base64.b64encode(buffer).decode("utf-8")
             return encoded_frame
-
         except Exception as e:
-            logger.error(f"Error processing frame {frame_count} (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
-            if attempt < MAX_RETRIES - 1:
-                logger.info(f"Retrying in {RETRY_DELAY} seconds...")
-                time.sleep(RETRY_DELAY)
-                if cap:
-                    cap.release()
-                cap = None
-            else:
-                logger.error("Max retries reached. Returning None.")
-                return None
+            logger.error(f"Error in encode_frame: {str(e)}")
+            raise
 
-    return None
+    try:
+        # Capture frame with timeout
+        raw_frame = frame_buffer.get()
+        if raw_frame is None:
+            raise ValueError("Failed to capture frame within timeout")
 
+        # Process frame
+        try:
+            processed_frame, boxes = process_frame_wrapper(raw_frame)
+        except Exception as e:
+            logger.error(f"Error in process_frame_wrapper: {str(e)}")
+            raise
 
-def attempt_reconnection(max_attempts=5, delay=5):
-    global cap
-    for attempt in range(max_attempts):
-        logger.info(f"Attempting to reconnect (attempt {attempt + 1}/{max_attempts})...")
-        if cap is not None:
-            cap.release()
-        cap = initialize_video_capture("live")
-        if cap.isOpened():
-            logger.info("Reconnection successful")
-            return True
-        time.sleep(delay)
-    logger.error("Failed to reconnect after maximum attempts")
-    return False
+        # Update tracking
+        try:
+            update_tracking(boxes)
+        except Exception as e:
+            logger.error(f"Error in update_tracking: {str(e)}")
+            raise
+
+        # Annotate frame
+        try:
+            annotated_frame = create_annotated_frame(processed_frame, boxes)
+        except Exception as e:
+            logger.error(f"Error in create_annotated_frame: {str(e)}")
+            raise
+
+        # Encode frame
+        try:
+            encoded_frame = encode_frame(annotated_frame)
+        except Exception as e:
+            logger.error(f"Error in encode_frame: {str(e)}")
+            raise
+
+        frame_count += 1
+        return encoded_frame
+
+    except Exception:
+        logger.error(f"Error processing frame {frame_count}")
+        return None
 
 
 def cleanup():
@@ -369,6 +415,10 @@ async def main_async(input_source: str, config: Config):
     initialize_components(config)
     frame_count = 0
 
+    # Start the frame producer thread
+    producer_thread = Thread(target=frame_producer, daemon=True)
+    producer_thread.start()
+
     # Add a short delay to ensure initialization is complete
     await asyncio.sleep(1)
 
@@ -376,6 +426,7 @@ async def main_async(input_source: str, config: Config):
         await run_server()
     finally:
         cleanup()
+        producer_thread.join(timeout=5)  # Wait for the producer thread to finish
 
 
 def main(input_source: str, config: Config):
