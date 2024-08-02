@@ -87,6 +87,11 @@ class FrameBuffer:
             self.logger.debug(f"Frame retrieved. Buffer size: {len(self.buffer)}")
             return frame
 
+    def wait_for_frame(self):
+        while not self.new_frame_event.is_set():
+            self.new_frame_event.wait(timeout=0.01)
+        self.new_frame_event.clear()
+
     def qsize(self):
         with self.lock:
             return len(self.buffer)
@@ -97,14 +102,23 @@ frame_buffer = FrameBuffer()
 
 def frame_producer():
     global cap
+    frame_time = 1 / config.fps
+    last_frame_time = time.time()
     while not shutdown_event.is_set():
         if cap is None or not cap.isOpened():
             break
-        ret, frame = cap.read()
-        if not ret:
-            continue
-        frame_buffer.put(frame)
-        time.sleep(1 / config.fps)  # Adjust capture rate
+
+        current_time = time.time()
+        elapsed_time = current_time - last_frame_time
+
+        if elapsed_time >= frame_time:
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            frame_buffer.put(frame)
+            last_frame_time = current_time
+        else:
+            time.sleep(frame_time - elapsed_time)
 
 
 def process_frame(
@@ -211,10 +225,10 @@ async def run_server():
 
 def process_frame_task():
     try:
+        frame_buffer.wait_for_frame()
         frame = frame_buffer.get()
         if frame is None:
             logger.warning("No frame available in buffer")
-            time.sleep(1)  # Wait for a frame to be available
             return None
         result = process_and_annotate_frame(frame)
         logger.info("Finished process_frame_task")
@@ -234,16 +248,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
         while not shutdown_event.is_set():
             try:
-                result = await asyncio.wait_for(asyncio.to_thread(process_frame_task), timeout=5.0)
-
-                if frame_count % config.frame_skip == 0:
+                result = await asyncio.to_thread(process_frame_task)
+                if result is not None:
                     await websocket.send_json({"type": "frame", "data": result})
-
-                await asyncio.sleep(0.001)
-            except asyncio.TimeoutError:
-                logger.warning(f"Frame {frame_count} processing timed out")
             except Exception as e:
-                logger.error(f"Error in WebSocket loop for frame {frame_count}: {str(e)}")
+                logger.error(f"Error in WebSocket loop: {str(e)}")
                 break
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
