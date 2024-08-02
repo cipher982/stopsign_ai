@@ -18,6 +18,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi import WebSocket
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
 
 from stopsign.config import Config
@@ -25,10 +26,10 @@ from stopsign.tracking import Car
 from stopsign.tracking import CarTracker
 from stopsign.tracking import StopDetector
 from stopsign.tracking import StopZone
-from stopsign.utils.video import crop_scale_frame
-from stopsign.utils.video import draw_box
-from stopsign.utils.video import draw_gridlines
-from stopsign.utils.video import open_rtsp_stream
+from stopsign.utils import crop_scale_frame
+from stopsign.utils import draw_box
+from stopsign.utils import draw_gridlines
+from stopsign.utils import open_rtsp_stream
 
 # Set environment variables
 dotenv.load_dotenv()
@@ -39,6 +40,14 @@ STREAM_BUFFER_DIR = os.path.join(os.path.dirname(__file__), "tmp_stream_buffer")
 
 # Create FastAPI app
 app = FastAPI()
+
+app.mount("/static", StaticFiles(directory="stopsign/static"), name="static")
+
+
+@app.get("/")
+async def get():
+    return HTMLResponse(content=open("stopsign/index.html", "r").read())
+
 
 # Global flag to signal shutdown
 shutdown_event = asyncio.Event()
@@ -155,11 +164,6 @@ async def run_server():
         await server.shutdown()
 
 
-@app.get("/")
-async def get():
-    return HTMLResponse(content=open("stopsign/index.html", "r").read())
-
-
 def process_frame_task():
     return process_and_annotate_frame()
 
@@ -230,67 +234,92 @@ def initialize_components(config: Config) -> None:
 
 
 def process_and_annotate_frame():
-    global frame_count, cap, previous_frame
+    global frame_count, cap
 
-    if not cap or not cap.isOpened():
-        cap = initialize_video_capture("live")
-    try:
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1
+
+    def capture_frame(cap):
+        if not cap or not cap.isOpened():
+            cap = initialize_video_capture("live")
         ret, frame = cap.read()
         if not ret:
-            logger.warning("Failed to read frame. Attempting to reconnect...")
-            cap.release()
-            cap = initialize_video_capture("live")
-            return None
-    except cv2.error as e:
-        logger.error(f"OpenCV error: {str(e)}")
-        cap.release()
-        cap = initialize_video_capture("live")
-        return None
+            raise ValueError("Failed to read frame")
+        return cap, frame
 
-    frame, boxes = process_frame(
-        model=model,
-        frame=frame,
-        scale=config.scale,
-        crop_top_ratio=config.crop_top,
-        crop_side_ratio=config.crop_side,
-        vehicle_classes=config.vehicle_classes,
-    )
+    def process_frame_wrapper(frame):
+        processed_frame, boxes = process_frame(
+            model=model,
+            frame=frame,
+            scale=config.scale,
+            crop_top_ratio=config.crop_top,
+            crop_side_ratio=config.crop_side,
+            vehicle_classes=config.vehicle_classes,
+        )
+        return processed_frame, boxes
 
-    car_tracker.update_cars(boxes, time.time())
-    for car in car_tracker.get_cars().values():
-        if not car.state.is_parked:
-            stop_detector.update_car_stop_status(car, time.time())
+    def update_tracking(boxes):
+        car_tracker.update_cars(boxes, time.time())
+        for car in car_tracker.get_cars().values():
+            if not car.state.is_parked:
+                stop_detector.update_car_stop_status(car, time.time())
 
-    annotated_frame = visualize(
-        frame,
-        car_tracker.cars,
-        boxes,
-        stop_detector.stop_zone,
-        frame_count,
-    )
+    def create_annotated_frame(processed_frame, boxes):
+        annotated_frame = visualize(
+            processed_frame,
+            car_tracker.cars,
+            boxes,
+            stop_detector.stop_zone,
+            frame_count,
+        )
+        if config.draw_grid:
+            draw_gridlines(annotated_frame, config.grid_size)
+        return ensure_bgr_format(annotated_frame)
 
-    if config.draw_grid:
-        draw_gridlines(annotated_frame, config.grid_size)
+    def ensure_bgr_format(frame):
+        if len(frame.shape) == 2:  # If grayscale
+            return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif frame.shape[2] == 4:  # If RGBA
+            logger.info("Converting RGBA to BGR")
+            return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+        return frame
 
-    # Ensure the frame is in BGR format
-    if len(annotated_frame.shape) == 2:  # If grayscale
-        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_GRAY2BGR)
-    elif annotated_frame.shape[2] == 4:  # If RGBA
-        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGBA2BGR)
-        print("Converted RGBA to BGR")
+    def encode_frame(frame):
+        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
+        return base64.b64encode(buffer).decode("utf-8")
 
-    frame_count += 1
+    for attempt in range(MAX_RETRIES):
+        try:
+            cap, raw_frame = capture_frame(cap)
+            processed_frame, boxes = process_frame_wrapper(raw_frame)
+            update_tracking(boxes)
+            annotated_frame = create_annotated_frame(processed_frame, boxes)
+            encoded_frame = encode_frame(annotated_frame)
 
-    _, buffer = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality])
-    jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-    return jpg_as_text
+            frame_count += 1
+            return encoded_frame
+
+        except Exception as e:
+            logger.error(f"Error processing frame (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+            if attempt < MAX_RETRIES - 1:
+                logger.info(f"Retrying in {RETRY_DELAY} seconds...")
+                time.sleep(RETRY_DELAY)
+                if cap:
+                    cap.release()
+                cap = None
+            else:
+                logger.error("Max retries reached. Returning None.")
+                return None
+
+    return None
 
 
 def attempt_reconnection(max_attempts=5, delay=5):
     global cap
     for attempt in range(max_attempts):
         logger.info(f"Attempting to reconnect (attempt {attempt + 1}/{max_attempts})...")
-        cap.release()
+        if cap is not None:
+            cap.release()
         cap = initialize_video_capture("live")
         if cap.isOpened():
             logger.info("Reconnection successful")
