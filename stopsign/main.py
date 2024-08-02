@@ -173,27 +173,29 @@ async def websocket_endpoint(websocket: WebSocket):
     global frame_count, original_width, original_height
     await websocket.accept()
 
-    # Send the original dimensions only once at the beginning
-    await websocket.send_json({"type": "dimensions", "width": original_width, "height": original_height})
-
     try:
+        # Send the original dimensions only once at the beginning
+        await websocket.send_json({"type": "dimensions", "width": original_width, "height": original_height})
+
         while not shutdown_event.is_set():
             try:
-                result = await asyncio.wait_for(asyncio.to_thread(process_frame_task), timeout=1.0)
+                result = await asyncio.wait_for(asyncio.to_thread(process_frame_task), timeout=5.0)
+                if result is None:
+                    if not attempt_reconnection():
+                        break
+                    continue
+
+                if frame_count % config.frame_skip == 0:
+                    await websocket.send_json({"type": "frame", "data": result})
+
+                await asyncio.sleep(0.001)
             except asyncio.TimeoutError:
-                continue
-
-            if result is None:
-                if not attempt_reconnection():
-                    break
-                continue
-
-            if frame_count % config.frame_skip == 0:
-                await websocket.send_json({"type": "frame", "data": result})
-
-            await asyncio.sleep(0.001)
-    except asyncio.CancelledError:
-        print("WebSocket connection closed")
+                logger.warning("Frame processing timed out")
+            except Exception as e:
+                logger.error(f"Error in WebSocket loop: {str(e)}")
+                break
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
     finally:
         await websocket.close()
 
@@ -289,18 +291,30 @@ def process_and_annotate_frame():
         return base64.b64encode(buffer).decode("utf-8")
 
     for attempt in range(MAX_RETRIES):
+        start_time = time.time()
+        logger.info(f"Processing frame {frame_count} (attempt {attempt + 1}/{MAX_RETRIES})")
+
         try:
             cap, raw_frame = capture_frame(cap)
+            logger.info(f"Frame {frame_count} captured in {time.time() - start_time:.2f} seconds")
+
             processed_frame, boxes = process_frame_wrapper(raw_frame)
+            logger.info(f"Frame {frame_count} processed in {time.time() - start_time:.2f} seconds")
+
             update_tracking(boxes)
+            logger.info(f"Frame {frame_count} tracking updated in {time.time() - start_time:.2f} seconds")
+
             annotated_frame = create_annotated_frame(processed_frame, boxes)
+            logger.info(f"Frame {frame_count} annotated in {time.time() - start_time:.2f} seconds")
+
             encoded_frame = encode_frame(annotated_frame)
+            logger.info(f"Frame {frame_count} encoded in {time.time() - start_time:.2f} seconds")
 
             frame_count += 1
             return encoded_frame
 
         except Exception as e:
-            logger.error(f"Error processing frame (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+            logger.error(f"Error processing frame {frame_count} (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
             if attempt < MAX_RETRIES - 1:
                 logger.info(f"Retrying in {RETRY_DELAY} seconds...")
                 time.sleep(RETRY_DELAY)
@@ -354,6 +368,9 @@ async def main_async(input_source: str, config: Config):
 
     initialize_components(config)
     frame_count = 0
+
+    # Add a short delay to ensure initialization is complete
+    await asyncio.sleep(1)
 
     try:
         await run_server()
