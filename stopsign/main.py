@@ -5,7 +5,6 @@ import contextlib
 import io
 import logging
 import os
-import signal
 import sys
 import threading
 import time
@@ -17,11 +16,14 @@ from typing import List
 import cv2
 import dotenv
 import numpy as np
-import uvicorn
-from fastapi import FastAPI
-from fastapi import WebSocket
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fasthtml import Body
+from fasthtml import FastHTML
+from fasthtml import Head
+from fasthtml import Html
+from fasthtml import Img
+from fasthtml import Script
+from fasthtml import Title
+from starlette.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 
 from stopsign.config import Config
@@ -45,19 +47,85 @@ STREAM_BUFFER_DIR = os.path.join(os.path.dirname(__file__), "tmp_stream_buffer")
 config = Config("./config.yaml")
 FRAME_INTERVAL = 1 / config.fps
 
-# Create FastAPI app
-app = FastAPI()
+app = FastHTML(ws_hdr=True)
 
-app.mount("/static", StaticFiles(directory="stopsign/static"), name="static")
+# Add CORS middleware after WebSocket route
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-@app.get("/")
-async def get():
-    return HTMLResponse(content=open("stopsign/index.html", "r").read())
+async def on_connect(send):
+    print("WebSocket connected")
 
 
-# Global flag to signal shutdown
-shutdown_event = asyncio.Event()
+async def on_disconnect(ws):
+    print("WebSocket disconnected")
+
+
+@app.ws("/ws")
+async def ws_handler(msg: str, send):
+    global frame_count, original_width, original_height
+    await send({"type": "dimensions", "width": original_width, "height": original_height})
+
+    while not shutdown_flag.is_set():
+        frame = process_frame_task()
+        if frame is not None:
+            await send(frame)
+        await asyncio.sleep(FRAME_INTERVAL)
+
+
+@app.get("/")  # type: ignore
+def home():
+    return (
+        Title("Stop Sign Compliance"),
+        Html(
+            Head(
+                Script(src="https://unpkg.com/htmx.org@1.9.4"),
+                Script("""
+                    // Prevent automatic favicon requests
+                    var link = document.createElement("link");
+                    link.type = "image/x-icon";
+                    link.rel = "icon";
+                    link.href = "data:,";
+                    document.getElementsByTagName("head")[0].appendChild(link);
+                """),
+                Script("""
+                    var ws = new WebSocket("ws://" + window.location.host + "/ws");
+                    ws.onmessage = function(event) {
+                        var data = JSON.parse(event.data);
+                        if (data.type === "dimensions") {
+                            // Handle dimensions
+                        } else {
+                            var img = document.getElementById('videoFrame');
+                            img.src = "data:image/jpeg;base64," + data;
+                        }
+                    };
+                    ws.onerror = function(error) {
+                        console.error('WebSocket Error:', error);
+                    };
+                    ws.onopen = function() {
+                        console.log('WebSocket connection established');
+                    };
+                """),
+            ),
+            Body(Img(id="videoFrame", style="max-width: 100%; height: auto; border: 1px solid black;")),
+        ),
+    )
+
+
+@app.get("/frame")  # type: ignore
+def get_frame():
+    # This will replace the WebSocket logic
+    frame = process_frame_task()
+    if frame is not None:
+        return Img(src=f"data:image/jpeg;base64,{frame}", style="max-width: 100%; height: auto;")
+    return ""
+
 
 # Set logging
 logging.basicConfig(level=logging.INFO)
@@ -74,23 +142,20 @@ class FrameBuffer:
     def __init__(self, maxsize=30):
         self.buffer = deque(maxlen=maxsize)
         self.lock = threading.Lock()
-        self.new_frame_event = asyncio.Event()
         self.logger = logging.getLogger(__name__)
 
     def put(self, frame):
         with self.lock:
             self.buffer.append(frame)
             self.logger.info(f"Frame added. Buffer size: {len(self.buffer)}")
-        self.new_frame_event.set()
 
-    async def get(self):
-        while True:
-            with self.lock:
-                if len(self.buffer) > 0:
-                    frame = self.buffer.popleft()
-                    self.logger.info(f"Frame retrieved. Buffer size: {len(self.buffer)}")
-                    return frame
-            await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
+    def get(self):
+        with self.lock:
+            if len(self.buffer) > 0:
+                frame = self.buffer.popleft()
+                self.logger.info(f"Frame retrieved. Buffer size: {len(self.buffer)}")
+                return frame
+        return None
 
     def qsize(self):
         with self.lock:
@@ -98,13 +163,14 @@ class FrameBuffer:
 
 
 frame_buffer = FrameBuffer()
+shutdown_flag = threading.Event()
 
 
 def frame_producer():
     global cap
     frame_time = 1 / config.fps
     last_frame_time = time.time()
-    while not shutdown_event.is_set():
+    while not shutdown_flag.is_set():
         if cap is None or not cap.isOpened():
             break
 
@@ -207,58 +273,16 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
     return frame
 
 
-async def run_server():
-    uv_config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
-    server = uvicorn.Server(uv_config)
-
-    # Setup signal handlers
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        asyncio.get_running_loop().add_signal_handler(sig, lambda: asyncio.create_task(shutdown(sig, server)))
-
+def process_frame_task():
     try:
-        await server.serve()
-    except Exception as e:
-        logger.error(f"Server error: {e}")
-    finally:
-        await server.shutdown()
-
-
-async def process_frame_task():
-    try:
-        frame = await frame_buffer.get()
-        result = await asyncio.to_thread(process_and_annotate_frame, frame)
-        return result
+        frame = frame_buffer.get()
+        if frame is not None:
+            result = process_and_annotate_frame(frame)
+            return result
+        return None
     except Exception as e:
         logger.error(f"Error in process_frame_task: {str(e)}")
         return None
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    global frame_count, original_width, original_height
-    await websocket.accept()
-    last_frame_time = time.time()
-    try:
-        await websocket.send_json({"type": "dimensions", "width": original_width, "height": original_height})
-
-        while not shutdown_event.is_set():
-            current_time = time.time()
-            time_since_last_frame = current_time - last_frame_time
-            if time_since_last_frame >= FRAME_INTERVAL:
-                try:
-                    result = await process_frame_task()
-                    if result is not None:
-                        await websocket.send_json({"type": "frame", "data": result})
-                        last_frame_time = current_time
-                except Exception as e:
-                    logger.error(f"Error in WebSocket loop: {str(e)}")
-                    break
-            else:
-                await asyncio.sleep(FRAME_INTERVAL - time_since_last_frame)
-    except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
-    finally:
-        await websocket.close()
 
 
 def initialize_video_capture(input_source):
@@ -405,15 +429,7 @@ def cleanup():
     cv2.destroyAllWindows()
 
 
-async def shutdown(sig: signal.Signals, server: uvicorn.Server):
-    logger.info(f"Received exit signal {sig.name}...")
-    shutdown_event.set()  # Set the shutdown event
-    await server.shutdown()
-    cleanup()  # Call cleanup function
-    sys.exit(0)  # Force exit
-
-
-async def main_async(input_source: str, config: Config):
+def main(input_source: str):
     global cap, frame_count
 
     cap = initialize_video_capture(input_source)
@@ -428,22 +444,14 @@ async def main_async(input_source: str, config: Config):
     producer_thread = Thread(target=frame_producer, daemon=True)
     producer_thread.start()
 
-    # Add a short delay to ensure initialization is complete
-    await asyncio.sleep(1)
+    # Run the FastHTML server
+    import uvicorn
 
     try:
-        await run_server()
+        uvicorn.run(app, host="0.0.0.0", port=8000, ws="websockets")
     finally:
-        cleanup()
+        shutdown_flag.set()  # Signal the producer thread to stop
         producer_thread.join(timeout=5)  # Wait for the producer thread to finish
-
-
-def main(input_source: str):
-    try:
-        asyncio.run(main_async(input_source, config))
-    except KeyboardInterrupt:
-        print("Interrupted by user. Shutting down...")
-    finally:
         cleanup()
 
 
