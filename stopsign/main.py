@@ -245,7 +245,7 @@ def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_f
     # Draw boxes for each car
     for box in boxes:
         if box.id is None:
-            logger.warning("Skipping box without ID in visualize function")
+            logger.debug("Skipping box without ID in visualize function")
             continue
         try:
             car_id = int(box.id.item())

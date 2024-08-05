@@ -241,7 +241,7 @@ class CarTracker:
     def update_cars(self, boxes: List, timestamp: float) -> None:
         for box in boxes:
             if box.id is None:
-                logger.warning("Skipping box without ID")
+                logger.debug("Skipping box without ID")
                 continue
             try:
                 car_id = int(box.id.item())
