@@ -18,7 +18,7 @@ tracking:
 output:
   save_video: true
   frame_skip: 3
-  jpeg_quality: 50
+  jpeg_quality: 10
 
 debugging_visualization:
   draw_grid: true

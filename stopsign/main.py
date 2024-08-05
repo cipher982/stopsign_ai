@@ -69,10 +69,10 @@ async def frame_loop(send):
             frame = process_frame_task()
             if frame is not None:
                 await send(f"data:image/jpeg;base64,{frame}")
-                await send(json.dumps({"type": "status", "content": f"Frame {frame_count} sent"}))
+                await send(f"Frame {frame_count} sent")
             else:
                 logger.info("No frame available")
-                await send(json.dumps({"type": "status", "content": "No frame available"}))
+                await send("No frame available")
         except Exception as e:
             logger.error(f"Error in frame loop: {str(e)}")
             break
@@ -95,24 +95,6 @@ async def on_disconnect():
 async def ws_handler(websocket):
     # global frame_count
     logger.info("WebSocket handler started")
-    # Commented out for now, for some reason it never sends anything
-    # while not shutdown_flag.is_set():
-    #     try:
-    #         # data = await websocket.receive_text()
-    #         frame = process_frame_task()
-    #         if frame is not None:
-    #             logger.info(f"Sending frame {frame_count} via WebSocket")
-    #             # Send frame as data URL
-    #             await websocket.send_text(f"data:image/jpeg;base64,{frame}")
-    #             # Update status
-    #             await websocket.send_text(json.dumps({"type": "status", "content": f"Frame {frame_count} sent"}))
-    #         else:
-    #             logger.info("No frame available")
-    #             await websocket.send_text(json.dumps({"type": "status", "content": "No frame available"}))
-    #     except Exception as e:
-    #         logger.error(f"Error in WebSocket handler: {str(e)}")
-    #         break
-    #     await asyncio.sleep(FRAME_INTERVAL)
 
 
 @app.get("/")  # type: ignore
