@@ -3,6 +3,7 @@ import asyncio
 import base64
 import contextlib
 import io
+import json
 import logging
 import os
 import sys
@@ -47,6 +48,17 @@ STREAM_BUFFER_DIR = os.path.join(os.path.dirname(__file__), "tmp_stream_buffer")
 config = Config("./config.yaml")
 FRAME_INTERVAL = 1 / config.fps
 
+# Set logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Global variables
+frame_count = 0
+original_width = None
+original_height = None
+frame_interval = 1 / config.fps
+
+# Start the server
 app = FastHTML(ws_hdr=True)
 
 # Add CORS middleware after WebSocket route
@@ -60,22 +72,28 @@ app.add_middleware(
 
 
 async def on_connect(send):
-    print("WebSocket connected")
+    logger.info("WebSocket connected")
+    dimensions = {"type": "dimensions", "width": original_width, "height": original_height}
+    await send(json.dumps(dimensions))
 
 
-async def on_disconnect(ws):
-    print("WebSocket disconnected")
+async def on_disconnect():
+    logger.info("WebSocket disconnected")
 
 
-@app.ws("/ws")
+@app.ws("/ws", conn=on_connect, disconn=on_disconnect)
 async def ws_handler(msg: str, send):
-    global frame_count, original_width, original_height
-    await send({"type": "dimensions", "width": original_width, "height": original_height})
+    global frame_count
+    logger.info("WebSocket handler started")
 
     while not shutdown_flag.is_set():
         frame = process_frame_task()
         if frame is not None:
-            await send(frame)
+            logger.info(f"Sending frame {frame_count} via WebSocket")
+            # Send frame as binary data
+            await send(base64.b64decode(frame))
+        else:
+            logger.info("No frame available")
         await asyncio.sleep(FRAME_INTERVAL)
 
 
@@ -93,16 +111,29 @@ def home():
                     link.rel = "icon";
                     link.href = "data:,";
                     document.getElementsByTagName("head")[0].appendChild(link);
-                """),
-                Script("""
+
+                    document.addEventListener('DOMContentLoaded', function() {
+                        var img = document.getElementById('videoFrame');
+                        if (img) {
+                            console.log("videoFrame element found");
+                        } else {
+                            console.error("videoFrame element not found");
+                        }
+                    });
+
                     var ws = new WebSocket("ws://" + window.location.host + "/ws");
                     ws.onmessage = function(event) {
-                        var data = JSON.parse(event.data);
-                        if (data.type === "dimensions") {
-                            // Handle dimensions
+                        if (typeof event.data === 'string') {
+                            // Handle JSON data (e.g., dimensions)
+                            var data = JSON.parse(event.data);
+                            if (data.type === "dimensions") {
+                                console.log("Received dimensions:", data);
+                            }
                         } else {
+                            // Handle binary data (frames)
+                            var blob = event.data;
                             var img = document.getElementById('videoFrame');
-                            img.src = "data:image/jpeg;base64," + data;
+                            img.src = URL.createObjectURL(blob);
                         }
                     };
                     ws.onerror = function(error) {
@@ -113,7 +144,11 @@ def home():
                     };
                 """),
             ),
-            Body(Img(id="videoFrame", style="max-width: 100%; height: auto; border: 1px solid black;")),
+            Body(
+                Img(id="videoFrame", style="max-width: 100%; height: auto; border: 1px solid black;"),
+                hx_ext="ws",
+                ws_connect="/ws",
+            ),
         ),
     )
 
@@ -125,17 +160,6 @@ def get_frame():
     if frame is not None:
         return Img(src=f"data:image/jpeg;base64,{frame}", style="max-width: 100%; height: auto;")
     return ""
-
-
-# Set logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Global variables
-frame_count = 0
-original_width = None
-original_height = None
-frame_interval = 1 / config.fps
 
 
 class FrameBuffer:
@@ -434,7 +458,7 @@ def main(input_source: str):
 
     cap = initialize_video_capture(input_source)
     if not cap.isOpened():
-        print("Error: Could not open video stream")
+        logger.error("Error: Could not open video stream")
         return
 
     initialize_components(config)
