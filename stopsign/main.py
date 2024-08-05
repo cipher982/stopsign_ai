@@ -18,13 +18,13 @@ import cv2
 import dotenv
 import numpy as np
 from fasthtml import Body
+from fasthtml import Div
 from fasthtml import FastHTML
 from fasthtml import Head
 from fasthtml import Html
 from fasthtml import Img
 from fasthtml import Script
 from fasthtml import Title
-from starlette.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 
 from stopsign.config import Config
@@ -61,20 +61,31 @@ frame_interval = 1 / config.fps
 # Start the server
 app = FastHTML(ws_hdr=True)
 
-# Add CORS middleware after WebSocket route
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+async def frame_loop(send):
+    global frame_count
+    while not shutdown_flag.is_set():
+        try:
+            frame = process_frame_task()
+            if frame is not None:
+                logger.info(f"Sending frame {frame_count} via WebSocket")
+                await send(f"data:image/jpeg;base64,{frame}")
+                await send(json.dumps({"type": "status", "content": f"Frame {frame_count} sent"}))
+            else:
+                logger.info("No frame available")
+                await send(json.dumps({"type": "status", "content": "No frame available"}))
+        except Exception as e:
+            logger.error(f"Error in frame loop: {str(e)}")
+            break
+        await asyncio.sleep(FRAME_INTERVAL)
 
 
 async def on_connect(send):
     logger.info("WebSocket connected")
     dimensions = {"type": "dimensions", "width": original_width, "height": original_height}
     await send(json.dumps(dimensions))
+    # Start the message loop
+    asyncio.create_task(frame_loop(send))
 
 
 async def on_disconnect():
@@ -82,18 +93,25 @@ async def on_disconnect():
 
 
 @app.ws("/ws", conn=on_connect, disconn=on_disconnect)
-async def ws_handler(msg: str, send):
+async def ws_handler(websocket):
     global frame_count
     logger.info("WebSocket handler started")
-
     while not shutdown_flag.is_set():
-        frame = process_frame_task()
-        if frame is not None:
-            logger.info(f"Sending frame {frame_count} via WebSocket")
-            # Send frame as binary data
-            await send(base64.b64decode(frame))
-        else:
-            logger.info("No frame available")
+        try:
+            # data = await websocket.receive_text()
+            frame = process_frame_task()
+            if frame is not None:
+                logger.info(f"Sending frame {frame_count} via WebSocket")
+                # Send frame as data URL
+                await websocket.send_text(f"data:image/jpeg;base64,{frame}")
+                # Update status
+                await websocket.send_text(json.dumps({"type": "status", "content": f"Frame {frame_count} sent"}))
+            else:
+                logger.info("No frame available")
+                await websocket.send_text(json.dumps({"type": "status", "content": "No frame available"}))
+        except Exception as e:
+            logger.error(f"Error in WebSocket handler: {str(e)}")
+            break
         await asyncio.sleep(FRAME_INTERVAL)
 
 
@@ -105,61 +123,40 @@ def home():
             Head(
                 Script(src="https://unpkg.com/htmx.org@1.9.4"),
                 Script("""
-                    // Prevent automatic favicon requests
-                    var link = document.createElement("link");
-                    link.type = "image/x-icon";
-                    link.rel = "icon";
-                    link.href = "data:,";
-                    document.getElementsByTagName("head")[0].appendChild(link);
-
                     document.addEventListener('DOMContentLoaded', function() {
-                        var img = document.getElementById('videoFrame');
-                        if (img) {
-                            console.log("videoFrame element found");
-                        } else {
-                            console.error("videoFrame element not found");
-                        }
-                    });
-
-                    var ws = new WebSocket("ws://" + window.location.host + "/ws");
-                    ws.onmessage = function(event) {
-                        if (typeof event.data === 'string') {
-                            // Handle JSON data (e.g., dimensions)
-                            var data = JSON.parse(event.data);
-                            if (data.type === "dimensions") {
-                                console.log("Received dimensions:", data);
+                        var socket = new WebSocket('ws://' + window.location.host + '/ws');
+                        socket.onopen = function(event) {
+                            console.log("WebSocket connection established");
+                        };
+                        socket.onmessage = function(event) {
+                            var data = event.data;
+                            if (data.startsWith('data:image')) {
+                                document.getElementById('videoFrame').src = data;
+                            } else {
+                                try {
+                                    var message = JSON.parse(data);
+                                    if (message.type === 'status') {
+                                        document.getElementById('status').innerText = message.content;
+                                    } else if (message.type === 'dimensions') {
+                                        console.log("Received dimensions:", message);
+                                    }
+                                } catch (e) {
+                                    console.error("Error parsing message:", e);
+                                }
                             }
-                        } else {
-                            // Handle binary data (frames)
-                            var blob = event.data;
-                            var img = document.getElementById('videoFrame');
-                            img.src = URL.createObjectURL(blob);
-                        }
-                    };
-                    ws.onerror = function(error) {
-                        console.error('WebSocket Error:', error);
-                    };
-                    ws.onopen = function() {
-                        console.log('WebSocket connection established');
-                    };
+                        };
+                        socket.onerror = function(error) {
+                            console.error("WebSocket error:", error);
+                        };
+                    });
                 """),
             ),
             Body(
                 Img(id="videoFrame", style="max-width: 100%; height: auto; border: 1px solid black;"),
-                hx_ext="ws",
-                ws_connect="/ws",
+                Div(id="status"),
             ),
         ),
     )
-
-
-@app.get("/frame")  # type: ignore
-def get_frame():
-    # This will replace the WebSocket logic
-    frame = process_frame_task()
-    if frame is not None:
-        return Img(src=f"data:image/jpeg;base64,{frame}", style="max-width: 100%; height: auto;")
-    return ""
 
 
 class FrameBuffer:
@@ -472,7 +469,7 @@ def main(input_source: str):
     import uvicorn
 
     try:
-        uvicorn.run(app, host="0.0.0.0", port=8000, ws="websockets")
+        uvicorn.run(app, host="0.0.0.0", port=8000)
     finally:
         shutdown_flag.set()  # Signal the producer thread to stop
         producer_thread.join(timeout=5)  # Wait for the producer thread to finish
