@@ -165,3 +165,5 @@ outputs/
 *.vscode
 samples/
 tmp_stream_buffer/
+.sesskey
+scratch/
