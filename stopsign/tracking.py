@@ -9,8 +9,8 @@ from typing import cast
 import cv2
 import numpy as np
 
-from stopsign.config import Config
 from stopsign.kalman_filter import KalmanFilterWrapper
+from stopsign.shared import Config
 
 # Set logging
 logging.basicConfig(level=logging.INFO)

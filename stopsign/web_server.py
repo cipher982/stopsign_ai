@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from multiprocessing import Queue
 
 import uvicorn
@@ -11,34 +12,32 @@ from fasthtml import Html
 from fasthtml import Img
 from fasthtml import Script
 from fasthtml import Title
-from shared import config
-from shared import logger
+from shared import Config
 from shared import shutdown_flag
+
+logger = logging.getLogger(__name__)
 
 # Initialize FastHTML app
 app = FastHTML(ws_hdr=True)
 
 # Global variables
 frame_queue = Queue()
-original_width = None
-original_height = None
+
+original_width = 1920
+original_height = 1080
 
 
 async def frame_loop(send):
-    global frame_count
     while not shutdown_flag.is_set():
         try:
             if not frame_queue.empty():
                 frame = frame_queue.get_nowait()
                 await send(f"data:image/jpeg;base64,{frame}")
-                await send(f"Frame {frame_count} sent")
             else:
-                logger.info("No frame available")
-                await send("No frame available")
+                await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
         except Exception as e:
             logger.error(f"Error in frame loop: {str(e)}")
             break
-        await asyncio.sleep(1 / config.fps)
 
 
 async def on_connect(send):
@@ -62,7 +61,7 @@ async def ws_handler(websocket):
     logger.info("WebSocket handler started")
 
 
-@app.get("/")
+@app.get("/")  # type: ignore
 def home():
     return (
         Title("Stop Sign Compliance"),
@@ -106,20 +105,16 @@ def home():
     )
 
 
-def run_server(width, height):
-    global original_width, original_height
-    original_width = width
-    original_height = height
-
+def run_server():
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
-def main(frame_queue_param: Queue, width: int, height: int):
+def main(frame_queue_param: Queue, config: Config):
     global frame_queue
     frame_queue = frame_queue_param
 
     try:
-        run_server(width, height)
+        run_server()
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")
     finally:
@@ -131,4 +126,4 @@ if __name__ == "__main__":
     from multiprocessing import Queue
 
     test_queue = Queue()
-    main(test_queue, 640, 480)
+    main(test_queue, Config("./config.yaml"))
