@@ -3,7 +3,7 @@ import logging
 from multiprocessing import Process
 from multiprocessing import Queue
 
-from stopsign import frame_processor
+from stopsign import stream_processor
 from stopsign import web_server
 from stopsign.config import Config
 from stopsign.config import shutdown_flag
@@ -17,7 +17,7 @@ def main(input_source: str, config: Config):
 
     # Start the frame processor process
     logger.info("Starting frame processo...")
-    frame_proc = Process(target=frame_processor.main, args=(input_source, frame_queue, config))
+    frame_proc = Process(target=stream_processor.main, args=(input_source, frame_queue, config))
     frame_proc.start()
     logger.info("Frame processor process started.")
 
