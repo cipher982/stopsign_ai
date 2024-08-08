@@ -12,8 +12,9 @@ from fasthtml import Html
 from fasthtml import Img
 from fasthtml import Script
 from fasthtml import Title
-from shared import Config
-from shared import shutdown_flag
+
+from stopsign.config import Config
+from stopsign.config import shutdown_flag
 
 logger = logging.getLogger(__name__)
 

@@ -16,8 +16,8 @@ import dotenv
 import numpy as np
 from ultralytics import YOLO
 
-from stopsign.shared import Config
-from stopsign.shared import shutdown_flag
+from stopsign.config import Config
+from stopsign.config import shutdown_flag
 from stopsign.tracking import Car
 from stopsign.tracking import CarTracker
 from stopsign.tracking import StopDetector
