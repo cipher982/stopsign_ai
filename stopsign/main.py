@@ -3,10 +3,10 @@ import logging
 from multiprocessing import Process
 from multiprocessing import Queue
 
-import frame_processor
-import web_server
-from shared import Config
-from shared import shutdown_flag
+from stopsign import frame_processor
+from stopsign import web_server
+from stopsign.config import Config
+from stopsign.config import shutdown_flag
 
 logger = logging.getLogger(__name__)
 
