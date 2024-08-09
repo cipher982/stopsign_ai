@@ -36,6 +36,7 @@ class StreamProcessor:
         self.stop_detector = StopDetector(config)
         self.cap = None
         self.frame_count = 0
+        self.frame_buffer_size = self.config.frame_buffer_size
 
     def initialize_model(self):
         model_path = os.getenv("YOLO_MODEL_PATH")
@@ -74,6 +75,9 @@ class StreamProcessor:
             elapsed_time = current_time - last_frame_time
 
             if elapsed_time >= frame_time:
+                if self.cap is None:
+                    logger.error("Video capture not initialized")
+                    break
                 ret, frame = self.cap.read()
                 if not ret:
                     logger.warning("Failed to read frame")
@@ -223,8 +227,15 @@ class StreamProcessor:
         _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality])
         encoded_frame = base64.b64encode(buffer).decode("utf-8")
 
-        self.redis_client.set("latest_frame", encoded_frame)
-        self.redis_client.set("latest_metadata", json.dumps(metadata))
+        timestamp = time.time()
+        frame_data = json.dumps({"frame": encoded_frame, "metadata": metadata, "timestamp": timestamp})
+
+        pipeline = self.redis_client.pipeline()
+        pipeline.lpush("frame_buffer", frame_data)
+        pipeline.ltrim("frame_buffer", 0, self.frame_buffer_size - 1)
+        pipeline.execute()
+
+        logger.debug(f"Frame {self.frame_count} stored in Redis")
 
     def run(self):
         try:
@@ -239,6 +250,9 @@ class StreamProcessor:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+    logger.setLevel(logging.DEBUG)
+
     config = Config("./config.yaml")
     processor = StreamProcessor(config)
     processor.run()
