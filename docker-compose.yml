@@ -2,18 +2,21 @@ services:
   redis:
     image: redis:latest
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   stream_processor:
     build:
       context: .
       dockerfile: Dockerfile.processor
+    env_file:
+      - .env
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - YOLO_MODEL_PATH=/app/models/yolov8n.pt
     volumes:
       - ./models:/app/models
+      - ./config.yaml:/app/config.yaml
     depends_on:
       - redis
 
@@ -23,6 +26,8 @@ services:
       dockerfile: Dockerfile.web
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
