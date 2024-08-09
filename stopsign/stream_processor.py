@@ -1,12 +1,10 @@
 import base64
 import contextlib
 import io
+import json
 import logging
 import os
-import threading
 import time
-from collections import deque
-from multiprocessing import Queue
 from typing import Dict
 from typing import List
 from typing import Tuple
@@ -14,10 +12,10 @@ from typing import Tuple
 import cv2
 import dotenv
 import numpy as np
+import redis
 from ultralytics import YOLO
 
 from stopsign.config import Config
-from stopsign.config import shutdown_flag
 from stopsign.tracking import Car
 from stopsign.tracking import CarTracker
 from stopsign.tracking import StopDetector
@@ -26,281 +24,221 @@ from stopsign.tracking import StopZone
 # Load environment variables
 dotenv.load_dotenv()
 
-RTSP_URL = os.getenv("RTSP_URL")
-MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
-SAMPLE_FILE_PATH = os.getenv("SAMPLE_FILE_PATH")
-STREAM_BUFFER_DIR = os.path.join(os.path.dirname(__file__), "tmp_stream_buffer")
-
-car_tracker = None
-stop_detector = None
-model = None
-cap = None
-frame_count = 0
-frame_buffer = None
-
-
 logger = logging.getLogger(__name__)
 
 
-class FrameBuffer:
-    def __init__(self, maxsize=30):
-        self.buffer = deque(maxlen=maxsize)
-        self.lock = threading.Lock()
+class StreamProcessor:
+    def __init__(self, config: Config):
+        self.config = config
+        self.redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        self.model = self.initialize_model()
+        self.car_tracker = CarTracker(config)
+        self.stop_detector = StopDetector(config)
+        self.cap = None
+        self.frame_count = 0
 
-    def put(self, frame):
-        with self.lock:
-            self.buffer.append(frame)
-        logger.info(f"Frame buffer size: {self.qsize()}")
+    def initialize_model(self):
+        model_path = os.getenv("YOLO_MODEL_PATH")
+        if not model_path:
+            raise ValueError("Error: YOLO_MODEL_PATH environment variable is not set.")
+        model = YOLO(model_path, verbose=False)
+        logger.info("Model loaded successfully")
+        return model
 
-    def get(self):
-        with self.lock:
-            if len(self.buffer) > 0:
-                return self.buffer.popleft()
-        return None
+    def initialize_capture(self):
+        if self.config.input_source == "live":
+            rtsp_url = os.getenv("RTSP_URL")
+            if not rtsp_url:
+                raise ValueError("Error: RTSP_URL environment variable is not set.")
+            self.cap = cv2.VideoCapture(rtsp_url)
+        elif self.config.input_source == "file":
+            sample_file_path = os.getenv("SAMPLE_FILE_PATH")
+            if not sample_file_path:
+                raise ValueError("Error: SAMPLE_FILE_PATH environment variable is not set.")
+            self.cap = cv2.VideoCapture(sample_file_path)
+        else:
+            raise ValueError("Error: Invalid input source")
 
-    def qsize(self):
-        with self.lock:
-            return len(self.buffer)
+        if not self.cap.isOpened():
+            raise ValueError("Error: Could not open video stream")
 
+        self.cap.set(cv2.CAP_PROP_FPS, self.config.fps)
 
-def crop_scale_frame(frame: np.ndarray, scale: float, crop_top_ratio: float, crop_side_ratio: float) -> np.ndarray:
-    height, width = frame.shape[:2]
-    crop_top = int(height * crop_top_ratio)
-    crop_side = int(width * crop_side_ratio)
+    def process_stream(self):
+        frame_time = 1 / self.config.fps
+        last_frame_time = time.time()
 
-    cropped = frame[crop_top:, crop_side : width - crop_side]
+        logger.info("Starting frame processing")
+        while True:
+            current_time = time.time()
+            elapsed_time = current_time - last_frame_time
 
-    if scale != 1.0:
-        new_width = int(cropped.shape[1] * scale)
-        new_height = int(cropped.shape[0] * scale)
-        return cv2.resize(cropped, (new_width, new_height), interpolation=cv2.INTER_AREA)
+            if elapsed_time >= frame_time:
+                ret, frame = self.cap.read()
+                if not ret:
+                    logger.warning("Failed to read frame")
+                    continue
 
-    return cropped
+                processed_frame, metadata = self.process_frame(frame)
+                self.store_frame_data(processed_frame, metadata)
 
+                last_frame_time = current_time
+                self.frame_count += 1
+            else:
+                time.sleep(frame_time - elapsed_time)
 
-def draw_box(frame: np.ndarray, car, box, color=(0, 255, 0), thickness=2):
-    x1, y1, x2, y2 = map(int, box.xyxy[0])
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+    def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, Dict]:
+        frame = self.crop_scale_frame(frame)
+        processed_frame, boxes = self.detect_objects(frame)
 
-    label = f"ID: {car.id}, Speed: {car.state.speed:.2f}"
-    cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        self.car_tracker.update_cars(boxes, time.time())
+        for car in self.car_tracker.get_cars().values():
+            if not car.state.is_parked:
+                self.stop_detector.update_car_stop_status(car, time.time())
 
-
-def draw_gridlines(frame: np.ndarray, grid_size: int):
-    height, width = frame.shape[:2]
-
-    for x in range(0, width, grid_size):
-        cv2.line(frame, (x, 0), (x, height), (128, 128, 128), 1)
-
-    for y in range(0, height, grid_size):
-        cv2.line(frame, (0, y), (width, y), (128, 128, 128), 1)
-
-
-def open_rtsp_stream(url: str):
-    return cv2.VideoCapture(url)
-
-
-def initialize_video_capture(input_source: str, fps: int):
-    global cap
-    if input_source == "live":
-        if not RTSP_URL:
-            logger.error("Error: RTSP_URL environment variable is not set.")
-            return None, None, None
-        logger.info(f"Opening RTSP stream: {RTSP_URL}")
-        cap = open_rtsp_stream(RTSP_URL)
-    elif input_source == "file":
-        logger.info(f"Opening video file: {SAMPLE_FILE_PATH}")
-        cap = cv2.VideoCapture(SAMPLE_FILE_PATH)  # type: ignore
-    else:
-        logger.error("Error: Invalid input source")
-        return None, None, None
-
-    if not cap.isOpened():
-        logger.error("Error: Could not open video stream")
-        return None, None, None
-
-    cap.set(cv2.CAP_PROP_FPS, fps)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    return cap, width, height
-
-
-def initialize_components(config: Config):
-    global model, car_tracker, stop_detector, frame_buffer
-
-    if not MODEL_PATH:
-        logger.error("Error: YOLO_MODEL_PATH environment variable is not set.")
-        return False
-
-    model = YOLO(MODEL_PATH, verbose=False)
-    logger.info("Model loaded successfully")
-
-    car_tracker = CarTracker(config)
-    stop_detector = StopDetector(config)
-    frame_buffer = FrameBuffer(maxsize=30)
-    return True
-
-
-def process_frame(frame: np.ndarray, config: Config) -> Tuple[np.ndarray, List]:
-    global model
-    assert model is not None
-    with contextlib.redirect_stdout(io.StringIO()):
-        results = model.track(
-            source=frame,
-            tracker="./trackers/bytetrack.yaml",
-            stream=False,
-            persist=True,
-            classes=config.vehicle_classes,
-            verbose=False,
+        annotated_frame = self.visualize(
+            processed_frame,
+            self.car_tracker.cars,
+            boxes,
+            self.stop_detector.stop_zone,
         )
 
-    boxes = results[0].boxes
-    if boxes:
-        boxes = [obj for obj in boxes if obj.cls in config.vehicle_classes]
-    else:
-        boxes = []
+        if self.config.draw_grid:
+            self.draw_gridlines(annotated_frame)
 
-    return frame, boxes
+        metadata = self.create_metadata()
 
+        return annotated_frame, metadata
 
-def visualize(frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone, n_frame: int) -> np.ndarray:
-    overlay = frame.copy()
+    def crop_scale_frame(self, frame: np.ndarray) -> np.ndarray:
+        height, width = frame.shape[:2]
+        crop_top = int(height * self.config.crop_top)
+        crop_side = int(width * self.config.crop_side)
 
-    car_in_stop_zone = any(
-        stop_zone.is_in_stop_zone(car.state.location) for car in cars.values() if not car.state.is_parked
-    )
+        cropped = frame[crop_top:, crop_side : width - crop_side]
 
-    color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)
+        if self.config.scale != 1.0:
+            new_width = int(cropped.shape[1] * self.config.scale)
+            new_height = int(cropped.shape[0] * self.config.scale)
+            return cv2.resize(cropped, (new_width, new_height), interpolation=cv2.INTER_AREA)
 
-    stop_box_corners = np.array(stop_zone._calculate_stop_box(), dtype=np.int32)
-    cv2.fillPoly(overlay, [stop_box_corners], color)
-    alpha = 0.3
-    frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+        return cropped
 
-    start_point = tuple(map(int, stop_zone.stop_line[0]))
-    end_point = tuple(map(int, stop_zone.stop_line[1]))
-    cv2.line(frame, start_point, end_point, (0, 0, 255), 2)
-
-    for box in boxes:
-        if box.id is None:
-            continue
-        try:
-            car_id = int(box.id.item())
-            if car_id in cars:
-                car = cars[car_id]
-                if car.state.is_parked:
-                    draw_box(frame, car, box, color=(255, 255, 255), thickness=1)
-                else:
-                    draw_box(frame, car, box, color=(0, 255, 0), thickness=2)
-        except Exception as e:
-            logger.error(f"Error processing box in visualize function: {str(e)}")
-
-    for car in cars.values():
-        if car.state.is_parked:
-            continue
-        locations = [loc for loc, _ in car.state.track]
-        points = np.array(locations, dtype=np.int32).reshape((-1, 1, 2))
-        cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
-
-    cv2.putText(frame, f"Frame: {n_frame}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-    return frame
-
-
-def process_and_annotate_frame(frame: np.ndarray, config: Config) -> np.ndarray:
-    global frame_count, model, car_tracker, stop_detector
-    assert model is not None
-    assert car_tracker is not None
-    assert stop_detector is not None
-
-    if frame is None or frame.size == 0:
-        raise ValueError("Received empty frame")
-
-    frame = crop_scale_frame(frame, config.scale, config.crop_top, config.crop_side)
-    processed_frame, boxes = process_frame(frame, config)
-
-    car_tracker.update_cars(boxes, time.time())
-    for car in car_tracker.get_cars().values():
-        if not car.state.is_parked:
-            stop_detector.update_car_stop_status(car, time.time())
-
-    annotated_frame = visualize(
-        processed_frame,
-        car_tracker.cars,
-        boxes,
-        stop_detector.stop_zone,
-        frame_count,
-    )
-
-    if config.draw_grid:
-        draw_gridlines(annotated_frame, config.grid_size)
-
-    frame_count += 1
-    return annotated_frame
-
-
-def frame_producer(output_queue: Queue, config: Config):
-    global cap
-    frame_time = 1 / config.fps
-    last_frame_time = time.time()
-
-    logger.info("Starting frame producer")
-    while not shutdown_flag.is_set():
-        if cap is None or not cap.isOpened():
-            break
-
-        current_time = time.time()
-        elapsed_time = current_time - last_frame_time
-
-        if elapsed_time >= frame_time:
-            ret, frame = cap.read()
-            if not ret:
-                continue
-
-            processed_frame = process_and_annotate_frame(frame, config)
-
-            _, buffer = cv2.imencode(
-                ext=".jpg", img=processed_frame, params=[cv2.IMWRITE_JPEG_QUALITY, config.jpeg_quality]
+    def detect_objects(self, frame: np.ndarray) -> Tuple[np.ndarray, List]:
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = self.model.track(
+                source=frame,
+                tracker="./trackers/bytetrack.yaml",
+                stream=False,
+                persist=True,
+                classes=self.config.vehicle_classes,
+                verbose=False,
             )
-            encoded_frame = base64.b64encode(buffer).decode("utf-8")
 
-            output_queue.put(encoded_frame)
-            last_frame_time = current_time
+        boxes = results[0].boxes
+        if boxes:
+            boxes = [obj for obj in boxes if obj.cls in self.config.vehicle_classes]
         else:
-            time.sleep(frame_time - elapsed_time)
+            boxes = []
 
+        return frame, boxes
 
-def cleanup() -> None:
-    global cap
-    if cap:
-        cap.release()
-    cv2.destroyAllWindows()
+    def visualize(self, frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone) -> np.ndarray:
+        overlay = frame.copy()
 
+        car_in_stop_zone = any(
+            stop_zone.is_in_stop_zone(car.state.location) for car in cars.values() if not car.state.is_parked
+        )
 
-def main(input_source: str, output_queue: Queue, config: Config):
-    global cap
+        color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)
 
-    cap, width, height = initialize_video_capture(input_source, config.fps)
-    if cap is None:
-        raise ValueError("Failed to initialize video capture")
+        stop_box_corners = np.array(stop_zone._calculate_stop_box(), dtype=np.int32)
+        cv2.fillPoly(overlay, [stop_box_corners], color)
+        alpha = 0.3
+        frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
 
-    initialize_components(config)
-    logger.info("Components initialized")
+        start_point = tuple(map(int, stop_zone.stop_line[0]))
+        end_point = tuple(map(int, stop_zone.stop_line[1]))
+        cv2.line(frame, start_point, end_point, (0, 0, 255), 2)
 
-    try:
-        frame_producer(output_queue, config)
-    except Exception as e:
-        logger.error(f"Error in frame producer: {str(e)}")
-        raise
-    finally:
-        cleanup()
+        for box in boxes:
+            if box.id is None:
+                continue
+            try:
+                car_id = int(box.id.item())
+                if car_id in cars:
+                    car = cars[car_id]
+                    if car.state.is_parked:
+                        self.draw_box(frame, car, box, color=(255, 255, 255), thickness=1)
+                    else:
+                        self.draw_box(frame, car, box, color=(0, 255, 0), thickness=2)
+            except Exception as e:
+                logger.error(f"Error processing box in visualize function: {str(e)}")
+
+        for car in cars.values():
+            if car.state.is_parked:
+                continue
+            locations = [loc for loc, _ in car.state.track]
+            points = np.array(locations, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
+
+        cv2.putText(frame, f"Frame: {self.frame_count}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+        return frame
+
+    def draw_box(self, frame: np.ndarray, car, box, color=(0, 255, 0), thickness=2):
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+
+        label = f"ID: {car.id}, Speed: {car.state.speed:.2f}"
+        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+    def draw_gridlines(self, frame: np.ndarray):
+        height, width = frame.shape[:2]
+
+        for x in range(0, width, self.config.grid_size):
+            cv2.line(frame, (x, 0), (x, height), (128, 128, 128), 1)
+
+        for y in range(0, height, self.config.grid_size):
+            cv2.line(frame, (0, y), (width, y), (128, 128, 128), 1)
+
+    def create_metadata(self) -> Dict:
+        return {
+            "timestamp": time.time(),
+            "frame_count": self.frame_count,
+            "cars": [
+                {
+                    "id": car.id,
+                    "location": car.state.location,
+                    "speed": car.state.speed,
+                    "is_parked": car.state.is_parked,
+                    "stop_score": car.state.stop_score,
+                    "stop_zone_state": car.state.stop_zone_state,
+                }
+                for car in self.car_tracker.get_cars().values()
+            ],
+        }
+
+    def store_frame_data(self, frame: np.ndarray, metadata: Dict):
+        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality])
+        encoded_frame = base64.b64encode(buffer).decode("utf-8")
+
+        self.redis_client.set("latest_frame", encoded_frame)
+        self.redis_client.set("latest_metadata", json.dumps(metadata))
+
+    def run(self):
+        try:
+            self.initialize_capture()
+            self.process_stream()
+        except Exception as e:
+            logger.error(f"Error in stream processor: {str(e)}")
+        finally:
+            if self.cap:
+                self.cap.release()
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
-    # This block is mainly for testing the frame processor independently
-    from multiprocessing import Queue
-
-    test_queue = Queue()
-
     config = Config("./config.yaml")
-    main("live", test_queue, config)  # Use "live" for RTSP stream or "file"
+    processor = StreamProcessor(config)
+    processor.run()

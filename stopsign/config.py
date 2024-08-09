@@ -11,6 +11,9 @@ class Config:
         with open(config_path, "r") as file:
             config = yaml.safe_load(file)
 
+        # new stuff
+        self.input_source = config["stream_settings"]["input_source"]
+
         # Video processing
         self.scale = config["video_processing"]["scale"]
         self.crop_top = config["video_processing"]["crop_top"]
