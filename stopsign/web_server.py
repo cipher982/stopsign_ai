@@ -1,8 +1,9 @@
 import asyncio
 import json
 import logging
-from multiprocessing import Queue
+import os
 
+import redis
 import uvicorn
 from fasthtml import Body
 from fasthtml import Div
@@ -14,31 +15,33 @@ from fasthtml import Script
 from fasthtml import Title
 
 from stopsign.config import Config
-from stopsign.config import shutdown_flag
 
 logger = logging.getLogger(__name__)
 
 # Initialize FastHTML app
 app = FastHTML(ws_hdr=True)
 
-# Global variables
-frame_queue = Queue()
+# Initialize Redis client
+redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"), port=int(os.getenv("REDIS_PORT", 6379)), db=0)
 
+# Global variables
 original_width = 1920
 original_height = 1080
 
 
 async def frame_loop(send):
-    while not shutdown_flag.is_set():
+    while True:
         try:
-            if not frame_queue.empty():
-                frame = frame_queue.get_nowait()
+            # Get the latest frame from Redis
+            frame_data = redis_client.lindex("frame_buffer", 0)
+            if frame_data:
+                frame_dict = json.loads(frame_data)
+                frame = frame_dict["frame"]
                 await send(f"data:image/jpeg;base64,{frame}")
-            else:
-                await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
+            await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
         except Exception as e:
             logger.error(f"Error in frame loop: {str(e)}")
-            break
+            await asyncio.sleep(1)  # Longer sleep on error
 
 
 async def on_connect(send):
@@ -110,21 +113,14 @@ def run_server():
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
-def main(frame_queue_param: Queue, config: Config):
-    global frame_queue
-    frame_queue = frame_queue_param
-
+def main(config: Config):
     try:
         run_server()
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")
-    finally:
-        shutdown_flag.set()
 
 
 if __name__ == "__main__":
-    # This block is mainly for testing the web server independently
-    from multiprocessing import Queue
-
-    test_queue = Queue()
-    main(test_queue, Config("./config.yaml"))
+    logging.basicConfig(level=logging.INFO)
+    config = Config("./config.yaml")
+    main(config)
