@@ -35,7 +35,7 @@ async def frame_loop(send):
             # Get the latest frame from Redis
             frame_data = redis_client.lindex("frame_buffer", 0)
             if frame_data:
-                frame_dict = json.loads(frame_data)
+                frame_dict = json.loads(frame_data)  # type: ignore
                 frame = frame_dict["frame"]
                 await send(f"data:image/jpeg;base64,{frame}")
             await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
