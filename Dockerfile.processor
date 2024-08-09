@@ -23,6 +23,7 @@ RUN poetry config virtualenvs.create false \
 # Copy project
 COPY stopsign /app/stopsign
 COPY models /app/models
+COPY config.yaml /app/config.yaml
 
 # Run the application
 CMD ["poetry", "run", "python", "-m", "stopsign.stream_processor"]

@@ -30,7 +30,11 @@ logger = logging.getLogger(__name__)
 class StreamProcessor:
     def __init__(self, config: Config):
         self.config = config
-        self.redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        self.redis_client = redis.Redis(
+            host=os.getenv("REDIS_HOST", "redis"),
+            port=int(os.getenv("REDIS_PORT", 6379)),
+            db=0,
+        )
         self.model = self.initialize_model()
         self.car_tracker = CarTracker(config)
         self.stop_detector = StopDetector(config)
