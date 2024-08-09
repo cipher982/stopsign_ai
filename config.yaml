@@ -25,5 +25,6 @@ debugging_visualization:
   grid_size: 100
 
 stream_settings:
+  input_source: live
   fps: 15
   vehicle_classes: [1, 2, 3, 5, 6, 7]
