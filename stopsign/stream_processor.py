@@ -7,6 +7,7 @@ import os
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import cv2
@@ -48,6 +49,8 @@ class StreamProcessor:
         self.last_processed_time = time.time()
         self.frames_processed = 0
         self.error_count = 0
+        self.last_successful_read_time: Optional[float] = None
+        self.read_timeout = 3  # 5 seconds timeout for reading a frame
 
     def initialize_model(self):
         model_path = os.getenv("YOLO_MODEL_PATH")
@@ -58,6 +61,9 @@ class StreamProcessor:
         return model
 
     def initialize_capture(self):
+        if self.cap:
+            self.cap.release()
+
         max_attempts = 5
         for attempt in range(max_attempts):
             try:
@@ -82,15 +88,13 @@ class StreamProcessor:
                 return
             except Exception as e:
                 logger.error(f"Attempt {attempt + 1}/{max_attempts} failed: {str(e)}")
-                time.sleep(5)  # Wait before retrying
+                time.sleep(1)  # Short wait before retrying
 
         raise ValueError("Failed to initialize video capture after multiple attempts")
 
     def process_stream(self):
         frame_time = 1 / self.config.fps
         last_frame_time = time.time()
-        consecutive_failures = 0
-        max_retries = 5
 
         logger.info("Starting frame processing")
         while True:
@@ -98,22 +102,23 @@ class StreamProcessor:
             elapsed_time = current_time - last_frame_time
 
             if elapsed_time >= frame_time:
-                if self.cap is None:
-                    logger.error("Video capture not initialized")
-                    break
+                if self.cap is None or (
+                    self.last_successful_read_time
+                    and (current_time - self.last_successful_read_time > self.read_timeout)
+                ):
+                    logger.warning("Video capture not initialized or read timeout. Reinitializing...")
+                    self.initialize_capture()
+                    last_frame_time = time.time()
+                    continue
 
                 ret, frame = self.cap.read()
                 if not ret:
-                    consecutive_failures += 1
-                    logger.warning(f"Failed to read frame. Attempt {consecutive_failures}/{max_retries}")
-                    if consecutive_failures >= max_retries:
-                        logger.error("Max retries reached. Reinitializing capture.")
-                        self.initialize_capture()
-                        consecutive_failures = 0
-                    time.sleep(0.5)  # Wait a bit before retrying
+                    logger.warning("Failed to read frame. Reinitializing capture.")
+                    self.initialize_capture()
+                    last_frame_time = time.time()
                     continue
 
-                consecutive_failures = 0  # Reset on successful frame read
+                self.last_successful_read_time = current_time
                 processed_frame, metadata = self.process_frame(frame)
                 self.store_frame_data(processed_frame, metadata)
 
@@ -292,23 +297,18 @@ class StreamProcessor:
             logger.warning(f"Buffer ({buffer_length}) below threshold ({MIN_BUFFER_LENGTH})")
 
     def run(self):
-        try:
-            self.initialize_capture()
-            self.process_stream()
-        except Exception as e:
-            self.error_count += 1
-            logger.error(f"Error in stream processor: {str(e)}")
-            if self.error_count > MAX_ERRORS:
-                logger.critical(f"Too many errors ({self.error_count}). Shutting down.")
-                return
-            logger.info("Attempting to restart stream processing...")
-            time.sleep(1)
-            self.run()  # Recursive call to restart
-        finally:
-            if self.cap:
-                self.cap.release()
-            cv2.destroyAllWindows()
-            logger.info("Stream processor shut down")
+        while True:
+            try:
+                self.initialize_capture()
+                self.process_stream()
+            except Exception as e:
+                logger.error(f"Error in stream processor: {str(e)}")
+                time.sleep(1)  # Short wait before restarting
+            finally:
+                if self.cap:
+                    self.cap.release()
+                cv2.destroyAllWindows()
+                logger.info("Stream processor restarting...")
 
 
 if __name__ == "__main__":
