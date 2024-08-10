@@ -51,27 +51,39 @@ class StreamProcessor:
         return model
 
     def initialize_capture(self):
-        if self.config.input_source == "live":
-            rtsp_url = os.getenv("RTSP_URL")
-            if not rtsp_url:
-                raise ValueError("Error: RTSP_URL environment variable is not set.")
-            self.cap = cv2.VideoCapture(rtsp_url)
-        elif self.config.input_source == "file":
-            sample_file_path = os.getenv("SAMPLE_FILE_PATH")
-            if not sample_file_path:
-                raise ValueError("Error: SAMPLE_FILE_PATH environment variable is not set.")
-            self.cap = cv2.VideoCapture(sample_file_path)
-        else:
-            raise ValueError("Error: Invalid input source")
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                if self.config.input_source == "live":
+                    rtsp_url = os.getenv("RTSP_URL")
+                    if not rtsp_url:
+                        raise ValueError("Error: RTSP_URL environment variable is not set.")
+                    self.cap = cv2.VideoCapture(rtsp_url)
+                elif self.config.input_source == "file":
+                    sample_file_path = os.getenv("SAMPLE_FILE_PATH")
+                    if not sample_file_path:
+                        raise ValueError("Error: SAMPLE_FILE_PATH environment variable is not set.")
+                    self.cap = cv2.VideoCapture(sample_file_path)
+                else:
+                    raise ValueError("Error: Invalid input source")
 
-        if not self.cap.isOpened():
-            raise ValueError("Error: Could not open video stream")
+                if not self.cap.isOpened():
+                    raise ValueError("Error: Could not open video stream")
 
-        self.cap.set(cv2.CAP_PROP_FPS, self.config.fps)
+                self.cap.set(cv2.CAP_PROP_FPS, self.config.fps)
+                logger.info("Video capture initialized successfully")
+                return
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1}/{max_attempts} failed: {str(e)}")
+                time.sleep(5)  # Wait before retrying
+
+        raise ValueError("Failed to initialize video capture after multiple attempts")
 
     def process_stream(self):
         frame_time = 1 / self.config.fps
         last_frame_time = time.time()
+        consecutive_failures = 0
+        max_retries = 5
 
         logger.info("Starting frame processing")
         while True:
@@ -82,11 +94,19 @@ class StreamProcessor:
                 if self.cap is None:
                     logger.error("Video capture not initialized")
                     break
+
                 ret, frame = self.cap.read()
                 if not ret:
-                    logger.warning("Failed to read frame")
+                    consecutive_failures += 1
+                    logger.warning(f"Failed to read frame. Attempt {consecutive_failures}/{max_retries}")
+                    if consecutive_failures >= max_retries:
+                        logger.error("Max retries reached. Reinitializing capture.")
+                        self.initialize_capture()
+                        consecutive_failures = 0
+                    time.sleep(0.5)  # Wait a bit before retrying
                     continue
 
+                consecutive_failures = 0  # Reset on successful frame read
                 processed_frame, metadata = self.process_frame(frame)
                 self.store_frame_data(processed_frame, metadata)
 
@@ -251,6 +271,7 @@ class StreamProcessor:
             if self.cap:
                 self.cap.release()
             cv2.destroyAllWindows()
+            logger.info("Stream processor shut down")
 
 
 if __name__ == "__main__":

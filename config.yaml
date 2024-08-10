@@ -2,7 +2,7 @@ video_processing:
   scale: 0.75
   crop_top: 0
   crop_side: 0
-  frame_buffer_size: 5 # number of frames to buffer
+  frame_buffer_size: 500 # number of frames to buffer
 
 stopsign_detection:
   stop_line: [[650, 450], [500, 500]]
