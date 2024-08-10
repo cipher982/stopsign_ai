@@ -27,6 +27,10 @@ dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+MIN_BUFFER_LENGTH = 30
+MAX_ERRORS = 100
+
+
 class StreamProcessor:
     def __init__(self, config: Config):
         self.config = config
@@ -41,6 +45,9 @@ class StreamProcessor:
         self.cap = None
         self.frame_count = 0
         self.frame_buffer_size = self.config.frame_buffer_size
+        self.last_processed_time = time.time()
+        self.frames_processed = 0
+        self.error_count = 0
 
     def initialize_model(self):
         model_path = os.getenv("YOLO_MODEL_PATH")
@@ -112,8 +119,26 @@ class StreamProcessor:
 
                 last_frame_time = current_time
                 self.frame_count += 1
+
+                # Update monitoring metrics
+                self.frames_processed += 1
+                if current_time - self.last_processed_time >= 60:  # Calculate metrics every minute
+                    self.log_metrics()
             else:
                 time.sleep(frame_time - elapsed_time)
+
+    def log_metrics(self):
+        current_time = time.time()
+        elapsed_time = current_time - self.last_processed_time
+        fps = self.frames_processed / elapsed_time
+        buffer_length = self.redis_client.llen("frame_buffer")
+        logger.info(f"Processing rate: {fps:.2f} fps, Buffer length: {buffer_length}")
+
+        if buffer_length < MIN_BUFFER_LENGTH:  # type: ignore
+            logger.warning(f"Buffer length ({buffer_length}) below minimum threshold ({MIN_BUFFER_LENGTH}).")
+
+        self.frames_processed = 0
+        self.last_processed_time = current_time
 
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, Dict]:
         frame = self.crop_scale_frame(frame)
@@ -261,12 +286,24 @@ class StreamProcessor:
 
         logger.debug(f"Frame {self.frame_count} stored in Redis")
 
+        # Monitor buffer length after each store operation
+        buffer_length = self.redis_client.llen("frame_buffer")
+        if buffer_length < MIN_BUFFER_LENGTH:  # type: ignore
+            logger.warning(f"Buffer ({buffer_length}) below threshold ({MIN_BUFFER_LENGTH})")
+
     def run(self):
         try:
             self.initialize_capture()
             self.process_stream()
         except Exception as e:
+            self.error_count += 1
             logger.error(f"Error in stream processor: {str(e)}")
+            if self.error_count > MAX_ERRORS:
+                logger.critical(f"Too many errors ({self.error_count}). Shutting down.")
+                return
+            logger.info("Attempting to restart stream processing...")
+            time.sleep(1)
+            self.run()  # Recursive call to restart
         finally:
             if self.cap:
                 self.cap.release()
