@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 
 import redis
 import uvicorn
@@ -30,18 +31,40 @@ original_height = 1080
 
 
 async def frame_loop(send):
+    last_frame_time = time.time()
+    last_error_time = 0
+    frames_sent = 0
+    error_count = 0
     while True:
         try:
             # Get the latest frame from Redis
             frame_data = redis_client.lindex("frame_buffer", 0)
             if frame_data:
-                frame_dict = json.loads(frame_data)  # type: ignore
+                frame_dict = json.loads(frame_data)  # type: ignore # noqa: F841
                 frame = frame_dict["frame"]
                 await send(f"data:image/jpeg;base64,{frame}")
+                frames_sent += 1
+
+                current_time = time.time()
+                if current_time - last_frame_time >= 60:
+                    fps = frames_sent / (current_time - last_frame_time)
+                    buffer_length = redis_client.llen("frame_buffer")
+                    logger.info(f"Web server sending rate: {fps:.2f} fps, Buffer length: {buffer_length}")
+                    frames_sent = 0
+                    last_frame_time = current_time
+                    # Reset error count every minute if streaming is working
+                    error_count = 0
+            else:
+                logger.warning("No frames available in buffer")
             await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
         except Exception as e:
-            logger.error(f"Error in frame loop: {str(e)}")
-            await asyncio.sleep(1)  # Longer sleep on error
+            current_time = time.time()
+            error_count += 1
+            if current_time - last_error_time >= 60:
+                logger.error(f"Error in frame loop (occurred {error_count} times in the last minute): {str(e)}")
+                last_error_time = current_time
+                error_count = 0
+            await asyncio.sleep(0.1)  # Slightly longer sleep on error, but not too long
 
 
 async def on_connect(send):
