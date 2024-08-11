@@ -1,4 +1,5 @@
 import logging
+import os
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Dict
@@ -10,6 +11,7 @@ import cv2
 import numpy as np
 
 from stopsign.config import Config
+from stopsign.database import Database
 from stopsign.kalman_filter import KalmanFilterWrapper
 
 # Set logging
@@ -263,6 +265,7 @@ class StopDetector:
     def __init__(self, config: Config):
         self.config = config
         self.stop_zone = self._create_stop_zone()
+        self.db = Database()
 
     def _create_stop_zone(self) -> StopZone:
         stop_line: Line = (
@@ -275,11 +278,11 @@ class StopDetector:
             min_stop_duration=self.config.min_stop_time,
         )
 
-    def update_car_stop_status(self, car: Car, timestamp: float) -> None:
+    def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
         if self.stop_zone.is_in_stop_zone(car.state.location):
             self._handle_car_in_stop_zone(car, timestamp)
         else:
-            self._handle_car_outside_stop_zone(car, timestamp)
+            self._handle_car_outside_stop_zone(car, timestamp, frame)
 
     def _handle_car_in_stop_zone(self, car: Car, timestamp: float) -> None:
         if car.state.stop_zone_state == "APPROACHING":
@@ -294,12 +297,25 @@ class StopDetector:
                 car.state.exit_time = timestamp
                 car.state.stop_position = car.state.location
 
-    def _handle_car_outside_stop_zone(self, car: Car, timestamp: float) -> None:
+    def _handle_car_outside_stop_zone(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
         if car.state.stop_zone_state in ["ENTERED", "EXITING"]:
             car.state.stop_zone_state = "EXITED"
             if not car.state.scored and car.state.entry_time > 0:
                 car.state.stop_score = self.calculate_stop_score(car)
                 car.state.scored = True
+
+                # Save vehicle image
+                image_path = save_vehicle_image(frame, car.id, timestamp)
+
+                # Save data to database
+                self.db.add_vehicle_pass(
+                    vehicle_id=car.id,
+                    stop_score=car.state.stop_score,
+                    stop_duration=car.state.time_at_zero,
+                    min_speed=car.state.min_speed_in_zone,
+                    image_path=image_path,
+                )
+
                 print(f"Car {car.id} stop score: {car.state.stop_score}")  # Debug print
         elif car.state.stop_zone_state == "EXITED":
             # Reset for next approach
@@ -387,3 +403,17 @@ class StopDetector:
         smoothness = float(1 / (1 + acceleration_variance))
 
         return smoothness
+
+
+def save_vehicle_image(frame: np.ndarray, car_id: int, timestamp: float) -> str:
+    # Create a directory for storing images if it doesn't exist
+    image_dir = "vehicle_images"
+    os.makedirs(image_dir, exist_ok=True)
+
+    # Generate a unique filename
+    filename = f"{image_dir}/vehicle_{car_id}_{int(timestamp)}.jpg"
+
+    # Save the image
+    cv2.imwrite(filename, frame)
+
+    return filename

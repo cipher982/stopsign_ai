@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 app = FastHTML(ws_hdr=True)
 
 # Initialize Redis client
-redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"), port=int(os.getenv("REDIS_PORT", 6379)), db=0)
+redis_client = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", 6379)),
+    db=0,
+)
 
 # Global variables
 original_width = 1920
