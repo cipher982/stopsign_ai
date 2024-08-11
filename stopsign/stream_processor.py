@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import threading
 import time
 from typing import Dict
 from typing import List
@@ -51,6 +52,17 @@ class StreamProcessor:
         self.error_count = 0
         self.last_successful_read_time: Optional[float] = None
         self.read_timeout = 3  # 5 seconds timeout for reading a frame
+        self.stats_update_interval = 300  # Update stats every 5 minutes
+        self._start_stats_update_thread()
+
+    def _start_stats_update_thread(self):
+        def update_stats_periodically():
+            while True:
+                time.sleep(self.stats_update_interval)
+                self.stop_detector.db.update_daily_statistics()
+
+        thread = threading.Thread(target=update_stats_periodically, daemon=True)
+        thread.start()
 
     def initialize_model(self):
         model_path = os.getenv("YOLO_MODEL_PATH")
@@ -152,7 +164,7 @@ class StreamProcessor:
         self.car_tracker.update_cars(boxes, time.time())
         for car in self.car_tracker.get_cars().values():
             if not car.state.is_parked:
-                self.stop_detector.update_car_stop_status(car, time.time())
+                self.stop_detector.update_car_stop_status(car, time.time(), frame)
 
         annotated_frame = self.visualize(
             processed_frame,
