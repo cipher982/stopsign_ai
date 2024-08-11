@@ -1,0 +1,33 @@
+Project Goal:
+The primary goal of this project is to analyze video footage of a street intersection with a stop sign and automatically assess the stop sign compliance of vehicles. The system should be able to:
+- Detect and track vehicles in the video.
+- Identify and handle stationary (parked) vehicles to avoid misinterpreting them as stopping or running the stop sign.
+- Determine if a vehicle comes to a complete stop at the stop sign.
+- Calculate the duration of the stop.
+- Classify the stop behavior (complete stop, rolling stop, no stop) and assign scores based on predefined criteria.
+
+Overall Approach:
+
+1. Object Detection and Tracking:
+   - Utilizes the YOLOv8 object detection and tracking model to identify vehicles in each frame and track their movement over time.
+   - Stores the track history of each vehicle, including its center point coordinates in each frame.
+
+2. Parked Car Identification and Handling:
+   - Calculates the displacement of each vehicle between consecutive frames.
+   - Flags vehicles as potentially parked if their displacement falls below a predefined threshold for a certain number of frames.
+   - Implements a timeout mechanism to confidently classify potentially parked vehicles as parked after a specific duration of inactivity.
+   - Excludes parked vehicles from visualization (bounding boxes and paths) and stop sign performance calculations.
+
+3. Stop Sign Region Definition:
+   - Defines the region of interest representing the area where vehicles are expected to stop using a rectangular "stop box" based on the stop sign's location and the desired tolerance.
+
+4. Stop Detection, Duration Calculation, and Scoring:
+   - For each non-parked vehicle, checks if its center point falls within the defined stop box.
+   - If the vehicle's center point remains within the ROI for a consecutive number of frames exceeding a predefined minimum stop duration, classifies it as a complete stop.
+   - Calculates the total duration of the stop.
+   - Calculates a `stop_score` for each vehicle based on its speed and the duration it spends inside the stop box. The score ranges from 1 (no stop) to 10 (perfect stop).
+
+5. Visualization and Output:
+   - Annotates the frame with bounding boxes around detected vehicles (excluding parked ones), tracked paths of vehicles, the stop sign line, and optional gridlines for debugging.
+   - Sends frames to websocket server for visualization and analysis.
+
