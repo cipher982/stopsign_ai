@@ -9,7 +9,7 @@ The primary goal of this project is to analyze video footage of a street interse
 Overall Approach:
 
 1. Object Detection and Tracking:
-   - Utilizes the YOLOv8 object detection and tracking model to identify vehicles in each frame and track their movement over time.
+   - Utilizes the YOLO object detection and tracking model to identify vehicles in each frame and track their movement over time.
    - Stores the track history of each vehicle, including its center point coordinates in each frame.
 
 2. Parked Car Identification and Handling:

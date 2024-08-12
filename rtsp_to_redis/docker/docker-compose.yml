@@ -1,0 +1,28 @@
+   version: "3.8"
+   services:
+     rtsp_to_redis:
+       build:
+         context: ..
+         dockerfile: docker/Dockerfile
+       volumes:
+         - ../app:/app
+       ports:
+         - "8000:8000"  # Prometheus metrics
+
+     prometheus:
+       image: prom/prometheus
+       volumes:
+         - ./prometheus.yml:/etc/prometheus/prometheus.yml
+       ports:
+         - "9090:9090"
+
+     grafana:
+       image: grafana/grafana
+       volumes:
+         - grafana-storage:/var/lib/grafana
+         - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+       ports:
+         - "3000:3000"
+
+   volumes:
+     grafana-storage:
