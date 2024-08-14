@@ -1,0 +1,40 @@
+{
+    "dashboard": {
+      "id": null,
+      "title": "RTSP to Redis Dashboard",
+      "panels": [
+        {
+          "type": "graph",
+          "title": "Frames Processed",
+          "targets": [
+            {
+              "expr": "frames_processed",
+              "legendFormat": "Frames Processed"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "Buffer Size",
+          "targets": [
+            {
+              "expr": "buffer_size",
+              "legendFormat": "Buffer Size"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "RTSP Connection Status",
+          "targets": [
+            {
+              "expr": "rtsp_connection_status",
+              "legendFormat": "Connection Status"
+            }
+          ]
+        }
+      ],
+      "schemaVersion": 26,
+      "version": 0
+    }
+  }
