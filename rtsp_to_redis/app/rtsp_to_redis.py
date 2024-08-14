@@ -7,15 +7,11 @@ from typing import Optional
 
 import cv2
 import redis
-from dotenv import load_dotenv
 from prometheus_client import Counter
 from prometheus_client import Gauge
 from prometheus_client import Histogram
 from prometheus_client import start_http_server
 from redis.exceptions import RedisError
-
-# Load environment variables
-load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
