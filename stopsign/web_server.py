@@ -52,7 +52,7 @@ async def frame_loop(send):
     while True:
         try:
             # Get the latest frame from Redis
-            frame_data = redis_client.lindex("frame_buffer", 0)
+            frame_data = redis_client.lindex("processed_frame_buffer", 0)
             if frame_data:
                 frame_dict = json.loads(frame_data)  # type: ignore # noqa: F841
                 frame = frame_dict["frame"]
@@ -62,12 +62,11 @@ async def frame_loop(send):
                 current_time = time.time()
                 if current_time - last_frame_time >= 60:
                     fps = frames_sent / (current_time - last_frame_time)
-                    buffer_length = redis_client.llen("frame_buffer")
+                    buffer_length = redis_client.llen("processed_frame_buffer")
                     logger.info(f"Web server sending rate: {fps:.2f} fps, Buffer length: {buffer_length}")
                     frames_sent = 0
                     last_frame_time = current_time
-                    # Reset error count every minute if streaming is working
-                    error_count = 0
+                    error_count = 0  # Reset error count every minute if streaming is working
             else:
                 logger.warning("No frames available in buffer")
             await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
