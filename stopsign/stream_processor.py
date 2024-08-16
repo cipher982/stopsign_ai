@@ -12,9 +12,9 @@ from typing import Optional
 from typing import Tuple
 
 import cv2
-import dotenv
 import numpy as np
 import redis
+from redis import Redis
 from ultralytics import YOLO
 
 from stopsign.config import Config
@@ -24,10 +24,8 @@ from stopsign.tracking import StopDetector
 from stopsign.tracking import StopZone
 
 # Load environment variables
-dotenv.load_dotenv()
-
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
 
 MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
@@ -36,22 +34,19 @@ MAX_ERRORS = 100
 class StreamProcessor:
     def __init__(self, config: Config):
         self.config = config
-        self.redis_client = redis.Redis(
-            host=os.getenv("REDIS_HOST", "redis"),
+        self.redis_client: Redis = redis.Redis(
+            host=os.getenv("REDIS_HOST", "localhost"),
             port=int(os.getenv("REDIS_PORT", 6379)),
             db=0,
         )
         self.model = self.initialize_model()
         self.car_tracker = CarTracker(config)
         self.stop_detector = StopDetector(config)
-        self.cap = None
         self.frame_count = 0
         self.frame_buffer_size = self.config.frame_buffer_size
         self.last_processed_time = time.time()
         self.frames_processed = 0
         self.error_count = 0
-        self.last_successful_read_time: Optional[float] = None
-        self.read_timeout = 3  # 5 seconds timeout for reading a frame
         self.stats_update_interval = 300  # Update stats every 5 minutes
         self._start_stats_update_thread()
 
@@ -72,77 +67,42 @@ class StreamProcessor:
         logger.info("Model loaded successfully")
         return model
 
-    def initialize_capture(self):
-        if self.cap:
-            self.cap.release()
-
-        max_attempts = 5
-        for attempt in range(max_attempts):
-            try:
-                if self.config.input_source == "live":
-                    rtsp_url = os.getenv("RTSP_URL")
-                    if not rtsp_url:
-                        raise ValueError("Error: RTSP_URL environment variable is not set.")
-                    self.cap = cv2.VideoCapture(rtsp_url)
-                elif self.config.input_source == "file":
-                    sample_file_path = os.getenv("SAMPLE_FILE_PATH")
-                    if not sample_file_path:
-                        raise ValueError("Error: SAMPLE_FILE_PATH environment variable is not set.")
-                    self.cap = cv2.VideoCapture(sample_file_path)
-                else:
-                    raise ValueError("Error: Invalid input source")
-
-                if not self.cap.isOpened():
-                    raise ValueError("Error: Could not open video stream")
-
-                self.cap.set(cv2.CAP_PROP_FPS, self.config.fps)
-                logger.info("Video capture initialized successfully")
-                return
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1}/{max_attempts} failed: {str(e)}")
-                time.sleep(1)  # Short wait before retrying
-
-        raise ValueError("Failed to initialize video capture after multiple attempts")
+    def get_frame_from_redis(self) -> Optional[np.ndarray]:
+        frame_data = self.redis_client.lindex("raw_frame_buffer", 0)
+        if frame_data:
+            frame_data_str = frame_data.decode("utf-8") if isinstance(frame_data, bytes) else str(frame_data)
+            frame_dict = json.loads(frame_data_str)
+            encoded_frame = frame_dict["frame"]
+            nparr = np.frombuffer(base64.b64decode(encoded_frame), np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            return frame
+        return None
 
     def process_stream(self):
-        frame_time = 1 / self.config.fps
-        last_frame_time = time.time()
-
         logger.info("Starting frame processing")
         while True:
-            current_time = time.time()
-            elapsed_time = current_time - last_frame_time
-
-            if elapsed_time >= frame_time:
-                if self.cap is None or (
-                    self.last_successful_read_time
-                    and (current_time - self.last_successful_read_time > self.read_timeout)
-                ):
-                    logger.warning("Video capture not initialized or read timeout. Reinitializing...")
-                    self.initialize_capture()
-                    last_frame_time = time.time()
+            try:
+                frame = self.get_frame_from_redis()
+                if frame is None:
+                    logger.warning("No frame available in Redis. Waiting...")
+                    time.sleep(1)
                     continue
 
-                ret, frame = self.cap.read()
-                if not ret:
-                    logger.warning("Failed to read frame. Reinitializing capture.")
-                    self.initialize_capture()
-                    last_frame_time = time.time()
-                    continue
-
-                self.last_successful_read_time = current_time
                 processed_frame, metadata = self.process_frame(frame)
                 self.store_frame_data(processed_frame, metadata)
 
-                last_frame_time = current_time
                 self.frame_count += 1
-
-                # Update monitoring metrics
                 self.frames_processed += 1
-                if current_time - self.last_processed_time >= 60:  # Calculate metrics every minute
+
+                if time.time() - self.last_processed_time >= 60:
                     self.log_metrics()
-            else:
-                time.sleep(frame_time - elapsed_time)
+            except Exception as e:
+                logger.error(f"Error in stream processing: {str(e)}")
+                self.error_count += 1
+                if self.error_count > MAX_ERRORS:
+                    logger.critical("Too many errors. Exiting.")
+                    break
+                time.sleep(1)
 
     def log_metrics(self):
         current_time = time.time()
@@ -297,29 +257,20 @@ class StreamProcessor:
         frame_data = json.dumps({"frame": encoded_frame, "metadata": metadata, "timestamp": timestamp})
 
         pipeline = self.redis_client.pipeline()
-        pipeline.lpush("frame_buffer", frame_data)
-        pipeline.ltrim("frame_buffer", 0, self.frame_buffer_size - 1)
+        pipeline.lpush("processed_frame_buffer", frame_data)
+        pipeline.ltrim("processed_frame_buffer", 0, self.frame_buffer_size - 1)
         pipeline.execute()
 
         logger.debug(f"Frame {self.frame_count} stored in Redis")
 
-        # Monitor buffer length after each store operation
-        buffer_length = self.redis_client.llen("frame_buffer")
-        if buffer_length < MIN_BUFFER_LENGTH:  # type: ignore
-            logger.warning(f"Buffer ({buffer_length}) below threshold ({MIN_BUFFER_LENGTH})")
-
     def run(self):
         while True:
             try:
-                self.initialize_capture()
                 self.process_stream()
             except Exception as e:
                 logger.error(f"Error in stream processor: {str(e)}")
                 time.sleep(1)  # Short wait before restarting
             finally:
-                if self.cap:
-                    self.cap.release()
-                cv2.destroyAllWindows()
                 logger.info("Stream processor restarting...")
 
 
