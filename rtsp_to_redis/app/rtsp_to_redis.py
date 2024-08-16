@@ -23,6 +23,7 @@ class RTSPToRedis:
         self.rtsp_url = os.getenv("RTSP_URL")
         self.redis_host = os.getenv("REDIS_HOST", "localhost")
         self.redis_port = int(os.getenv("REDIS_PORT", 6379))
+        self.prometheus_port = int(os.getenv("PROMETHEUS_PORT", 8000))
         self.frame_buffer_size = int(os.getenv("FRAME_BUFFER_SIZE", 500))
         self.fps = int(os.getenv("FPS", 15))
         self.jpeg_quality = int(os.getenv("JPEG_QUALITY", 95))
@@ -117,7 +118,7 @@ class RTSPToRedis:
         self.frame_processing_time.observe(time.time() - start_time)
 
     def run(self):
-        start_http_server(8000)  # Start Prometheus metrics server
+        start_http_server(self.prometheus_port)
         while True:
             cap = None
             try:
