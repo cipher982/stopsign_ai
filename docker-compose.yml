@@ -8,9 +8,15 @@ services:
       - .env
     environment:
       - YOLO_MODEL_PATH=/app/models/yolov8n.pt
+      - PROMETHEUS_PORT=8002
     volumes:
       - ./models:/app/models
       - ./config.yaml:/app/config.yaml
+    expose:
+      - 8002
+    networks:
+      - default
+      - monitoring
 
   web_server:
     build:
@@ -22,3 +28,8 @@ services:
       - .env
     depends_on:
       - stream_processor
+
+networks:
+  default:
+  monitoring:
+    external: true

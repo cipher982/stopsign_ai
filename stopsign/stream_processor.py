@@ -13,7 +13,12 @@ from typing import Tuple
 
 import cv2
 import numpy as np
+import psutil
 import redis
+from prometheus_client import Counter
+from prometheus_client import Gauge
+from prometheus_client import Histogram
+from prometheus_client import start_http_server
 from redis import Redis
 from ultralytics import YOLO
 
@@ -39,16 +44,18 @@ class StreamProcessor:
             port=int(os.getenv("REDIS_PORT", 6379)),
             db=0,
         )
+        self.initialize_metrics()
         self.model = self.initialize_model()
         self.car_tracker = CarTracker(config)
         self.stop_detector = StopDetector(config)
         self.frame_count = 0
+        self.fps_frame_count = 0
         self.frame_buffer_size = self.config.frame_buffer_size
         self.last_processed_time = time.time()
-        self.frames_processed = 0
-        self.error_count = 0
+        self.last_fps_update = time.time()
         self.stats_update_interval = 300  # Update stats every 5 minutes
         self._start_stats_update_thread()
+        start_http_server(int(os.getenv("PROMETHEUS_PORT", 8000)))
 
     def _start_stats_update_thread(self):
         def update_stats_periodically():
@@ -58,6 +65,31 @@ class StreamProcessor:
 
         thread = threading.Thread(target=update_stats_periodically, daemon=True)
         thread.start()
+
+    def initialize_metrics(self):
+        # Frame processing metrics
+        self.frames_processed = Counter("frames_processed", "Number of frames processed")
+        self.frame_processing_time = Histogram("frame_processing_time_seconds", "Time taken to process each frame")
+        self.fps = Gauge("fps", "Frames processed per second")
+        self.buffer_size = Gauge("buffer_size", "Current size of the frame buffer")
+
+        # Error and performance metrics
+        self.exception_counter = Counter("exceptions_total", "Total number of exceptions", ["type", "method"])
+        self.current_memory_usage = Gauge("current_memory_usage_bytes", "Current memory usage of the process")
+        self.current_cpu_usage = Gauge("current_cpu_usage_percent", "Current CPU usage percentage of the process")
+
+        # Redis metrics
+        self.redis_op_latency = Histogram("redis_op_latency_seconds", "Latency of Redis operations in seconds")
+
+        # Model metrics
+        self.model_inference_latency = Histogram("model_inference_latency_seconds", "Model latency")
+
+        # Object tracking metrics
+        self.cars_tracked = Gauge("cars_tracked", "Number of cars currently being tracked")
+        self.cars_in_stop_zone = Gauge("cars_in_stop_zone", "Number of cars in the stop zone")
+
+    def increment_exception_counter(self, exception_type: str, method: str):
+        self.exception_counter.labels(type=exception_type, method=method).inc()
 
     def initialize_model(self):
         model_path = os.getenv("YOLO_MODEL_PATH")
@@ -80,6 +112,9 @@ class StreamProcessor:
 
     def process_stream(self):
         logger.info("Starting frame processing")
+        self.last_fps_update = time.time()
+        self.start_time = time.time()
+
         while True:
             try:
                 frame = self.get_frame_from_redis()
@@ -88,36 +123,38 @@ class StreamProcessor:
                     time.sleep(1)
                     continue
 
+                start_time = time.time()
                 processed_frame, metadata = self.process_frame(frame)
+                processing_time = time.time() - start_time
+                self.frame_processing_time.observe(processing_time)
+
                 self.store_frame_data(processed_frame, metadata)
 
                 self.frame_count += 1
-                self.frames_processed += 1
+                self.fps_frame_count += 1
+                self.frames_processed.inc()
+                self.buffer_size.set(self.redis_client.llen("processed_frame_buffer"))  # type: ignore
 
-                if time.time() - self.last_processed_time >= 60:
-                    self.log_metrics()
+                # Update memory and CPU usage
+                process = psutil.Process(os.getpid())
+                self.current_memory_usage.set(process.memory_info().rss)
+                self.current_cpu_usage.set(process.cpu_percent())
+
+                current_time = time.time()
+                elapsed_time = current_time - self.last_fps_update
+                if elapsed_time >= 1:  # Update FPS every second
+                    self.fps.set(self.fps_frame_count / elapsed_time)
+                    self.fps_frame_count = 0
+                    self.last_fps_update = current_time
+
             except Exception as e:
                 logger.error(f"Error in stream processing: {str(e)}")
-                self.error_count += 1
-                if self.error_count > MAX_ERRORS:
-                    logger.critical("Too many errors. Exiting.")
-                    break
+                self.increment_exception_counter(type(e).__name__, "process_stream")
                 time.sleep(1)
 
-    def log_metrics(self):
-        current_time = time.time()
-        elapsed_time = current_time - self.last_processed_time
-        fps = self.frames_processed / elapsed_time
-        buffer_length = self.redis_client.llen("frame_buffer")
-        logger.info(f"Processing rate: {fps:.2f} fps, Buffer length: {buffer_length}")
-
-        if buffer_length < MIN_BUFFER_LENGTH:  # type: ignore
-            logger.warning(f"Buffer length ({buffer_length}) below minimum threshold ({MIN_BUFFER_LENGTH}).")
-
-        self.frames_processed = 0
-        self.last_processed_time = current_time
-
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, Dict]:
+        start_time = time.time()
+
         frame = self.crop_scale_frame(frame)
         processed_frame, boxes = self.detect_objects(frame)
 
@@ -138,6 +175,18 @@ class StreamProcessor:
 
         metadata = self.create_metadata()
 
+        # Update Prometheus metrics
+        self.cars_tracked.set(len(self.car_tracker.get_cars()))
+        cars_in_stop_zone = sum(
+            1
+            for car in self.car_tracker.get_cars().values()
+            if self.stop_detector.stop_zone.is_in_stop_zone(car.state.location) and not car.state.is_parked
+        )
+        self.cars_in_stop_zone.set(cars_in_stop_zone)
+
+        # Measure frame processing time
+        self.frame_processing_time.observe(time.time() - start_time)
+
         return annotated_frame, metadata
 
     def crop_scale_frame(self, frame: np.ndarray) -> np.ndarray:
@@ -155,23 +204,30 @@ class StreamProcessor:
         return cropped
 
     def detect_objects(self, frame: np.ndarray) -> Tuple[np.ndarray, List]:
-        with contextlib.redirect_stdout(io.StringIO()):
-            results = self.model.track(
-                source=frame,
-                tracker="./trackers/bytetrack.yaml",
-                stream=False,
-                persist=True,
-                classes=self.config.vehicle_classes,
-                verbose=False,
-            )
+        try:
+            start_time = time.time()
+            with contextlib.redirect_stdout(io.StringIO()):
+                results = self.model.track(
+                    source=frame,
+                    tracker="./trackers/bytetrack.yaml",
+                    stream=False,
+                    persist=True,
+                    classes=self.config.vehicle_classes,
+                    verbose=False,
+                )
+            self.model_inference_latency.observe(time.time() - start_time)
 
-        boxes = results[0].boxes
-        if boxes:
-            boxes = [obj for obj in boxes if obj.cls in self.config.vehicle_classes]
-        else:
-            boxes = []
+            boxes = results[0].boxes
+            if boxes:
+                boxes = [obj for obj in boxes if obj.cls in self.config.vehicle_classes]
+            else:
+                boxes = []
 
-        return frame, boxes
+            return frame, boxes
+        except Exception as e:
+            logger.error(f"Error in object detection: {str(e)}")
+            self.increment_exception_counter(type(e).__name__, "detect_objects")
+            raise
 
     def visualize(self, frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone) -> np.ndarray:
         overlay = frame.copy()
@@ -204,6 +260,7 @@ class StreamProcessor:
                         self.draw_box(frame, car, box, color=(0, 255, 0), thickness=2)
             except Exception as e:
                 logger.error(f"Error processing box in visualize function: {str(e)}")
+                self.increment_exception_counter(type(e).__name__, "visualize")
 
         for car in cars.values():
             if car.state.is_parked:
@@ -256,10 +313,12 @@ class StreamProcessor:
         timestamp = time.time()
         frame_data = json.dumps({"frame": encoded_frame, "metadata": metadata, "timestamp": timestamp})
 
+        start_time = time.time()
         pipeline = self.redis_client.pipeline()
         pipeline.lpush("processed_frame_buffer", frame_data)
         pipeline.ltrim("processed_frame_buffer", 0, self.frame_buffer_size - 1)
         pipeline.execute()
+        self.redis_op_latency.observe(time.time() - start_time)
 
         logger.debug(f"Frame {self.frame_count} stored in Redis")
 
@@ -269,15 +328,13 @@ class StreamProcessor:
                 self.process_stream()
             except Exception as e:
                 logger.error(f"Error in stream processor: {str(e)}")
-                time.sleep(1)  # Short wait before restarting
+                self.increment_exception_counter(type(e).__name__, "run")
+                time.sleep(1)
             finally:
                 logger.info("Stream processor restarting...")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
-    logger.setLevel(logging.DEBUG)
-
     config = Config("./config.yaml")
     processor = StreamProcessor(config)
     processor.run()

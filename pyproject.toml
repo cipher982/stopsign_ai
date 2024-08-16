@@ -16,6 +16,7 @@ filterpy = "^1.4.5"
 ffmpeg-python = "^0.2.0"
 python-fasthtml = "^0.2.4"
 redis = "^5.0.8"
+prometheus-client = "^0.20.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.3.5"
