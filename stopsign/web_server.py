@@ -169,7 +169,19 @@ def home():
 @app.get("/statistics")  # type: ignore
 def statistics():
     return Html(
-        Head(Title("Statistics - Stop Sign Nanny")),
+        Head(
+            Title("Statistics - Stop Sign Nanny"),
+            Script(src="https://cdn.jsdelivr.net/npm/@grafana/runtime@10.0.3/dist/index.min.js"),
+            Script("""
+                document.addEventListener('DOMContentLoaded', function() {
+                    const dashboard = new GrafanaEmbedded({
+                        url: 'http://localhost:3000',
+                        container: document.getElementById('dashboard-container'),
+                    });
+                    dashboard.render('your-dashboard-uid');
+                });
+            """),
+        ),
         Body(
             Header(
                 H1("Statistics"),
@@ -181,7 +193,7 @@ def statistics():
                 ),
                 style="background-color: #f0f0f0; padding: 20px; display: flex; justify-content: space-between; align-items: center;",
             ),
-            Main(P("Statistics about stop sign compliance will be displayed here."), style="margin: 20px 0;"),
+            Main(Div(id="dashboard-container", style="width: 100%; height: 600px; margin: 20px 0;")),
             Footer(P("By David Rose"), style="background-color: #f0f0f0; padding: 10px; text-align: center;"),
             style="font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 20px;",
         ),
