@@ -28,6 +28,10 @@ services:
       - .env
     depends_on:
       - stream_processor
+    volumes:
+      - ./stopsign:/app/stopsign
+      - ./static:/app/static
+      - ./config.yaml:/app/config.yaml
 
 networks:
   default:
