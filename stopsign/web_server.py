@@ -17,6 +17,7 @@ from fasthtml import Footer
 from fasthtml import Head
 from fasthtml import Header
 from fasthtml import Html
+from fasthtml import Iframe
 from fasthtml import Img
 from fasthtml import Main
 from fasthtml import Nav
@@ -171,16 +172,6 @@ def statistics():
     return Html(
         Head(
             Title("Statistics - Stop Sign Nanny"),
-            Script(src="https://cdn.jsdelivr.net/npm/@grafana/runtime@10.0.3/dist/index.min.js"),
-            Script("""
-                document.addEventListener('DOMContentLoaded', function() {
-                    const dashboard = new GrafanaEmbedded({
-                        url: 'http://localhost:3000',
-                        container: document.getElementById('dashboard-container'),
-                    });
-                    dashboard.render('your-dashboard-uid');
-                });
-            """),
         ),
         Body(
             Header(
@@ -193,7 +184,14 @@ def statistics():
                 ),
                 style="background-color: #f0f0f0; padding: 20px; display: flex; justify-content: space-between; align-items: center;",
             ),
-            Main(Div(id="dashboard-container", style="width: 100%; height: 600px; margin: 20px 0;")),
+            Main(
+                Iframe(
+                    src="http://localhost:3000/d/cdv1cfysy6800e/stopsign",
+                    width="100%",
+                    height="600",
+                    frameborder="0",
+                )
+            ),
             Footer(P("By David Rose"), style="background-color: #f0f0f0; padding: 10px; text-align: center;"),
             style="font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 20px;",
         ),
@@ -235,13 +233,9 @@ def about():
     )
 
 
-def run_server():
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
 def main(config: Config):
     try:
-        run_server()
+        uvicorn.run("stopsign.web_server:app", host="0.0.0.0", port=8000, reload=True)
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")
 
