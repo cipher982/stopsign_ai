@@ -44,6 +44,9 @@ redis_client = redis.Redis(
 original_width = 1920
 original_height = 1080
 
+# Grafana dashboard URL
+GRAFANA_URL = os.getenv("GRAFANA_URL")
+
 
 async def frame_loop(send):
     last_frame_time = time.time()
@@ -186,7 +189,7 @@ def statistics():
             ),
             Main(
                 Iframe(
-                    src="http://localhost:3000/d/cdv1cfysy6800e/stopsign",
+                    src=GRAFANA_URL,
                     width="100%",
                     height="600",
                     frameborder="0",
