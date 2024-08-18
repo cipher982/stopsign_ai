@@ -18,4 +18,8 @@ services:
 networks:
   default:
   monitoring:
+    name: monitoring
+    external: true
+  coolify:
+    name: coolify
     external: true

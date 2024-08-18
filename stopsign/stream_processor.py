@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import queue
 import threading
 import time
 from typing import Dict
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
+PROMETHEUS_PORT = int(os.environ["PROMETHEUS_PORT"])
 
 
 class StreamProcessor:
@@ -54,16 +56,18 @@ class StreamProcessor:
         self.last_processed_time = time.time()
         self.last_fps_update = time.time()
         self.stats_update_interval = 300  # Update stats every 5 minutes
+        self.stats_queue = queue.Queue()
         self._start_stats_update_thread()
-        start_http_server(int(os.getenv("PROMETHEUS_PORT", 8000)))
+        start_http_server(PROMETHEUS_PORT)
+        logger.info(f"Prometheus server started on port {PROMETHEUS_PORT}")
 
     def _start_stats_update_thread(self):
-        def update_stats_periodically():
+        def schedule_stats_update():
             while True:
                 time.sleep(self.stats_update_interval)
-                self.stop_detector.db.update_daily_statistics()
+                self.stats_queue.put("update_stats")
 
-        thread = threading.Thread(target=update_stats_periodically, daemon=True)
+        thread = threading.Thread(target=schedule_stats_update, daemon=True)
         thread.start()
 
     def initialize_metrics(self):
@@ -146,6 +150,10 @@ class StreamProcessor:
                     self.fps.set(self.fps_frame_count / elapsed_time)
                     self.fps_frame_count = 0
                     self.last_fps_update = current_time
+
+                while not self.stats_queue.empty():
+                    _ = self.stats_queue.get()
+                    self.stop_detector.db.update_daily_statistics()
 
             except Exception as e:
                 logger.error(f"Error in stream processing: {str(e)}")
