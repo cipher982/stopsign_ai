@@ -1,7 +1,0 @@
-   global:
-     scrape_interval: 15s
-
-   scrape_configs:
-     - job_name: "rtsp_to_redis"
-       static_configs:
-         - targets: ["rtsp_to_redis:8000"]
