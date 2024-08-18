@@ -17,6 +17,7 @@ services:
     networks:
       - default
       - monitoring
+      - coolify
 
   web_server:
     build:
@@ -32,8 +33,16 @@ services:
       - ./stopsign:/app/stopsign
       - ./static:/app/static
       - ./config.yaml:/app/config.yaml
+    networks:
+      - default
+      - monitoring
+      - coolify
 
 networks:
   default:
   monitoring:
+    name: monitoring
+    external: true
+  coolify:
+    name: coolify
     external: true
