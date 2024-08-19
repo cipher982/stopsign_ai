@@ -92,6 +92,32 @@ class StreamProcessor:
         self.cars_tracked = Gauge("cars_tracked", "Number of cars currently being tracked")
         self.cars_in_stop_zone = Gauge("cars_in_stop_zone", "Number of cars in the stop zone")
 
+        # system metrics
+        self.cpu_package_temp = Gauge("cpu_package_temp", "CPU package temperature")
+        self.cpu_core_temp_avg = Gauge("cpu_core_temp_avg", "Average CPU core temperature")
+        self.nvme_temp_avg = Gauge("nvme_temp_avg", "Average NVMe temperature")
+        self.acpitz_temp = Gauge("acpitz_temp", "ACPI thermal zone temperature")
+
+        # image metrics
+        self.avg_brightness = Gauge("avg_frame_brightness", "Average brightness of processed frames")
+        self.contrast = Gauge("frame_contrast", "Contrast of processed frames")
+
+    def update_temp_metrics(self):
+        temps = psutil.sensors_temperatures()
+
+        if "coretemp" in temps:
+            cpu_temps = temps["coretemp"]
+            self.cpu_package_temp.set(cpu_temps[0].current)  # Package id 0
+            core_temps = [t.current for t in cpu_temps[1:]]  # All core temperatures
+            self.cpu_core_temp_avg.set(sum(core_temps) / len(core_temps))
+
+        if "nvme" in temps:
+            nvme_temps = [t.current for t in temps["nvme"] if t.label == "Composite"]
+            self.nvme_temp_avg.set(sum(nvme_temps) / len(nvme_temps))
+
+        if "acpitz" in temps:
+            self.acpitz_temp.set(temps["acpitz"][0].current)
+
     def increment_exception_counter(self, exception_type: str, method: str):
         self.exception_counter.labels(type=exception_type, method=method).inc()
 
@@ -143,6 +169,7 @@ class StreamProcessor:
                 process = psutil.Process(os.getpid())
                 self.current_memory_usage.set(process.memory_info().rss)
                 self.current_cpu_usage.set(process.cpu_percent())
+                self.update_temp_metrics()
 
                 current_time = time.time()
                 elapsed_time = current_time - self.last_fps_update
@@ -162,6 +189,13 @@ class StreamProcessor:
 
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, Dict]:
         start_time = time.time()
+
+        # Calculate average brightness
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        avg_brightness = np.mean(gray)
+        contrast = np.std(gray)
+        self.avg_brightness.set(float(avg_brightness))
+        self.contrast.set(float(contrast))
 
         frame = self.crop_scale_frame(frame)
         processed_frame, boxes = self.detect_objects(frame)
