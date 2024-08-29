@@ -304,12 +304,14 @@ class StreamProcessor:
                 logger.error(f"Error processing box in visualize function: {str(e)}")
                 self.increment_exception_counter(type(e).__name__, "visualize")
 
+        current_time = time.time()
         for car in cars.values():
             if car.state.is_parked:
                 continue
-            locations = [loc for loc, _ in car.state.track]
-            points = np.array(locations, dtype=np.int32).reshape((-1, 1, 2))
-            cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
+            recent_locations = [(loc, t) for loc, t in car.state.track if current_time - t <= 30]
+            if len(recent_locations) > 1:
+                points = np.array([loc for loc, _ in recent_locations], dtype=np.int32).reshape((-1, 1, 2))
+                cv2.polylines(frame, [points], isClosed=False, color=(255, 0, 0), thickness=2)
 
         cv2.putText(frame, f"Frame: {self.frame_count}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
