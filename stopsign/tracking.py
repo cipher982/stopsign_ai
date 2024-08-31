@@ -14,13 +14,14 @@ from stopsign.config import Config
 from stopsign.database import Database
 from stopsign.kalman_filter import KalmanFilterWrapper
 
+Point = Tuple[float, float]
+Line = Tuple[Point, Point]
+
 # Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-Point = Tuple[float, float]
-Line = Tuple[Point, Point]
+db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
 
 
 @dataclass
@@ -239,7 +240,7 @@ class CarTracker:
     def __init__(self, config: Config):
         self.cars: Dict[int, Car] = {}
         self.config = config
-        self.db = Database()
+        self.db = db
         self.last_seen: Dict[int, float] = {}
         self.persistence_threshold = 10.0  # seconds
 
@@ -283,7 +284,7 @@ class StopDetector:
     def __init__(self, config: Config):
         self.config = config
         self.stop_zone = self._create_stop_zone()
-        self.db = Database()
+        self.db = db
 
     def _create_stop_zone(self) -> StopZone:
         stop_line: Line = (
