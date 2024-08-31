@@ -167,3 +167,4 @@ samples/
 tmp_stream_buffer/
 .sesskey
 scratch/
+data/

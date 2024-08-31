@@ -11,6 +11,7 @@ services:
       - PROMETHEUS_PORT=8002
     volumes:
       - ./models:/app/models
+      - ./data:/app/data
       - ./config.yaml:/app/config.yaml
       - ./stopsign:/app/stopsign
     expose:
@@ -32,6 +33,7 @@ services:
       - stream_processor
     volumes:
       - ./static:/app/static
+      - ./data:/app/data
       - ./config.yaml:/app/config.yaml
       - ./stopsign:/app/stopsign
     networks:
