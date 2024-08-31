@@ -59,7 +59,6 @@ class StreamProcessor:
         self.stats_queue = queue.Queue()
         self._start_stats_update_thread()
         start_http_server(PROMETHEUS_PORT)
-        logger.info(f"Prometheus server started on port {PROMETHEUS_PORT}")
 
     def _start_stats_update_thread(self):
         def schedule_stats_update():

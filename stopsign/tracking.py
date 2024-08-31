@@ -239,14 +239,19 @@ class CarTracker:
     def __init__(self, config: Config):
         self.cars: Dict[int, Car] = {}
         self.config = config
+        self.db = Database()
+        self.last_seen: Dict[int, float] = {}
+        self.persistence_threshold = 10.0  # seconds
 
     def update_cars(self, boxes: List, timestamp: float) -> None:
+        current_car_ids = set()
+
         for box in boxes:
             if box.id is None:
-                logger.debug("Skipping box without ID")
                 continue
             try:
                 car_id = int(box.id.item())
+                current_car_ids.add(car_id)
                 x, y, w, h = box.xywh[0]
                 location = (float(x), float(y))
 
@@ -254,8 +259,21 @@ class CarTracker:
                     self.cars[car_id] = Car(id=car_id, config=self.config)
 
                 self.cars[car_id].update(location, timestamp)
+                self.last_seen[car_id] = timestamp
             except Exception as e:
                 logger.error(f"Error updating car {box.id}: {str(e)}")
+
+        # Handle cars no longer tracked
+        for car_id in list(self.cars.keys()):
+            if car_id not in current_car_ids:
+                if timestamp - self.last_seen[car_id] > self.persistence_threshold:
+                    self.persist_and_remove_car(car_id)
+
+    def persist_and_remove_car(self, car_id: int) -> None:
+        car = self.cars[car_id]
+        self.db.save_car_state(car)
+        del self.cars[car_id]
+        del self.last_seen[car_id]
 
     def get_cars(self) -> Dict[int, Car]:
         return self.cars

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime
 
@@ -19,6 +20,25 @@ class Database:
             cursor = self.conn.cursor()
         else:
             raise Exception("Database connection not established")
+
+        # Add new table for car state history
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS car_state_history (
+            id INTEGER PRIMARY KEY,
+            car_id INTEGER,
+            last_seen DATETIME,
+            location TEXT,
+            speed FLOAT,
+            is_parked BOOLEAN,
+            stop_zone_state TEXT,
+            stop_score INTEGER,
+            min_speed_in_zone FLOAT,
+            time_at_zero FLOAT,
+            entry_time FLOAT,
+            exit_time FLOAT,
+            track TEXT
+        )
+        """)
 
         # Create vehicle_passes table
         cursor.execute("""
@@ -47,6 +67,32 @@ class Database:
         """)
 
         self.conn.commit()
+
+    def save_car_state(self, car):
+        self.ensure_connection()
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+        INSERT INTO car_state_history (
+            car_id, last_seen, location, speed, is_parked, stop_zone_state,
+            stop_score, min_speed_in_zone, time_at_zero, entry_time, exit_time, track
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                car.id,
+                datetime.fromtimestamp(car.state.last_update_time),
+                json.dumps(car.state.location),
+                car.state.speed,
+                car.state.is_parked,
+                car.state.stop_zone_state,
+                car.state.stop_score,
+                car.state.min_speed_in_zone,
+                car.state.time_at_zero,
+                car.state.entry_time,
+                car.state.exit_time,
+                json.dumps(car.state.track),
+            ),
+        )
 
     def add_vehicle_pass(self, vehicle_id, stop_score, stop_duration, min_speed, image_path):
         self.ensure_connection()
