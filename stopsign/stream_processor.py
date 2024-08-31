@@ -83,7 +83,7 @@ class StreamProcessor:
         self.current_cpu_usage = Gauge("current_cpu_usage_percent", "Current CPU usage percentage of the process")
 
         # Redis metrics
-        self.redis_op_latency = Histogram("redis_op_latency_seconds", "Latency of Redis operations in seconds")
+        self.redis_op_latency = Histogram("redis_op_latency_sec", "Latency of Redis operations in seconds")
 
         # Model metrics
         self.model_inference_latency = Histogram("model_inference_latency_seconds", "Model latency")
@@ -101,6 +101,14 @@ class StreamProcessor:
         # image metrics
         self.avg_brightness = Gauge("avg_frame_brightness", "Average brightness of processed frames")
         self.contrast = Gauge("frame_contrast", "Contrast of processed frames")
+
+        # timing specific metrics
+        self.visualization_time = Histogram("visualization_time_seconds", "Time taken to visualize the frame")
+        self.object_detection_time = Histogram("object_detection_time_seconds", "Time taken for object detection")
+        self.car_tracking_time = Histogram("car_tracking_time_seconds", "Time taken to update car tracking")
+        self.stop_detection_time = Histogram("stop_detection_time_seconds", "Time to update stop detection")
+        self.metadata_creation_time = Histogram("metadata_creation_time_seconds", "Time taken to create metadata")
+        self.frame_encoding_time = Histogram("frame_encoding_time_seconds", "Time taken to encode the frame")
 
     def update_temp_metrics(self):
         temps = psutil.sensors_temperatures()
@@ -198,26 +206,36 @@ class StreamProcessor:
         self.contrast.set(float(contrast))
 
         frame = self.crop_scale_frame(frame)
+        object_detection_start = time.time()
         processed_frame, boxes = self.detect_objects(frame)
+        self.object_detection_time.observe(time.time() - object_detection_start)
 
+        car_tracking_start = time.time()
         self.car_tracker.update_cars(boxes, time.time())
+        self.car_tracking_time.observe(time.time() - car_tracking_start)
+
+        stop_detection_start = time.time()
         for car in self.car_tracker.get_cars().values():
             if not car.state.is_parked:
                 self.stop_detector.update_car_stop_status(car, time.time(), frame)
+        self.stop_detection_time.observe(time.time() - stop_detection_start)
 
+        visualization_start = time.time()
         annotated_frame = self.visualize(
             processed_frame,
             self.car_tracker.cars,
             boxes,
             self.stop_detector.stop_zone,
         )
+        self.visualization_time.observe(time.time() - visualization_start)
 
         if self.config.draw_grid:
             self.draw_gridlines(annotated_frame)
 
+        metadata_start = time.time()
         metadata = self.create_metadata()
+        self.metadata_creation_time.observe(time.time() - metadata_start)
 
-        # Update Prometheus metrics
         self.cars_tracked.set(len(self.car_tracker.get_cars()))
         cars_in_stop_zone = sum(
             1
@@ -351,8 +369,10 @@ class StreamProcessor:
         }
 
     def store_frame_data(self, frame: np.ndarray, metadata: Dict):
+        encoding_start = time.time()
         _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality])
         encoded_frame = base64.b64encode(buffer).decode("utf-8")
+        self.frame_encoding_time.observe(time.time() - encoding_start)
 
         timestamp = time.time()
         frame_data = json.dumps({"frame": encoded_frame, "metadata": metadata, "timestamp": timestamp})
