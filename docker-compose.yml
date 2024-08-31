@@ -12,6 +12,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./config.yaml:/app/config.yaml
+      - ./stopsign:/app/stopsign
     expose:
       - 8002
     networks:
@@ -30,9 +31,9 @@ services:
     depends_on:
       - stream_processor
     volumes:
-      - ./stopsign:/app/stopsign
       - ./static:/app/static
       - ./config.yaml:/app/config.yaml
+      - ./stopsign:/app/stopsign
     networks:
       - default
       - monitoring
