@@ -1,6 +1,7 @@
 import contextlib
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime
 
@@ -32,6 +33,9 @@ class Database:
 
     def ensure_connection(self):
         if not self.conn:
+            directory = os.path.dirname(self.db_file)
+            if not os.path.exists(directory):
+                os.makedirs(directory)
             self.conn = sqlite3.connect(self.db_file)
 
     def create_tables(self):

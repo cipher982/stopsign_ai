@@ -426,7 +426,7 @@ class StopDetector:
 
 def save_vehicle_image(frame: np.ndarray, car_id: int, timestamp: float) -> str:
     # Create a directory for storing images if it doesn't exist
-    image_dir = "vehicle_images"
+    image_dir = str(os.getenv("VEHICLE_IMAGE_DIR"))
     os.makedirs(image_dir, exist_ok=True)
 
     # Generate a unique filename
