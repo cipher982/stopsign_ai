@@ -216,7 +216,7 @@ class StreamProcessor:
         stop_detection_start = time.time()
         for car in self.car_tracker.get_cars().values():
             if not car.state.is_parked:
-                self.stop_detector.update_car_stop_status(car, time.time(), frame)
+                self.stop_detector.update_car_stop_status(car, time.time(), processed_frame)
         self.stop_detection_time.observe(time.time() - stop_detection_start)
 
         visualization_start = time.time()
