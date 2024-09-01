@@ -27,6 +27,7 @@ db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
 @dataclass
 class CarState:
     location: Point = field(default_factory=lambda: (0.0, 0.0))
+    bbox: Tuple[float, float, float, float] = field(default_factory=lambda: (0.0, 0.0, 0.0, 0.0))
     speed: float = 0.0
     prev_speed: float = 0.0
     is_parked: bool = True
@@ -162,12 +163,18 @@ class Car:
         self.kalman_filter = KalmanFilterWrapper(process_noise=10, measurement_noise=10)
         self.config = config
 
-    def update(self, location: Tuple[float, float], timestamp: float) -> None:
+    def update(
+        self,
+        location: Tuple[float, float],
+        timestamp: float,
+        bbox: Tuple[float, float, float, float],
+    ) -> None:
         """Update the car's state with new location data."""
         self._update_location(location, timestamp)
         self._update_speed(timestamp)
         self._update_movement_status()
         self._update_parked_status()
+        self.state.bbox = bbox
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
@@ -255,11 +262,12 @@ class CarTracker:
                 current_car_ids.add(car_id)
                 x, y, w, h = box.xywh[0]
                 location = (float(x), float(y))
+                bbox = (float(x), float(y), float(w), float(h))
 
                 if car_id not in self.cars:
                     self.cars[car_id] = Car(id=car_id, config=self.config)
 
-                self.cars[car_id].update(location, timestamp)
+                self.cars[car_id].update(location, timestamp, bbox)
                 self.last_seen[car_id] = timestamp
             except Exception as e:
                 logger.error(f"Error updating car {box.id}: {str(e)}")
@@ -324,7 +332,7 @@ class StopDetector:
                 car.state.scored = True
 
                 # Save vehicle image
-                image_path = save_vehicle_image(frame, car.id, timestamp)
+                image_path = save_vehicle_image(frame, car.id, timestamp, car.state.location, car.state.bbox)
 
                 # Save data to database
                 self.db.add_vehicle_pass(
@@ -424,7 +432,13 @@ class StopDetector:
         return smoothness
 
 
-def save_vehicle_image(frame: np.ndarray, car_id: int, timestamp: float) -> str:
+def save_vehicle_image(
+    frame: np.ndarray,
+    car_id: int,
+    timestamp: float,
+    location: Tuple[float, float],
+    bbox: Tuple[float, float, float, float],
+) -> str:
     # Create a directory for storing images if it doesn't exist
     image_dir = str(os.getenv("VEHICLE_IMAGE_DIR"))
     os.makedirs(image_dir, exist_ok=True)
@@ -432,7 +446,19 @@ def save_vehicle_image(frame: np.ndarray, car_id: int, timestamp: float) -> str:
     # Generate a unique filename
     filename = f"{image_dir}/vehicle_{car_id}_{int(timestamp)}.jpg"
 
-    # Save the image
-    cv2.imwrite(filename, frame)
+    # Extract bounding box coordinates
+    x, y, w, h = bbox
+    x1, y1 = int(x - w / 2), int(y - h / 2)
+    x2, y2 = int(x + w / 2), int(y + h / 2)
+
+    # Ensure coordinates are within frame boundaries
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+
+    # Crop the image
+    cropped_image = frame[y1:y2, x1:x2]
+
+    # Save the cropped image
+    cv2.imwrite(filename, cropped_image)
 
     return filename
