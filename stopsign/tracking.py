@@ -54,6 +54,12 @@ class StopZone:
         self.zone_length = 200
         self._calculate_geometry()
 
+    def update_configuration(self, new_config):
+        self.stop_line = new_config["stop_line"]
+        self.stop_box_tolerance = new_config["stop_box_tolerance"]
+        self.min_stop_duration = new_config["min_stop_duration"]
+        self._calculate_geometry()
+
     def _calculate_geometry(self):
         self.midpoint = self._midpoint(self.stop_line)
         self._angle = self._calculate_angle()
@@ -304,6 +310,9 @@ class StopDetector:
             stop_box_tolerance=self.config.stop_box_tolerance,
             min_stop_duration=self.config.min_stop_time,
         )
+
+    def update_stop_zone(self, new_config):
+        self.stop_zone.update_configuration(new_config)
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
         if self.stop_zone.is_in_stop_zone(car.state.location):

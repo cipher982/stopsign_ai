@@ -199,8 +199,8 @@ class StreamProcessor:
 
         # Calculate average brightness
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        avg_brightness = np.mean(gray)
-        contrast = np.std(gray)
+        avg_brightness = np.mean(gray)  # type: ignore
+        contrast = np.std(gray)  # type: ignore
         self.avg_brightness.set(float(avg_brightness))
         self.contrast.set(float(contrast))
 
@@ -287,6 +287,9 @@ class StreamProcessor:
             logger.error(f"Error in object detection: {str(e)}")
             self.increment_exception_counter(type(e).__name__, "detect_objects")
             raise
+
+    def reload_stop_zone_config(self, new_config):
+        self.stop_detector.update_stop_zone(new_config)
 
     def visualize(self, frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone) -> np.ndarray:
         overlay = frame.copy()

@@ -8,23 +8,25 @@ import time
 
 import redis
 import uvicorn
-from fasthtml import H1
-from fasthtml import A
-from fasthtml import Body
-from fasthtml import Div
-from fasthtml import FastHTML
-from fasthtml import Footer
-from fasthtml import Head
-from fasthtml import Header
-from fasthtml import Html
-from fasthtml import Iframe
-from fasthtml import Img
-from fasthtml import Main
-from fasthtml import Nav
-from fasthtml import P
-from fasthtml import Script
-from fasthtml import StaticFiles
-from fasthtml import Title
+from fasthtml.common import H1
+from fasthtml.common import A
+from fasthtml.common import Body
+from fasthtml.common import Button
+from fasthtml.common import Canvas
+from fasthtml.common import Div
+from fasthtml.common import FastHTML
+from fasthtml.common import Footer
+from fasthtml.common import Head
+from fasthtml.common import Header
+from fasthtml.common import Html
+from fasthtml.common import Iframe
+from fasthtml.common import Img
+from fasthtml.common import Main
+from fasthtml.common import Nav
+from fasthtml.common import P
+from fasthtml.common import Script
+from fasthtml.common import StaticFiles
+from fasthtml.common import Title
 
 from stopsign.config import Config
 
@@ -118,33 +120,97 @@ def home():
             Title("Stop Sign Nanny"),
             Script(src="https://unpkg.com/htmx.org@1.9.4"),
             Script("""
-                    document.addEventListener('DOMContentLoaded', function() {
-                        var socket = new WebSocket('ws://' + window.location.host + '/ws');
-                        socket.onopen = function(event) {
-                            console.log("WebSocket connection established");
-                        };
-                        socket.onmessage = function(event) {
-                            var data = event.data;
-                            if (data.startsWith('data:image')) {
-                                document.getElementById('videoFrame').src = data;
-                            } else {
-                                try {
-                                    var message = JSON.parse(data);
-                                    if (message.type === 'status') {
-                                        document.getElementById('status').innerText = message.content;
-                                    } else if (message.type === 'dimensions') {
-                                        console.log("Received dimensions:", message);
-                                    }
-                                } catch (e) {
-                                    console.error("Error parsing message:", e);
-                                }
+                let ws;
+                let isSelecting = false;
+                let points = [];
+
+                function connectWebSocket() {
+                    ws = new WebSocket('ws://' + location.host + '/ws');
+                    ws.onmessage = function(event) {
+                        if (event.data.startsWith('data:image')) {
+                            document.getElementById('videoFrame').src = event.data;
+                        } else {
+                            const data = JSON.parse(event.data);
+                            if (data.type === 'dimensions') {
+                                const img = document.getElementById('videoFrame');
+                                img.width = data.width;
+                                img.height = data.height;
+                                const canvas = document.getElementById('selectionCanvas');
+                                canvas.width = data.width;
+                                canvas.height = data.height;
                             }
-                        };
-                        socket.onerror = function(error) {
-                            console.error("WebSocket error:", error);
-                        };
+                        }
+                    };
+                    ws.onclose = function() {
+                        setTimeout(connectWebSocket, 1000);
+                    };
+                }
+
+                function toggleSelection() {
+                    isSelecting = !isSelecting;
+                    document.getElementById('toggleButton').innerText = isSelecting ? 'Finish Selection' : 'Select Stop Zone';
+                    if (!isSelecting && points.length === 4) {
+                        sendPointsToServer(points);
+                    }
+                }
+
+                function initCanvas() {
+                    const canvas = document.getElementById('selectionCanvas');
+                    const video = document.getElementById('videoFrame');
+                    canvas.width = video.width;
+                    canvas.height = video.height;
+
+                    canvas.onclick = function(e) {
+                        if (!isSelecting) return;
+                        const rect = canvas.getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const y = e.clientY - rect.top;
+                        points.push({x, y});
+                        drawPoints();
+                        if (points.length === 4) {
+                            toggleSelection();
+                        }
+                    }
+                }
+
+                function drawPoints() {
+                    const canvas = document.getElementById('selectionCanvas');
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    points.forEach((point, index) => {
+                        ctx.beginPath();
+                        ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+                        ctx.fillStyle = 'red';
+                        ctx.fill();
+                        ctx.fillStyle = 'white';
+                        ctx.fillText(index + 1, point.x + 10, point.y + 10);
                     });
-                """),
+                }
+
+                function sendPointsToServer(points) {
+                    fetch('/api/update-stop-zone', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({points: points}),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Success:', data);
+                        alert('Stop zone updated successfully!');
+                    })
+                    .catch((error) => {
+                        console.error('Error:', error);
+                        alert('Failed to update stop zone.');
+                    });
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    connectWebSocket();
+                    initCanvas();
+                });
+            """),
         ),
         Body(
             Header(
@@ -160,14 +226,43 @@ def home():
             Main(
                 Div(
                     Img(id="videoFrame", style="max-width: 100%; height: auto; border: 1px solid black;"),
+                    Canvas(id="selectionCanvas", style="position: absolute; top: 0; left: 0; pointer-events: none;"),
+                    Button(
+                        "Select Stop Zone",
+                        id="toggleButton",
+                        onclick="toggleSelection()",
+                        style="margin-top: 10px;",
+                    ),
                     Div(id="status"),
-                    style="margin: 20px 0;",
+                    style="margin: 20px 0; position: relative;",
                 ),
             ),
             Footer(P("By David Rose"), style="background-color: #f0f0f0; padding: 10px; text-align: center;"),
             style="font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 20px;",
         ),
     )
+
+
+@app.post("/api/update-stop-zone")  # type: ignore
+async def update_stop_zone(request):
+    data = await request.json()
+    points = data["points"]
+    # Convert to the format expected by your backend
+    stop_line = ((points[0]["x"], points[0]["y"]), (points[1]["x"], points[1]["y"]))
+    # You might want to calculate these based on the points or allow user input
+    stop_box_tolerance = 10
+    min_stop_duration = 2.0
+
+    new_config = {
+        "stop_line": stop_line,
+        "stop_box_tolerance": stop_box_tolerance,
+        "min_stop_duration": min_stop_duration,
+    }
+
+    # Update the configuration in your StreamProcessor
+    app.state.stream_processor.reload_stop_zone_config(new_config)
+
+    return {"status": "success"}
 
 
 @app.get("/statistics")  # type: ignore
