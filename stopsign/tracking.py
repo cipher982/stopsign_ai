@@ -457,8 +457,11 @@ def save_vehicle_image(
 
     # Extract bounding box coordinates
     x, y, w, h = bbox
-    x1, y1 = int(x - w / 2), int(y - h / 2)
-    x2, y2 = int(x + w / 2), int(y + h / 2)
+    padding_factor = 0.1
+    padding_x = int(w * padding_factor)
+    padding_y = int(h * padding_factor)
+    x1, y1 = int(x - w / 2 - padding_x), int(y - h / 2 - padding_y)
+    x2, y2 = int(x + w / 2 + padding_x), int(y + h / 2 + padding_y)
 
     # Ensure coordinates are within frame boundaries
     x1, y1 = max(0, x1), max(0, y1)
