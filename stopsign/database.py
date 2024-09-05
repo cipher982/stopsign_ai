@@ -169,6 +169,19 @@ class Database:
             cursor.execute("SELECT * FROM daily_statistics WHERE date = ?", (date,))
             return cursor.fetchone()
 
+    def get_recent_vehicle_passes(self, limit=10):
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+            SELECT id, timestamp, vehicle_id, stop_score, stop_duration, min_speed, image_path
+            FROM vehicle_passes
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+                (limit,),
+            )
+            return cursor.fetchall()
+
     def close(self):
         if self.conn:
             self.conn.close()

@@ -205,6 +205,32 @@ def home():
                         alert('Failed to update stop zone.');
                     });
                 }
+                   
+                function fetchRecentPasses() {
+                    fetch('/api/recent-vehicle-passes')
+                        .then(response => response.json())
+                        .then(data => {
+                            const passesDiv = document.getElementById('recentPasses');
+                            passesDiv.innerHTML = '';
+                            data.forEach(pass => {
+                                const passDiv = document.createElement('div');
+                                passDiv.innerHTML = `
+                                    <img src="/static/${pass.image_path}" alt="Vehicle ${pass.vehicle_id}" style="width: 100px; height: auto;">
+                                    <p>Vehicle ID: ${pass.vehicle_id}</p>
+                                    <p>Stop Score: ${pass.stop_score}</p>
+                                    <p>Stop Duration: ${pass.stop_duration.toFixed(2)}s</p>
+                                    <p>Min Speed: ${pass.min_speed.toFixed(2)} px/s</p>
+                                    <hr>
+                                `;
+                                passesDiv.appendChild(passDiv);
+                            });
+                        })
+                        .catch(error => console.error('Error fetching recent passes:', error));
+                }
+
+                // Call fetchRecentPasses initially and then every 30 seconds
+                fetchRecentPasses();
+                setInterval(fetchRecentPasses, 30000);
 
                 document.addEventListener('DOMContentLoaded', function() {
                     connectWebSocket();
@@ -236,6 +262,11 @@ def home():
                     Div(id="status"),
                     style="margin: 20px 0; position: relative;",
                 ),
+                Div(
+                    H1("Recent Vehicle Passes"),
+                    Div(id="recentPasses"),
+                    style="margin-top: 20px;",
+                ),
             ),
             Footer(P("By David Rose"), style="background-color: #f0f0f0; padding: 10px; text-align: center;"),
             style="font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 20px;",
@@ -263,6 +294,23 @@ async def update_stop_zone(request):
     app.state.stream_processor.reload_stop_zone_config(new_config)
 
     return {"status": "success"}
+
+
+@app.get("/api/recent-vehicle-passes")  # type: ignore
+async def get_recent_vehicle_passes():
+    recent_passes = app.state.db.get_recent_vehicle_passes()
+    return [
+        {
+            "id": pass_data[0],
+            "timestamp": pass_data[1],
+            "vehicle_id": pass_data[2],
+            "stop_score": pass_data[3],
+            "stop_duration": pass_data[4],
+            "min_speed": pass_data[5],
+            "image_path": pass_data[6],
+        }
+        for pass_data in recent_passes
+    ]
 
 
 @app.get("/statistics")  # type: ignore
@@ -333,6 +381,8 @@ def about():
 
 def main(config: Config):
     try:
+        # app.state.db = db
+        # app.state.stream_processor = StreamProcessor(config)
         uvicorn.run("stopsign.web_server:app", host="0.0.0.0", port=8000, reload=True)
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")

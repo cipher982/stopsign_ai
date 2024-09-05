@@ -21,8 +21,6 @@ Line = Tuple[Point, Point]
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
-
 
 @dataclass
 class CarState:
@@ -250,7 +248,7 @@ class Car:
 
 
 class CarTracker:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, db: Database):
         self.cars: Dict[int, Car] = {}
         self.config = config
         self.db = db
@@ -295,7 +293,7 @@ class CarTracker:
 
 
 class StopDetector:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, db: Database):
         self.config = config
         self.stop_zone = self._create_stop_zone()
         self.db = db
