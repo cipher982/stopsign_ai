@@ -24,6 +24,7 @@ from redis import Redis
 from ultralytics import YOLO
 
 from stopsign.config import Config
+from stopsign.database import Database
 from stopsign.tracking import Car
 from stopsign.tracking import CarTracker
 from stopsign.tracking import StopDetector
@@ -39,8 +40,9 @@ PROMETHEUS_PORT = int(os.environ["PROMETHEUS_PORT"])
 
 
 class StreamProcessor:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, db: Database):
         self.config = config
+        self.db = db
         self.redis_client: Redis = redis.Redis(
             host=os.getenv("REDIS_HOST", "localhost"),
             port=int(os.getenv("REDIS_PORT", 6379)),
@@ -48,8 +50,8 @@ class StreamProcessor:
         )
         self.initialize_metrics()
         self.model = self.initialize_model()
-        self.car_tracker = CarTracker(config)
-        self.stop_detector = StopDetector(config)
+        self.car_tracker = CarTracker(config, self.db)
+        self.stop_detector = StopDetector(config, db)
         self.frame_count = 0
         self.fps_frame_count = 0
         self.frame_buffer_size = self.config.frame_buffer_size
@@ -402,5 +404,6 @@ class StreamProcessor:
 
 if __name__ == "__main__":
     config = Config("./config.yaml")
-    processor = StreamProcessor(config)
+    db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
+    processor = StreamProcessor(config, db)
     processor.run()
