@@ -9,6 +9,7 @@ import time
 import redis
 import uvicorn
 from fasthtml.common import H1
+from fasthtml.common import H2
 from fasthtml.common import A
 from fasthtml.common import Body
 from fasthtml.common import Button
@@ -21,14 +22,17 @@ from fasthtml.common import Header
 from fasthtml.common import Html
 from fasthtml.common import Iframe
 from fasthtml.common import Img
+from fasthtml.common import Li
 from fasthtml.common import Main
 from fasthtml.common import Nav
 from fasthtml.common import P
 from fasthtml.common import Script
 from fasthtml.common import StaticFiles
 from fasthtml.common import Title
+from fasthtml.common import Ul
 
 from stopsign.config import Config
+from stopsign.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -205,27 +209,23 @@ def home():
                         alert('Failed to update stop zone.');
                     });
                 }
-                   
+                                
+
                 function fetchRecentPasses() {
                     fetch('/api/recent-vehicle-passes')
-                        .then(response => response.json())
-                        .then(data => {
-                            const passesDiv = document.getElementById('recentPasses');
-                            passesDiv.innerHTML = '';
-                            data.forEach(pass => {
-                                const passDiv = document.createElement('div');
-                                passDiv.innerHTML = `
-                                    <img src="/static/${pass.image_path}" alt="Vehicle ${pass.vehicle_id}" style="width: 100px; height: auto;">
-                                    <p>Vehicle ID: ${pass.vehicle_id}</p>
-                                    <p>Stop Score: ${pass.stop_score}</p>
-                                    <p>Stop Duration: ${pass.stop_duration.toFixed(2)}s</p>
-                                    <p>Min Speed: ${pass.min_speed.toFixed(2)} px/s</p>
-                                    <hr>
-                                `;
-                                passesDiv.appendChild(passDiv);
-                            });
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error(`HTTP error! status: ${response.status}`);
+                            }
+                            return response.text();  // Get the response as text
                         })
-                        .catch(error => console.error('Error fetching recent passes:', error));
+                        .then(html => {
+                            document.getElementById('recentPasses').innerHTML = html;  // Insert the HTML directly
+                        })
+                        .catch(error => {
+                            console.error('Error fetching recent passes:', error);
+                            document.getElementById('recentPasses').innerHTML = `<p>Error fetching data: ${error.message}</p>`;
+                        });
                 }
 
                 // Call fetchRecentPasses initially and then every 30 seconds
@@ -298,19 +298,30 @@ async def update_stop_zone(request):
 
 @app.get("/api/recent-vehicle-passes")  # type: ignore
 async def get_recent_vehicle_passes():
-    recent_passes = app.state.db.get_recent_vehicle_passes()
-    return [
-        {
-            "id": pass_data[0],
-            "timestamp": pass_data[1],
-            "vehicle_id": pass_data[2],
-            "stop_score": pass_data[3],
-            "stop_duration": pass_data[4],
-            "min_speed": pass_data[5],
-            "image_path": pass_data[6],
-        }
-        for pass_data in recent_passes
-    ]
+    try:
+        if not hasattr(app.state, "db"):
+            app.state.db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
+        recent_passes = app.state.db.get_recent_vehicle_passes()
+
+        # Create an HTML list of recent passes
+        passes_list = Ul(
+            *[
+                Li(
+                    P(f"Timestamp: {pass_data[1]}"),
+                    P(f"Vehicle ID: {pass_data[2]}"),
+                    P(f"Stop Score: {pass_data[3]}"),
+                    P(f"Stop Duration: {pass_data[4]} seconds"),
+                    P(f"Min Speed: {pass_data[5]} km/h"),
+                    Img(src=pass_data[6], alt="Vehicle Image", style="max-width: 200px;"),
+                )
+                for pass_data in recent_passes
+            ]
+        )
+
+        return Div(H2("Recent Vehicle Passes"), passes_list, id="recentPasses")
+    except Exception as e:
+        logger.error(f"Error in get_recent_vehicle_passes: {str(e)}")
+        return Div(P(f"Error: {str(e)}"), id="recentPasses")
 
 
 @app.get("/statistics")  # type: ignore
@@ -381,7 +392,8 @@ def about():
 
 def main(config: Config):
     try:
-        # app.state.db = db
+        db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
+        app.state.db = db
         # app.state.stream_processor = StreamProcessor(config)
         uvicorn.run("stopsign.web_server:app", host="0.0.0.0", port=8000, reload=True)
     except Exception as e:
