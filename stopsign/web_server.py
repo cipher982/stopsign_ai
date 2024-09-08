@@ -115,6 +115,7 @@ async def ws_handler(websocket):
 # async def get_summary():
 #     return FileResponse("/static/summary.txt")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/app/data", StaticFiles(directory="data"), name="data")
 
 
 @app.get("/")  # type: ignore
