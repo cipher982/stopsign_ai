@@ -23,11 +23,13 @@ from fasthtml.common import Html
 from fasthtml.common import Iframe
 from fasthtml.common import Img
 from fasthtml.common import Li
+from fasthtml.common import Link
 from fasthtml.common import Main
 from fasthtml.common import Nav
 from fasthtml.common import P
 from fasthtml.common import Script
 from fasthtml.common import StaticFiles
+from fasthtml.common import Style
 from fasthtml.common import Title
 from fasthtml.common import Ul
 
@@ -37,7 +39,89 @@ from stopsign.database import Database
 logger = logging.getLogger(__name__)
 
 # Initialize FastHTML app
-app = FastHTML(ws_hdr=True)
+app = FastHTML(
+    ws_hdr=True,
+    pico=False,  # We'll use our own styles instead of Pico CSS
+    hdrs=(
+        Link(
+            rel="stylesheet",
+            href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&family=Roboto+Mono&display=swap",
+        ),
+        Style("""
+            :root {
+                --bg-color: #0a0a0a;
+                --text-color: #e0e0e0;
+                --accent-color: #00ff9d;
+                --secondary-color: #ff00ff;
+                --card-bg: #1a1a1a;
+            }
+            body {
+                font-family: 'Roboto', sans-serif;
+                background-color: var(--bg-color);
+                color: var(--text-color);
+                line-height: 1.6;
+            }
+            header {
+                background-color: var(--bg-color);
+                border-bottom: 1px solid var(--accent-color);
+            }
+            h1, h2, h3 {
+                color: var(--accent-color);
+            }
+            a {
+                color: var(--secondary-color);
+                text-decoration: none;
+                transition: color 0.3s ease;
+            }
+            a:hover {
+                color: var(--accent-color);
+            }
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 0 20px;
+            }
+            .card {
+                background-color: var(--card-bg);
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+                box-shadow: 0 4px 6px rgba(0, 255, 157, 0.1);
+                transition: transform 0.3s ease;
+            }
+            .card:hover {
+                transform: translateY(-5px);
+            }
+            button {
+                background-color: var(--accent-color);
+                color: var(--bg-color);
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                cursor: pointer;
+                transition: background-color 0.3s ease;
+            }
+            button:hover {
+                background-color: var(--secondary-color);
+            }
+            code {
+                font-family: 'Roboto Mono', monospace;
+                background-color: #2a2a2a;
+                padding: 2px 4px;
+                border-radius: 4px;
+            }
+            nav a {
+                color: var(--accent-color);
+                text-decoration: none;
+                transition: color 0.3s ease;
+                margin-left: 15px;
+            }
+            nav a:hover {
+                color: var(--secondary-color);
+            }
+        """),
+    ),
+)
 
 # Initialize Redis client
 redis_client = redis.Redis(
@@ -111,9 +195,6 @@ async def ws_handler(websocket):
     logger.info("WebSocket handler started")
 
 
-# @app.get("/static/summary.txt") # type: ignore
-# async def get_summary():
-#     return FileResponse("/static/summary.txt")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/app/data", StaticFiles(directory="data"), name="data")
 
@@ -241,18 +322,21 @@ def home():
         ),
         Body(
             Header(
-                H1("Stop Sign Nanny"),
+                H1("Stop Sign Nanny", style="text-align: center; flex-grow: 1;"),
                 Nav(
                     A("Home", href="/"),
                     A("Statistics", href="/statistics"),
                     A("About", href="/about"),
                     style="margin-left: 20px;",
                 ),
-                style="background-color: #f0f0f0; padding: 20px; display: flex; justify-content: space-between; align-items: center;",
+                style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
             ),
             Main(
                 Div(
-                    Img(id="videoFrame", style="max-width: 100%; height: auto; border: 1px solid black;"),
+                    Img(
+                        id="videoFrame",
+                        style="max-width: 100%; height: auto; border: 1px solid var(--accent-color); border-radius: 8px;",
+                    ),
                     Canvas(id="selectionCanvas", style="position: absolute; top: 0; left: 0; pointer-events: none;"),
                     Button(
                         "Select Stop Zone",
@@ -264,13 +348,15 @@ def home():
                     style="margin: 20px 0; position: relative;",
                 ),
                 Div(
-                    H1("Recent Vehicle Passes"),
                     Div(id="recentPasses"),
                     style="margin-top: 20px;",
                 ),
+                cls="container",
             ),
-            Footer(P("By David Rose"), style="background-color: #f0f0f0; padding: 10px; text-align: center;"),
-            style="font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 20px;",
+            Footer(
+                P("By David Rose"),
+                style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
+            ),
         ),
     )
 
@@ -304,22 +390,37 @@ async def get_recent_vehicle_passes():
             app.state.db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
         recent_passes = app.state.db.get_recent_vehicle_passes()
 
-        # Create an HTML list of recent passes
+        # Create a styled list of recent passes
         passes_list = Ul(
             *[
                 Li(
-                    P(f"Timestamp: {pass_data[1]}"),
-                    P(f"Vehicle ID: {pass_data[2]}"),
-                    P(f"Stop Score: {pass_data[3]}"),
-                    P(f"Stop Duration: {pass_data[4]} seconds"),
-                    P(f"Min Speed: {pass_data[5]} km/h"),
-                    Img(src=pass_data[6], alt="Vehicle Image", style="max-width: 200px;"),
+                    Div(
+                        Img(src=pass_data[6], alt="Vehicle Image", style="max-width: 200px; border-radius: 5px;"),
+                        Div(
+                            P(f"Timestamp: {pass_data[1]}", style="font-weight: bold;"),
+                            P(f"Vehicle ID: {pass_data[2]}"),
+                            P(f"Stop Score: {pass_data[3]}"),
+                            P(f"Stop Duration: {pass_data[4]} seconds"),
+                            P(f"Min Speed: {pass_data[5]:.2f} km/h"),
+                            style="margin-left: 20px;",
+                        ),
+                        style="display: flex; align-items: center; background-color: var(--card-bg); padding: 15px; border-radius: 10px; margin-bottom: 15px;",
+                    )
                 )
                 for pass_data in recent_passes
-            ]
+            ],
+            style="list-style-type: none; padding: 0;",
         )
 
-        return Div(H2("Recent Vehicle Passes"), passes_list, id="recentPasses")
+        return Div(
+            H2(
+                "Recent Vehicle Passes",
+                style="color: var(--accent-color); border-bottom: 2px solid var(--accent-color); padding-bottom: 10px;",
+            ),
+            passes_list,
+            id="recentPasses",
+            style="background-color: var(--card-bg); padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,255,157,0.1);",
+        )
     except Exception as e:
         logger.error(f"Error in get_recent_vehicle_passes: {str(e)}")
         return Div(P(f"Error: {str(e)}"), id="recentPasses")
@@ -340,7 +441,7 @@ def statistics():
                     A("About", href="/about"),
                     style="margin-left: 20px;",
                 ),
-                style="background-color: #f0f0f0; padding: 20px; display: flex; justify-content: space-between; align-items: center;",
+                style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
             ),
             Main(
                 Iframe(
@@ -350,8 +451,11 @@ def statistics():
                     frameborder="0",
                 )
             ),
-            Footer(P("By David Rose"), style="background-color: #f0f0f0; padding: 10px; text-align: center;"),
-            style="font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 20px;",
+            Footer(
+                P("By David Rose"),
+                style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
+            ),
+            cls="container",
         ),
     )
 
@@ -369,12 +473,12 @@ def about():
                     A("About", href="/about"),
                     style="margin-left: 20px;",
                 ),
-                style="background-color: #f0f0f0; padding: 20px; display: flex; justify-content: space-between; align-items: center;",
+                style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
             ),
             Main(
                 Div(
                     id="summary",
-                    style="margin: 20px 0; padding: 20px; background-color: #f9f9f9; border-radius: 5px; white-space: pre-wrap;",
+                    style="margin: 20px 0; padding: 20px; background-color: var(--card-bg); border-radius: 5px; white-space: pre-wrap;",
                 ),
                 Script("""
                         fetch('/static/summary.txt')
@@ -384,9 +488,12 @@ def about():
                             })
                             .catch(error => console.error('Error fetching summary:', error));
                     """),
+                cls="container",
             ),
-            Footer(P("By David Rose"), style="background-color: #f0f0f0; padding: 10px; text-align: center;"),
-            style="font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 20px;",
+            Footer(
+                P("By David Rose"),
+                style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
+            ),
         ),
     )
 
