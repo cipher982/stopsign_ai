@@ -92,6 +92,11 @@ app = FastHTML(
             .card:hover {
                 transform: translateY(-5px);
             }
+            .container {
+                max-width: 1400px;
+                margin: 0 auto;
+                padding: 0 20px;
+            }
             button {
                 background-color: var(--accent-color);
                 color: var(--bg-color);
@@ -118,6 +123,29 @@ app = FastHTML(
             }
             nav a:hover {
                 color: var(--secondary-color);
+            }
+            ::-webkit-scrollbar {
+                width: 10px;
+            }
+
+            ::-webkit-scrollbar-track {
+                background: var(--bg-color);
+                border-radius: 5px;
+            }
+
+            ::-webkit-scrollbar-thumb {
+                background: var(--accent-color);
+                border-radius: 5px;
+            }
+
+            ::-webkit-scrollbar-thumb:hover {
+                background: var(--secondary-color);
+            }
+
+            /* For Firefox */
+            * {
+                scrollbar-width: thin;
+                scrollbar-color: var(--accent-color) var(--bg-color);
             }
         """),
     ),
@@ -333,23 +361,34 @@ def home():
             ),
             Main(
                 Div(
-                    Img(
-                        id="videoFrame",
-                        style="max-width: 100%; height: auto; border: 1px solid var(--accent-color); border-radius: 8px;",
+                    # Left column: Video stream
+                    Div(
+                        Img(
+                            id="videoFrame",
+                            style="max-width: 100%; height: auto; border: 1px solid var(--accent-color); border-radius: 8px;",
+                        ),
+                        Canvas(
+                            id="selectionCanvas", style="position: absolute; top: 0; left: 0; pointer-events: none;"
+                        ),
+                        Button(
+                            "Select Stop Zone",
+                            id="toggleButton",
+                            onclick="toggleSelection()",
+                            style="margin-top: 10px;",
+                        ),
+                        Div(id="status"),
+                        style="flex: 1; margin-right: 20px; position: relative;",
                     ),
-                    Canvas(id="selectionCanvas", style="position: absolute; top: 0; left: 0; pointer-events: none;"),
-                    Button(
-                        "Select Stop Zone",
-                        id="toggleButton",
-                        onclick="toggleSelection()",
-                        style="margin-top: 10px;",
+                    # Right column: Recent passes
+                    Div(
+                        H2("Recent Vehicle Passes"),
+                        Div(
+                            Div(id="recentPasses"),
+                            style="overflow-y: auto; max-height: 70vh;",
+                        ),
+                        style="flex: 1; display: flex; flex-direction: column;",
                     ),
-                    Div(id="status"),
-                    style="margin: 20px 0; position: relative;",
-                ),
-                Div(
-                    Div(id="recentPasses"),
-                    style="margin-top: 20px;",
+                    style="display: flex; margin: 20px 0;",
                 ),
                 cls="container",
             ),
@@ -413,10 +452,6 @@ async def get_recent_vehicle_passes():
         )
 
         return Div(
-            H2(
-                "Recent Vehicle Passes",
-                style="color: var(--accent-color); border-bottom: 2px solid var(--accent-color); padding-bottom: 10px;",
-            ),
             passes_list,
             id="recentPasses",
             style="background-color: var(--card-bg); padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,255,157,0.1);",
