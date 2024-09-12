@@ -403,6 +403,7 @@ def home():
                     A("Home", href="/"),
                     A("Statistics", href="/statistics"),
                     A("About", href="/about"),
+                    A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
                     style="margin-left: 20px;",
                 ),
                 style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
