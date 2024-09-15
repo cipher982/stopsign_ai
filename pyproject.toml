@@ -1,26 +1,22 @@
-[tool.poetry]
+[project]
 name = "stopsign-ai"
 version = "0.1.0"
 description = ""
 authors = ["David Rose <david@drose.io>"]
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.12"
-opencv-python = "^4.9.0.80"
-python-dotenv = "^1.0.1"
-lapx = "^0.5.9"
-shapely = "^2.0.4"
-ultralytics = "^8.2.28"
-filterpy = "^1.4.5"
-ffmpeg-python = "^0.2.0"
-redis = "^5.0.8"
-prometheus-client = "^0.20.0"
-python-fasthtml = "^0.5.1"
-
-[tool.poetry.group.dev.dependencies]
-ruff = "^0.3.5"
-pre-commit = "^3.7.0"
+requires-python = "~=3.12.0"
+dependencies = [
+    "ffmpeg-python>=0.2.0",
+    "filterpy>=1.4.5",
+    "lapx>=0.5.10.post1",
+    "opencv-python>=4.10.0.84",
+    "prometheus-client>=0.20.0",
+    "python-dotenv>=1.0.1",
+    "python-fasthtml>=0.6.2",
+    "redis>=5.0.8",
+    "shapely>=2.0.6",
+    "ultralytics>=8.2.96",
+]
 
 [tool.ruff]
 line-length = 120
@@ -37,6 +33,7 @@ docstring-quotes = "double"
 inline-quotes = "double"
 multiline-quotes = "double"
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
