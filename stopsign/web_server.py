@@ -347,6 +347,54 @@ def home():
                     initCanvas();
                 });
             """),
+            Style("""
+                // ... (keep existing styles) ...
+
+                .content-wrapper {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 20px;
+                }
+
+                .video-container {
+                    position: relative;
+                    width: 100%;
+                }
+
+                #videoFrame {
+                    width: 100%;
+                    height: auto;
+                    border: 1px solid var(--accent-color);
+                    border-radius: 8px;
+                }
+
+                #selectionCanvas {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    pointer-events: none;
+                }
+
+                .recent-passes {
+                    width: 100%;
+                }
+
+                @media (min-width: 768px) {
+                    .content-wrapper {
+                        flex-direction: row;
+                    }
+
+                    .video-container {
+                        flex: 1;
+                    }
+
+                    .recent-passes {
+                        flex: 1;
+                    }
+                }
+            """),
         ),
         Body(
             Header(
@@ -361,14 +409,11 @@ def home():
             ),
             Main(
                 Div(
-                    # Left column: Video stream
                     Div(
-                        Img(
-                            id="videoFrame",
-                            style="max-width: 100%; height: auto; border: 1px solid var(--accent-color); border-radius: 8px;",
-                        ),
-                        Canvas(
-                            id="selectionCanvas", style="position: absolute; top: 0; left: 0; pointer-events: none;"
+                        Div(
+                            Img(id="videoFrame"),
+                            Canvas(id="selectionCanvas"),
+                            cls="video-container",
                         ),
                         Button(
                             "Select Stop Zone",
@@ -377,18 +422,17 @@ def home():
                             style="margin-top: 10px;",
                         ),
                         Div(id="status"),
-                        style="flex: 1; margin-right: 20px; position: relative;",
+                        cls="video-container",
                     ),
-                    # Right column: Recent passes
                     Div(
                         H2("Recent Vehicle Passes"),
                         Div(
                             Div(id="recentPasses"),
                             style="overflow-y: auto; max-height: 70vh;",
                         ),
-                        style="flex: 1; display: flex; flex-direction: column;",
+                        cls="recent-passes",
                     ),
-                    style="display: flex; margin: 20px 0;",
+                    cls="content-wrapper",
                 ),
                 cls="container",
             ),
