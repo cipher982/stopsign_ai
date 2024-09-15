@@ -11,7 +11,8 @@ RUN pip install uv
 # Set working directory
 WORKDIR /app
 
-# Copy lock file
+# Copy over dependency files
+COPY pyproject.toml /app/pyproject.toml
 COPY uv.lock /app/uv.lock
 
 # Install dependencies using uv
