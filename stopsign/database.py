@@ -114,7 +114,9 @@ class Database:
         with self.get_cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO vehicle_passes (timestamp, vehicle_id, stop_score, stop_duration, min_speed, image_path)
+                INSERT INTO vehicle_passes (
+                    timestamp, vehicle_id, stop_score, stop_duration, min_speed, image_path
+                )
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (datetime.now(), vehicle_id, stop_score, stop_duration, min_speed, image_path),

@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Dict
@@ -339,7 +340,11 @@ class StopDetector:
                 car.state.scored = True
 
                 # Save vehicle image
-                image_path = save_vehicle_image(frame, car.id, timestamp, car.state.location, car.state.bbox)
+                image_path = save_vehicle_image(
+                    frame=frame,
+                    timestamp=timestamp,
+                    bbox=car.state.bbox,
+                )
 
                 # Save data to database
                 self.db.add_vehicle_pass(
@@ -441,19 +446,17 @@ class StopDetector:
 
 def save_vehicle_image(
     frame: np.ndarray,
-    car_id: int,
     timestamp: float,
-    location: Tuple[float, float],
     bbox: Tuple[float, float, float, float],
 ) -> str:
-    # Create a directory for storing images if it doesn't exist
     image_dir = str(os.getenv("VEHICLE_IMAGE_DIR"))
     os.makedirs(image_dir, exist_ok=True)
 
-    # Generate a unique filename
-    filename = f"{image_dir}/vehicle_{car_id}_{int(timestamp)}.jpg"
+    # Generate a random UUID for the filename
+    file_id = uuid.uuid4().hex
+    filename = f"{image_dir}/vehicle_{file_id}_{int(timestamp)}.jpg"
 
-    # Extract bounding box coordinates
+    # Crop and save the image
     x, y, w, h = bbox
     padding_factor = 0.1
     padding_x = int(w * padding_factor)
@@ -461,14 +464,10 @@ def save_vehicle_image(
     x1, y1 = int(x - w / 2 - padding_x), int(y - h / 2 - padding_y)
     x2, y2 = int(x + w / 2 + padding_x), int(y + h / 2 + padding_y)
 
-    # Ensure coordinates are within frame boundaries
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
 
-    # Crop the image
     cropped_image = frame[y1:y2, x1:x2]
-
-    # Save the cropped image
     cv2.imwrite(filename, cropped_image)
 
     return filename
