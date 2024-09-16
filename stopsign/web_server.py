@@ -39,6 +39,47 @@ from stopsign.database import Database
 
 logger = logging.getLogger(__name__)
 
+
+def get_common_styles():
+    return Style("""
+        :root {
+            --bg-color: #0a0a0a;
+            --text-color: #e0e0e0;
+            --accent-color: #00ff9d;
+            --secondary-color: #ff00ff;
+            --card-bg: #1a1a1a;
+        }
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+        // ... (include other common styles)
+    """)
+
+
+def get_common_header(title):
+    return Header(
+        H1(title, style="text-align: center; flex-grow: 1;"),
+        Nav(
+            A("Home", href="/"),
+            A("Statistics", href="/statistics"),
+            A("About", href="/about"),
+            A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
+            style="margin-left: 20px;",
+        ),
+        style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
+    )
+
+
+def get_common_footer():
+    return Footer(
+        P("By David Rose"),
+        style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
+    )
+
+
 # Initialize FastHTML app
 app = FastHTML(
     ws_hdr=True,
@@ -233,6 +274,7 @@ def home():
     return Html(
         Head(
             Title("Stop Sign Nanny"),
+            get_common_styles(),
             Script(src="https://unpkg.com/htmx.org@1.9.4"),
             Script("""
                 let ws;
@@ -349,26 +391,21 @@ def home():
                 });
             """),
             Style("""
-                // ... (keep existing styles) ...
-
                 .content-wrapper {
                     display: flex;
                     flex-direction: column;
                     gap: 20px;
                 }
-
                 .video-container {
                     position: relative;
                     width: 100%;
                 }
-
                 #videoFrame {
                     width: 100%;
                     height: auto;
                     border: 1px solid var(--accent-color);
                     border-radius: 8px;
                 }
-
                 #selectionCanvas {
                     position: absolute;
                     top: 0;
@@ -377,38 +414,21 @@ def home():
                     height: 100%;
                     pointer-events: none;
                 }
-
                 .recent-passes {
                     width: 100%;
                 }
-
                 @media (min-width: 768px) {
                     .content-wrapper {
                         flex-direction: row;
                     }
-
-                    .video-container {
-                        flex: 1;
-                    }
-
-                    .recent-passes {
+                    .video-container, .recent-passes {
                         flex: 1;
                     }
                 }
             """),
         ),
         Body(
-            Header(
-                H1("Stop Sign Nanny", style="text-align: center; flex-grow: 1;"),
-                Nav(
-                    A("Home", href="/"),
-                    A("Statistics", href="/statistics"),
-                    A("About", href="/about"),
-                    A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
-                    style="margin-left: 20px;",
-                ),
-                style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
-            ),
+            get_common_header("Stop Sign Nanny"),
             Main(
                 Div(
                     Div(
@@ -438,10 +458,7 @@ def home():
                 ),
                 cls="container",
             ),
-            Footer(
-                P("By David Rose"),
-                style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
-            ),
+            get_common_footer(),
         ),
     )
 
@@ -512,31 +529,20 @@ def statistics():
     return Html(
         Head(
             Title("Statistics - Stop Sign Nanny"),
+            get_common_styles(),
         ),
         Body(
-            Header(
-                H1("Statistics"),
-                Nav(
-                    A("Home", href="/"),
-                    A("Statistics", href="/statistics"),
-                    A("About", href="/about"),
-                    style="margin-left: 20px;",
-                ),
-                style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
-            ),
+            get_common_header("Statistics"),
             Main(
                 Iframe(
                     src=GRAFANA_URL,
                     width="100%",
                     height="600",
                     frameborder="0",
-                )
+                ),
+                cls="container",
             ),
-            Footer(
-                P("By David Rose"),
-                style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
-            ),
-            cls="container",
+            get_common_footer(),
         ),
     )
 
