@@ -32,6 +32,7 @@ from fasthtml.common import StaticFiles
 from fasthtml.common import Style
 from fasthtml.common import Title
 from fasthtml.common import Ul
+from uvicorn.config import Config as UvicornConfig
 
 from stopsign.config import Config
 from stopsign.database import Database
@@ -582,8 +583,12 @@ def main(config: Config):
     try:
         db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
         app.state.db = db
-        # app.state.stream_processor = StreamProcessor(config)
-        uvicorn.run("stopsign.web_server:app", host="0.0.0.0", port=8000, reload=True)
+
+        uvicorn_config = UvicornConfig(
+            "stopsign.web_server:app", host="0.0.0.0", port=8000, reload=True, reload_excludes=["/app/data"]
+        )
+        server = uvicorn.Server(uvicorn_config)
+        server.run()
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")
 
