@@ -585,7 +585,11 @@ def main(config: Config):
         app.state.db = db
 
         uvicorn_config = UvicornConfig(
-            "stopsign.web_server:app", host="0.0.0.0", port=8000, reload=True, reload_excludes=["/app/data"]
+            "stopsign.web_server:app",
+            host="0.0.0.0",
+            port=8000,
+            reload=True,
+            reload_excludes=["/app/data"],
         )
         server = uvicorn.Server(uvicorn_config)
         server.run()
