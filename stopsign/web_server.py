@@ -259,7 +259,6 @@ def home():
     return Html(
         Head(
             Title("Stop Sign Nanny"),
-            get_common_styles(),
             Script(src="https://unpkg.com/htmx.org@1.9.4"),
             Script("""
                 let ws;
@@ -514,7 +513,6 @@ def statistics():
     return Html(
         Head(
             Title("Statistics - Stop Sign Nanny"),
-            get_common_styles(),
             Script(src="https://unpkg.com/htmx.org@1.9.4"),
         ),
         Body(
