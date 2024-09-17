@@ -42,54 +42,6 @@ logger = logging.getLogger(__name__)
 
 def get_common_styles():
     return Style("""
-        :root {
-            --bg-color: #0a0a0a;
-            --text-color: #e0e0e0;
-            --accent-color: #00ff9d;
-            --secondary-color: #ff00ff;
-            --card-bg: #1a1a1a;
-        }
-        body {
-            font-family: 'Roboto', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            line-height: 1.6;
-        }
-        // ... (include other common styles)
-    """)
-
-
-def get_common_header(title):
-    return Header(
-        H1(title, style="text-align: center; flex-grow: 1;"),
-        Nav(
-            A("Home", href="/"),
-            A("Statistics", href="/statistics"),
-            A("About", href="/about"),
-            A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
-            style="margin-left: 20px;",
-        ),
-        style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
-    )
-
-
-def get_common_footer():
-    return Footer(
-        P("By David Rose"),
-        style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
-    )
-
-
-# Initialize FastHTML app
-app = FastHTML(
-    ws_hdr=True,
-    pico=False,  # We'll use our own styles instead of Pico CSS
-    hdrs=(
-        Link(
-            rel="stylesheet",
-            href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&family=Roboto+Mono&display=swap",
-        ),
-        Style("""
             :root {
                 --bg-color: #0a0a0a;
                 --text-color: #e0e0e0;
@@ -189,7 +141,40 @@ app = FastHTML(
                 scrollbar-width: thin;
                 scrollbar-color: var(--accent-color) var(--bg-color);
             }
-        """),
+        """)
+
+
+def get_common_header(title):
+    return Header(
+        H1(title, style="text-align: center; flex-grow: 1;"),
+        Nav(
+            A("Home", href="/"),
+            A("Statistics", href="/statistics"),
+            A("About", href="/about"),
+            A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
+            style="margin-left: 20px;",
+        ),
+        style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
+    )
+
+
+def get_common_footer():
+    return Footer(
+        P("By David Rose"),
+        style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
+    )
+
+
+# Initialize FastHTML app
+app = FastHTML(
+    ws_hdr=True,
+    pico=False,  # We'll use our own styles instead of Pico CSS
+    hdrs=(
+        Link(
+            rel="stylesheet",
+            href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&family=Roboto+Mono&display=swap",
+        ),
+        get_common_styles(),
     ),
 )
 
@@ -530,17 +515,20 @@ def statistics():
         Head(
             Title("Statistics - Stop Sign Nanny"),
             get_common_styles(),
+            Script(src="https://unpkg.com/htmx.org@1.9.4"),
         ),
         Body(
             get_common_header("Statistics"),
             Main(
-                Iframe(
-                    src=GRAFANA_URL,
-                    width="100%",
-                    height="600",
-                    frameborder="0",
+                Div(
+                    Iframe(
+                        src=GRAFANA_URL,
+                        width="100%",
+                        height="600",
+                        frameborder="0",
+                    ),
+                    cls="container",
                 ),
-                cls="container",
             ),
             get_common_footer(),
         ),
