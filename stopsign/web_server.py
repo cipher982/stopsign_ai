@@ -175,6 +175,7 @@ app = FastHTML(
             href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&family=Roboto+Mono&display=swap",
         ),
         get_common_styles(),
+        Script(src="https://unpkg.com/htmx.org@1.9.4"),
     ),
 )
 
@@ -259,7 +260,6 @@ def home():
     return Html(
         Head(
             Title("Stop Sign Nanny"),
-            Script(src="https://unpkg.com/htmx.org@1.9.4"),
             Script("""
                 let ws;
                 let isSelecting = false;
@@ -513,7 +513,6 @@ def statistics():
     return Html(
         Head(
             Title("Statistics - Stop Sign Nanny"),
-            Script(src="https://unpkg.com/htmx.org@1.9.4"),
         ),
         Body(
             get_common_header("Statistics"),
@@ -535,38 +534,29 @@ def statistics():
 
 @app.get("/about")  # type: ignore
 def about():
+    try:
+        with open("static/summary.txt", "r") as file:
+            summary_content = file.read()
+    except FileNotFoundError:
+        summary_content = "Summary content not found."
+    except Exception as e:
+        summary_content = f"Error loading summary: {str(e)}"
+
     return Html(
-        Head(Title("About - Stop Sign Nanny")),
+        Head(
+            Title("About - Stop Sign Nanny"),
+        ),
         Body(
-            Header(
-                H1("About"),
-                Nav(
-                    A("Home", href="/"),
-                    A("Statistics", href="/statistics"),
-                    A("About", href="/about"),
-                    style="margin-left: 20px;",
-                ),
-                style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
-            ),
+            get_common_header("About"),
             Main(
                 Div(
-                    id="summary",
-                    style="margin: 20px 0; padding: 20px; background-color: var(--card-bg); border-radius: 5px; white-space: pre-wrap;",
+                    H2("Project Summary"),
+                    P(summary_content),
+                    cls="container",
+                    style="margin: 20px auto; padding: 20px; background-color: var(--card-bg); border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 255, 157, 0.1); white-space: pre-wrap; max-width: 800px;",
                 ),
-                Script("""
-                        fetch('/static/summary.txt')
-                            .then(response => response.text())
-                            .then(data => {
-                                document.getElementById('summary').textContent = data;
-                            })
-                            .catch(error => console.error('Error fetching summary:', error));
-                    """),
-                cls="container",
             ),
-            Footer(
-                P("By David Rose"),
-                style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
-            ),
+            get_common_footer(),
         ),
     )
 
