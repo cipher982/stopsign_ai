@@ -1,54 +1,74 @@
 # stopsign_ai
-Tracking stopsign runners with an IP camera and AI
+Tracking stop sign behavior with an IP camera and AI
 
 ### Objective:
-- Set up an IP camera to monitor the street and stream/record the video feed via RTSP 24/7 to a server.
-- The server will analyze the feed in real-time using an AI model to detect and classify stop sign runners.
-- Images will be saved to storage.
-- The stored images and classifications will be displayed on a website to show all the stop sign runners that have been recently seen. 
-    - optional: classify the cars and group them over time.
+- Monitor a street intersection with an IP camera streaming video feed via RTSP to a server.
+- Analyze the feed in real-time using AI to detect vehicles and evaluate their stop sign behavior.
+- Store processed images and metadata for each vehicle pass.
+- Display recent vehicle passes and statistics on a web interface.
+- Allow user interaction to adjust the stop zone and view analytics.
 
 ### System Components and Flow
+
 **IP Camera:**
 - Function: Capture and stream video feed.
 - Protocol: RTSP (Real-Time Streaming Protocol).
 
 **Backend Server:**
-- Function: Receive and record the RTSP feed.
-- Tools: FFmpef for streaming and recording, FastAPI for modeling and serving.
+- Function: Process the video feed, detect vehicles, and analyze stop behavior.
+- Components:
+  - Stream Processor: Handles video processing, object detection, and vehicle tracking.
+  - Web Server: Serves the web interface and handles API requests.
+- Technologies: Python, OpenCV, YOLO, Redis, SQLite, FastAPI
 
 **AI Model:**
-- Function: Analyze the video feed in real-time to detect and classify the cars.
-- Frameworks: PyTorch for model implementation.
-- Model: YOLOv8-10
-- Libraries: OpenCV for video processing, TensorRT for optimized inference on NVIDIA GPUs in the backend (3090).
+- Function: Detect vehicles in video frames.
+- Model: YOLOv8
+- Libraries: Ultralytics YOLO, OpenCV
 
 **Storage System:**
-- Function: Save images of detected cars and related metadata.
-Options:
-    - Local or cloud, depending on the scale of the project.
+- Function: Store processed frames, vehicle images, and metadata.
+- Technologies: Redis for frame buffering, SQLite for persistent storage
 
 **Frontend:**
-- Function: Display the recently detected and classified cars.
-Frameworks: ??
+- Function: Display live video feed, recent vehicle passes, and statistics.
+- Technologies: FastHTML, WebSocket for real-time updates
 
 ### Workflow
-**Video Capture and Streaming:**
-- The IP camera captures the street's video feed and streams it via RTSP.
 
-**Streaming Server:**
-- The server receives the RTSP stream and records the video continuously.
-- It processes the video feed in real-time using an AI model.
-- The model will detect and classify the cars in the frames and classify whether they stop, roll, or dont slow down at all in the intersection.
+**Video Processing:**
+- The Stream Processor receives video frames from the RTSP stream.
+- Frames are processed using YOLO for vehicle detection.
+- Detected vehicles are tracked across frames to analyze their behavior in the stop zone.
 
-**Storage:**
-- Images and metadata are stored in a designated storage system.
-- Options include local storage or cloud based.
+**Stop Behavior Analysis:**
+- A configurable stop zone is defined in the video frame.
+- Vehicle speed and position are monitored as they approach and pass through the stop zone.
+- Each vehicle pass is scored based on stopping behavior, duration, and position.
 
-**Web Server and Database:**
-- Metadata Storage: Metadata is stored in a database.
-- Web Server: The web server handles API requests and serves the frontend application.
+**Data Storage:**
+- Processed frames are temporarily stored in Redis for efficient retrieval.
+- Vehicle pass data, including scores and cropped images, are stored in SQLite.
 
-**Frontend Web Application:**
-- The frontend application fetches data from the web server.
-- Displays the detected car images and their classifications on the website.
+**Web Interface:**
+- Displays live video feed with overlaid detection and tracking information.
+- Shows a list of recent vehicle passes with images and scores.
+- Provides an interface to adjust the stop zone.
+- Includes a statistics page with embedded Grafana dashboard.
+
+**Monitoring and Analytics:**
+- Prometheus metrics are collected for system performance and vehicle statistics.
+- Grafana dashboard visualizes long-term trends and real-time data.
+
+### Setup and Deployment
+
+The project is containerized using Docker for easy deployment:
+
+- `Dockerfile.processor`: Builds the container for the Stream Processor.
+- `Dockerfile.web`: Builds the container for the Web Server.
+
+Use Docker Compose to orchestrate the full system deployment, including Redis and other necessary services.
+
+### Future Enhancements
+- speed up with TensorRT
+- ???
