@@ -515,6 +515,7 @@ def statistics():
         ),
         Body(
             get_common_header("Statistics"),
+            get_common_styles(),
             Main(
                 Div(
                     Iframe(
@@ -533,20 +534,15 @@ def statistics():
 
 @app.get("/about")  # type: ignore
 def about():
-    try:
-        with open("static/summary.txt", "r") as file:
-            summary_content = file.read()
-    except FileNotFoundError:
-        summary_content = "Summary content not found."
-    except Exception as e:
-        summary_content = f"Error loading summary: {str(e)}"
-
+    with open("static/summary.txt", "r") as file:
+        summary_content = file.read()
     return Html(
         Head(
             Title("About - Stop Sign Nanny"),
         ),
         Body(
             get_common_header("About"),
+            get_common_styles(),
             Main(
                 Div(
                     H2("Project Summary"),
