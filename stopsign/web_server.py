@@ -262,7 +262,7 @@ def home():
             Script("""
                 let ws;
                 let isSelecting = false;
-                let points = [];
+                let stopLinePoints = [];
 
                 function connectWebSocket() {
                     ws = new WebSocket('ws://' + location.host + '/ws');
@@ -288,15 +288,17 @@ def home():
 
                 function toggleSelection() {
                     isSelecting = !isSelecting;
-                    document.getElementById('toggleButton').innerText = isSelecting ? 'Finish Selection' : 'Select Stop Zone';
-                    if (!isSelecting && points.length === 4) {
-                        sendPointsToServer(points);
+                    document.getElementById("toggleButton").innerText = isSelecting ? "Finish Selection" : "Select Stop Zone";
+                    if (!isSelecting && stopLinePoints.length === 2) {
+                        sendPointsToServer(stopLinePoints);
+                    } else if (!isSelecting) {
+                        alert("Please select two points to define the stop line.");
                     }
                 }
 
                 function initCanvas() {
-                    const canvas = document.getElementById('selectionCanvas');
-                    const video = document.getElementById('videoFrame');
+                    const canvas = document.getElementById("selectionCanvas");
+                    const video = document.getElementById("videoFrame");
                     canvas.width = video.width;
                     canvas.height = video.height;
 
@@ -305,19 +307,22 @@ def home():
                         const rect = canvas.getBoundingClientRect();
                         const x = e.clientX - rect.left;
                         const y = e.clientY - rect.top;
-                        points.push({x, y});
-                        drawPoints();
-                        if (points.length === 4) {
+                        if (stopLinePoints.length < 2) {
+                            stopLinePoints.push({x, y});
+                            drawStopLine();
+                        }
+                        if (stopLinePoints.length === 2) {
                             toggleSelection();
                         }
                     }
                 }
 
-                function drawPoints() {
+                function drawStopLine() {
                     const canvas = document.getElementById('selectionCanvas');
                     const ctx = canvas.getContext('2d');
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    points.forEach((point, index) => {
+                    
+                    stopLinePoints.forEach((point, index) => {
                         ctx.beginPath();
                         ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
                         ctx.fillStyle = 'red';
@@ -325,6 +330,15 @@ def home():
                         ctx.fillStyle = 'white';
                         ctx.fillText(index + 1, point.x + 10, point.y + 10);
                     });
+
+                    if (stopLinePoints.length === 2) {
+                        ctx.beginPath();
+                        ctx.moveTo(stopLinePoints[0].x, stopLinePoints[0].y);
+                        ctx.lineTo(stopLinePoints[1].x, stopLinePoints[1].y);
+                        ctx.strokeStyle = 'red';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
                 }
 
                 function sendPointsToServer(points) {
@@ -371,6 +385,7 @@ def home():
                 document.addEventListener('DOMContentLoaded', function() {
                     connectWebSocket();
                     initCanvas();
+                    document.getElementById("toggleButton").addEventListener("click", toggleSelection);
                 });
             """),
             Style("""
@@ -450,9 +465,7 @@ def home():
 async def update_stop_zone(request):
     data = await request.json()
     points = data["points"]
-    # Convert to the format expected by your backend
     stop_line = ((points[0]["x"], points[0]["y"]), (points[1]["x"], points[1]["y"]))
-    # You might want to calculate these based on the points or allow user input
     stop_box_tolerance = 10
     min_stop_duration = 2.0
 
