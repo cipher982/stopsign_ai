@@ -287,13 +287,25 @@ def home():
                 }
 
                 function toggleSelection() {
+                    console.log("toggleSelection called");
                     isSelecting = !isSelecting;
-                    document.getElementById("toggleButton").innerText = isSelecting ? "Finish Selection" : "Select Stop Zone";
-                    if (!isSelecting && stopLinePoints.length === 2) {
-                        sendPointsToServer(stopLinePoints);
-                    } else if (!isSelecting) {
-                        alert("Please select two points to define the stop line.");
+                    const toggleButton = document.getElementById("toggleButton");
+                    const statusDiv = document.getElementById("status");
+                    
+                    if (isSelecting) {
+                        console.log("Selection mode activated");
+                        toggleButton.innerText = "Cancel Selection";
+                        statusDiv.innerText = "Click two points on the image to define the stop line.";
+                        stopLinePoints = []; // Reset points when starting a new selection
+                    } else {
+                        console.log("Selection mode deactivated");
+                        toggleButton.innerText = "Select Stop Zone";
+                        statusDiv.innerText = "";
+                        if (stopLinePoints.length === 2) {
+                            sendPointsToServer(stopLinePoints);
+                        }
                     }
+                    drawStopLine(); // Clear or redraw the canvas
                 }
 
                 function initCanvas() {
@@ -310,9 +322,9 @@ def home():
                         if (stopLinePoints.length < 2) {
                             stopLinePoints.push({x, y});
                             drawStopLine();
-                        }
-                        if (stopLinePoints.length === 2) {
-                            toggleSelection();
+                            if (stopLinePoints.length === 2) {
+                                toggleSelection(); // Automatically finish selection when two points are placed
+                            }
                         }
                     }
                 }
@@ -352,14 +364,13 @@ def home():
                     .then(response => response.json())
                     .then(data => {
                         console.log('Success:', data);
-                        alert('Stop zone updated successfully!');
+                        document.getElementById("status").innerText = 'Stop zone updated successfully!';
                     })
                     .catch((error) => {
                         console.error('Error:', error);
-                        alert('Failed to update stop zone.');
+                        document.getElementById("status").innerText = 'Failed to update stop zone.';
                     });
-                }
-                                
+                }             
 
                 function fetchRecentPasses() {
                     fetch('/api/recent-vehicle-passes')
@@ -383,9 +394,16 @@ def home():
                 setInterval(fetchRecentPasses, 30000);
 
                 document.addEventListener('DOMContentLoaded', function() {
+                    console.log("DOMContentLoaded event fired");
                     connectWebSocket();
                     initCanvas();
-                    document.getElementById("toggleButton").addEventListener("click", toggleSelection);
+                    const toggleButton = document.getElementById("toggleButton");
+                    if (toggleButton) {
+                        console.log("Toggle button found");
+                        toggleButton.addEventListener("click", toggleSelection);
+                    } else {
+                        console.error("Toggle button not found");
+                    }
                 });
             """),
             Style("""
