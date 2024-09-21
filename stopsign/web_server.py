@@ -534,7 +534,7 @@ def statistics():
 
 @app.get("/about")  # type: ignore
 def about():
-    with open("static/summary.txt", "r") as file:
+    with open("static/summary.md", "r") as file:
         summary_content = file.read()
     return Html(
         Head(
