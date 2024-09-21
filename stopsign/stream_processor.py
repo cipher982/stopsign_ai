@@ -290,9 +290,6 @@ class StreamProcessor:
             self.increment_exception_counter(type(e).__name__, "detect_objects")
             raise
 
-    def reload_stop_zone_config(self, new_config):
-        self.stop_detector.update_stop_zone(new_config)
-
     def visualize(self, frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone) -> np.ndarray:
         overlay = frame.copy()
 
@@ -389,6 +386,11 @@ class StreamProcessor:
         self.redis_op_latency.observe(time.time() - start_time)
 
         logger.debug(f"Frame {self.frame_count} stored in Redis")
+
+    def reload_stop_zone_config(self, new_config):
+        self.stop_detector.update_stop_zone(new_config)
+        self.config.update_stop_zone(new_config)  # Add this method to Config class
+        logger.info(f"Stop zone configuration updated: {new_config}")
 
     def run(self):
         while True:
