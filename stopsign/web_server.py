@@ -12,8 +12,6 @@ from fasthtml.common import H1
 from fasthtml.common import H2
 from fasthtml.common import A
 from fasthtml.common import Body
-from fasthtml.common import Button
-from fasthtml.common import Canvas
 from fasthtml.common import Div
 from fasthtml.common import FastHTML
 from fasthtml.common import Footer
@@ -261,8 +259,6 @@ def home():
             Title("Stop Sign Nanny"),
             Script("""
                 let ws;
-                let isSelecting = false;
-                let stopLinePoints = [];
 
                 function connectWebSocket() {
                     ws = new WebSocket('ws://' + location.host + '/ws');
@@ -275,9 +271,6 @@ def home():
                                 const img = document.getElementById('videoFrame');
                                 img.width = data.width;
                                 img.height = data.height;
-                                const canvas = document.getElementById('selectionCanvas');
-                                canvas.width = data.width;
-                                canvas.height = data.height;
                             }
                         }
                     };
@@ -286,74 +279,17 @@ def home():
                     };
                 }
 
-                function toggleSelection() {
-                    console.log("toggleSelection called");
-                    isSelecting = !isSelecting;
-                    const toggleButton = document.getElementById("toggleButton");
-                    const statusDiv = document.getElementById("status");
+                function updateStopZone() {
+                    const x1 = document.getElementById('x1').value;
+                    const y1 = document.getElementById('y1').value;
+                    const x2 = document.getElementById('x2').value;
+                    const y2 = document.getElementById('y2').value;
                     
-                    if (isSelecting) {
-                        console.log("Selection mode activated");
-                        toggleButton.innerText = "Cancel Selection";
-                        statusDiv.innerText = "Click two points on the image to define the stop line.";
-                        stopLinePoints = []; // Reset points when starting a new selection
-                    } else {
-                        console.log("Selection mode deactivated");
-                        toggleButton.innerText = "Select Stop Zone";
-                        statusDiv.innerText = "";
-                        if (stopLinePoints.length === 2) {
-                            sendPointsToServer(stopLinePoints);
-                        }
-                    }
-                    drawStopLine(); // Clear or redraw the canvas
-                }
-
-                function initCanvas() {
-                    const canvas = document.getElementById("selectionCanvas");
-                    const video = document.getElementById("videoFrame");
-                    canvas.width = video.width;
-                    canvas.height = video.height;
-
-                    canvas.onclick = function(e) {
-                        if (!isSelecting) return;
-                        const rect = canvas.getBoundingClientRect();
-                        const x = e.clientX - rect.left;
-                        const y = e.clientY - rect.top;
-                        if (stopLinePoints.length < 2) {
-                            stopLinePoints.push({x, y});
-                            drawStopLine();
-                            if (stopLinePoints.length === 2) {
-                                toggleSelection(); // Automatically finish selection when two points are placed
-                            }
-                        }
-                    }
-                }
-
-                function drawStopLine() {
-                    const canvas = document.getElementById('selectionCanvas');
-                    const ctx = canvas.getContext('2d');
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    const points = [
+                        {x: parseFloat(x1), y: parseFloat(y1)},
+                        {x: parseFloat(x2), y: parseFloat(y2)}
+                    ];
                     
-                    stopLinePoints.forEach((point, index) => {
-                        ctx.beginPath();
-                        ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
-                        ctx.fillStyle = 'red';
-                        ctx.fill();
-                        ctx.fillStyle = 'white';
-                        ctx.fillText(index + 1, point.x + 10, point.y + 10);
-                    });
-
-                    if (stopLinePoints.length === 2) {
-                        ctx.beginPath();
-                        ctx.moveTo(stopLinePoints[0].x, stopLinePoints[0].y);
-                        ctx.lineTo(stopLinePoints[1].x, stopLinePoints[1].y);
-                        ctx.strokeStyle = 'red';
-                        ctx.lineWidth = 2;
-                        ctx.stroke();
-                    }
-                }
-
-                function sendPointsToServer(points) {
                     fetch('/api/update-stop-zone', {
                         method: 'POST',
                         headers: {
@@ -370,7 +306,7 @@ def home():
                         console.error('Error:', error);
                         document.getElementById("status").innerText = 'Failed to update stop zone.';
                     });
-                }             
+                }
 
                 function fetchRecentPasses() {
                     fetch('/api/recent-vehicle-passes')
@@ -378,10 +314,10 @@ def home():
                             if (!response.ok) {
                                 throw new Error(`HTTP error! status: ${response.status}`);
                             }
-                            return response.text();  // Get the response as text
+                            return response.text();
                         })
                         .then(html => {
-                            document.getElementById('recentPasses').innerHTML = html;  // Insert the HTML directly
+                            document.getElementById('recentPasses').innerHTML = html;
                         })
                         .catch(error => {
                             console.error('Error fetching recent passes:', error);
@@ -389,21 +325,10 @@ def home():
                         });
                 }
 
-                // Call fetchRecentPasses initially and then every 30 seconds
-                fetchRecentPasses();
-                setInterval(fetchRecentPasses, 30000);
-
                 document.addEventListener('DOMContentLoaded', function() {
-                    console.log("DOMContentLoaded event fired");
                     connectWebSocket();
-                    initCanvas();
-                    const toggleButton = document.getElementById("toggleButton");
-                    if (toggleButton) {
-                        console.log("Toggle button found");
-                        toggleButton.addEventListener("click", toggleSelection);
-                    } else {
-                        console.error("Toggle button not found");
-                    }
+                    fetchRecentPasses();
+                    setInterval(fetchRecentPasses, 30000);
                 });
             """),
             Style("""
@@ -450,16 +375,8 @@ def home():
                     Div(
                         Div(
                             Img(id="videoFrame"),
-                            Canvas(id="selectionCanvas"),
                             cls="video-container",
                         ),
-                        Button(
-                            "Select Stop Zone",
-                            id="toggleButton",
-                            onclick="toggleSelection()",
-                            style="margin-top: 10px;",
-                        ),
-                        Div(id="status"),
                         cls="video-container",
                     ),
                     Div(
