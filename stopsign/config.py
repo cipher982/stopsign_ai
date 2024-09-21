@@ -8,7 +8,11 @@ shutdown_flag = threading.Event()
 
 class Config:
     def __init__(self, config_path):
-        with open(config_path, "r") as file:
+        self.config_path = config_path
+        self.load_config()
+
+    def load_config(self):
+        with open(self.config_path, "r") as file:
             config = yaml.safe_load(file)
 
         # new stuff
@@ -44,3 +48,23 @@ class Config:
         # Stream settings
         self.fps = config["stream_settings"]["fps"]
         self.vehicle_classes = config["stream_settings"]["vehicle_classes"]
+
+    def update_stop_zone(self, new_config):
+        self.stop_line = new_config["stop_line"]
+        self.stop_box_tolerance = new_config["stop_box_tolerance"]
+        self.min_stop_time = new_config["min_stop_duration"]
+        self.save_to_yaml()
+
+    def save_to_yaml(self):
+        with open(self.config_path, "r") as file:
+            config = yaml.safe_load(file)
+
+        # Update only the changed values
+        config["stopsign_detection"]["stop_line"] = self.stop_line
+        config["stopsign_detection"]["stop_box_tolerance"] = self.stop_box_tolerance
+        config["stopsign_detection"]["min_stop_time"] = self.min_stop_time
+
+        with open(self.config_path, "w") as file:
+            yaml.dump(config, file, default_flow_style=False)
+
+        print(f"Configuration updated and saved to {self.config_path}")
