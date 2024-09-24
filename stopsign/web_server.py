@@ -196,6 +196,7 @@ async def frame_loop(send):
     last_error_time = 0
     frames_sent = 0
     error_count = 0
+    logger.info("Starting frame loop")
     while True:
         try:
             # Get the latest frame from Redis
@@ -203,7 +204,17 @@ async def frame_loop(send):
             if frame_data:
                 frame_dict = json.loads(frame_data)  # type: ignore # noqa: F841
                 frame = frame_dict["frame"]
-                await send(f"data:image/jpeg;base64,{frame}")
+                width = frame_dict.get("width", original_width)
+                height = frame_dict.get("height", original_height)
+
+                # Create an HTML snippet to replace the Img tag
+                img_html = f"""
+                <img id="videoFrame" src="data:image/jpeg;base64,{frame}" width="{width}" height="{height}" alt="Live Stream" class="video-container" />
+                """
+
+                logger.info(f"Sending frame: width={width}, height={height}, data length={len(frame)}")
+                await send(img_html)  # Send the HTML snippet
+
                 frames_sent += 1
 
                 current_time = time.time()
@@ -218,6 +229,7 @@ async def frame_loop(send):
                 logger.warning("No frames available in buffer")
             await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
         except Exception as e:
+            logger.error(f"Error in frame loop: {str(e)}")
             current_time = time.time()
             error_count += 1
             if current_time - last_error_time >= 60:
@@ -246,6 +258,9 @@ async def ws_handler(websocket):
     Keep all functionality in the on_connect function.
     """
     logger.info("WebSocket handler started")
+    async for message in websocket.iter_text():
+        # Handle incoming messages if needed
+        pass
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -257,28 +272,17 @@ def home():
     return Html(
         Head(
             Title("Stop Sign Nanny"),
+            Script(src="https://unpkg.com/htmx.org@1.9.4"),
+            Script(src="https://unpkg.com/htmx.org/dist/ext/ws.js"),  # Add WebSocket extension
             Script("""
-                let ws;
-
-                function connectWebSocket() {
-                    ws = new WebSocket('ws://' + location.host + '/ws');
-                    ws.onmessage = function(event) {
-                        if (event.data.startsWith('data:image')) {
-                            document.getElementById('videoFrame').src = event.data;
-                        } else {
-                            const data = JSON.parse(event.data);
-                            if (data.type === 'dimensions') {
-                                const img = document.getElementById('videoFrame');
-                                img.width = data.width;
-                                img.height = data.height;
-                            }
-                        }
-                    };
-                    ws.onclose = function() {
-                        setTimeout(connectWebSocket, 1000);
-                    };
-                }
-
+                htmx.on("htmx:wsConnected", function(event) {
+                    console.log("WebSocket Connected!");
+                });
+                htmx.on("htmx:wsError", function(event) {
+                    console.error("WebSocket Error:", event.detail.error);
+                });
+            """),
+            Script("""
                 function updateStopZone() {
                     const x1 = document.getElementById('x1').value;
                     const y1 = document.getElementById('y1').value;
@@ -326,7 +330,6 @@ def home():
                 }
 
                 document.addEventListener('DOMContentLoaded', function() {
-                    connectWebSocket();
                     fetchRecentPasses();
                     setInterval(fetchRecentPasses, 30000);
                 });
@@ -372,24 +375,28 @@ def home():
             get_common_header("Stop Sign Nanny"),
             Main(
                 Div(
-                    Div(
-                        Div(
-                            Img(id="videoFrame"),
-                            cls="video-container",
-                        ),
+                    Img(
+                        id="videoFrame",
+                        src="",  # Initial empty source
+                        alt="Live Stream",
                         cls="video-container",
+                        hx_ext="ws",  # Enable WebSocket extension
+                        hx_ws="connect:/ws",  # Establish WebSocket connection to /ws
+                        hx_swap="outerHTML",  # Replace the entire Img tag on message
+                        # hx_trigger="message",  # Trigger on incoming WebSocket messages
+                        hx_trigger="load, every 100ms",  # Trigger on load and every 100ms
                     ),
-                    Div(
-                        H2("Recent Vehicle Passes"),
-                        Div(
-                            Div(id="recentPasses"),
-                            style="overflow-y: auto; max-height: 70vh;",
-                        ),
-                        cls="recent-passes",
-                    ),
-                    cls="content-wrapper",
+                    cls="video-container",
                 ),
-                cls="container",
+                Div(
+                    H2("Recent Vehicle Passes"),
+                    Div(
+                        Div(id="recentPasses"),
+                        style="overflow-y: auto; max-height: 70vh;",
+                    ),
+                    cls="recent-passes",
+                ),
+                cls="content-wrapper",
             ),
             get_common_footer(),
         ),
