@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import queue
+import subprocess
 import threading
 import time
 from typing import Dict
@@ -59,7 +60,10 @@ class StreamProcessor:
         self.last_fps_update = time.time()
         self.stats_update_interval = 300  # Update stats every 5 minutes
         self.stats_queue = queue.Queue()
+        self.frame_dimensions = self.get_frame_dimensions()
+        self.ffmpeg_process = None
         self._start_stats_update_thread()
+        self.start_ffmpeg_stream()
         start_http_server(PROMETHEUS_PORT)
 
     def _start_stats_update_thread(self):
@@ -386,6 +390,73 @@ class StreamProcessor:
         self.redis_op_latency.observe(time.time() - start_time)
 
         logger.debug(f"Frame {self.frame_count} stored in Redis")
+
+    def get_frame_dimensions(self):
+        max_attempts = 3
+        for _ in range(max_attempts):
+            frame = self.get_frame_from_redis()
+            if frame is not None:
+                return frame.shape[1], frame.shape[0]  # width, height
+            time.sleep(0.5)
+        raise ValueError("Unable to determine frame dimensions from Redis")
+
+    def start_ffmpeg_stream(self):
+        width, height = self.frame_dimensions
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-s",
+            f"{width}x{height}",
+            "-framerate",
+            "15",
+            "-i",
+            "-",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-f",
+            "hls",
+            "-hls_time",
+            "2",
+            "-hls_list_size",
+            "5",
+            "-hls_flags",
+            "delete_segments",
+            "/app/stream/stream.m3u8",
+        ]
+
+        self.ffmpeg_process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+
+        # Start a thread to read processed frames from Redis and feed them to FFmpeg
+        threading.Thread(target=self.feed_ffmpeg_from_redis, daemon=True).start()
+
+    def feed_ffmpeg_from_redis(self):
+        while True:
+            try:
+                frame = self.get_frame_from_redis()
+                if frame is not None:
+                    # Write the frame to FFmpeg's stdin
+                    assert self.ffmpeg_process is not None
+                    assert self.ffmpeg_process.stdin is not None
+                    self.ffmpeg_process.stdin.write(frame.tobytes())
+                else:
+                    time.sleep(0.01)  # Short sleep to avoid busy-waiting
+            except Exception as e:
+                logger.error(f"Error in feeding FFmpeg: {str(e)}")
+                self.increment_exception_counter(type(e).__name__, "feed_ffmpeg_from_redis")
+                time.sleep(1)
+
+    def __del__(self):
+        if self.ffmpeg_process:
+            self.ffmpeg_process.stdin.close()
+            self.ffmpeg_process.terminate()
+            self.ffmpeg_process.wait()
 
     def reload_stop_zone_config(self, new_config):
         self.stop_detector.update_stop_zone(new_config)
