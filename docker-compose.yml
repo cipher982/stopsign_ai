@@ -12,6 +12,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./data:/app/data
+      - ./stream:/app/stream
       - ./config.yaml:/app/config.yaml
       - ./stopsign:/app/stopsign
     expose:
@@ -34,6 +35,7 @@ services:
     volumes:
       - ./static:/app/static
       - ./data:/app/data
+      - ./stream:/app/stream
       - ./config.yaml:/app/config.yaml
       - ./stopsign:/app/stopsign
     networks:
