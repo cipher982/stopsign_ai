@@ -1,10 +1,6 @@
 # ruff: noqa: E501
-
-import asyncio
-import json
 import logging
 import os
-import time
 
 import redis
 import uvicorn
@@ -14,6 +10,7 @@ from fasthtml.common import A
 from fasthtml.common import Body
 from fasthtml.common import Div
 from fasthtml.common import FastHTML
+from fasthtml.common import FileResponse
 from fasthtml.common import Footer
 from fasthtml.common import Head
 from fasthtml.common import Header
@@ -30,6 +27,7 @@ from fasthtml.common import StaticFiles
 from fasthtml.common import Style
 from fasthtml.common import Title
 from fasthtml.common import Ul
+from fasthtml.common import Video
 
 from stopsign.config import Config
 from stopsign.database import Database
@@ -173,6 +171,7 @@ app = FastHTML(
         ),
         get_common_styles(),
         Script(src="https://unpkg.com/htmx.org@1.9.4"),
+        # Script(src="https://unpkg.com/htmx.org/dist/ext/sse.js"),
     ),
 )
 
@@ -190,81 +189,14 @@ original_height = 1080
 # Grafana dashboard URL
 GRAFANA_URL = os.getenv("GRAFANA_URL")
 
-
-async def frame_loop(send):
-    last_frame_time = time.time()
-    last_error_time = 0
-    frames_sent = 0
-    error_count = 0
-    logger.info("Starting frame loop")
-    while True:
-        try:
-            # Get the latest frame from Redis
-            frame_data = redis_client.lindex("processed_frame_buffer", 0)
-            if frame_data:
-                frame_dict = json.loads(frame_data)  # type: ignore # noqa: F841
-                frame = frame_dict["frame"]
-                width = frame_dict.get("width", original_width)
-                height = frame_dict.get("height", original_height)
-
-                # Create an HTML snippet to replace the Img tag
-                img_html = f"""
-                <img id="videoFrame" src="data:image/jpeg;base64,{frame}" width="{width}" height="{height}" alt="Live Stream" class="video-container" />
-                """
-
-                logger.info(f"Sending frame: width={width}, height={height}, data length={len(frame)}")
-                await send(img_html)  # Send the HTML snippet
-
-                frames_sent += 1
-
-                current_time = time.time()
-                if current_time - last_frame_time >= 60:
-                    fps = frames_sent / (current_time - last_frame_time)
-                    buffer_length = redis_client.llen("processed_frame_buffer")
-                    logger.info(f"Web server sending rate: {fps:.2f} fps, Buffer length: {buffer_length}")
-                    frames_sent = 0
-                    last_frame_time = current_time
-                    error_count = 0  # Reset error count every minute if streaming is working
-            else:
-                logger.warning("No frames available in buffer")
-            await asyncio.sleep(0.01)  # Short sleep to prevent busy waiting
-        except Exception as e:
-            logger.error(f"Error in frame loop: {str(e)}")
-            current_time = time.time()
-            error_count += 1
-            if current_time - last_error_time >= 60:
-                logger.error(f"Error in frame loop (occurred {error_count} times in the last minute): {str(e)}")
-                last_error_time = current_time
-                error_count = 0
-            await asyncio.sleep(0.1)  # Slightly longer sleep on error, but not too long
-
-
-async def on_connect(send):
-    logger.info("WebSocket connected")
-    dimensions = {"type": "dimensions", "width": original_width, "height": original_height}
-    await send(json.dumps(dimensions))
-    # Start the message loop
-    asyncio.create_task(frame_loop(send))
-
-
-async def on_disconnect():
-    logger.info("WebSocket disconnected")
-
-
-@app.ws("/ws", conn=on_connect, disconn=on_disconnect)
-async def ws_handler(websocket):
-    """
-    This is required to be defined, but does not work or get called upon ws connection.
-    Keep all functionality in the on_connect function.
-    """
-    logger.info("WebSocket handler started")
-    async for message in websocket.iter_text():
-        # Handle incoming messages if needed
-        pass
-
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/app/data", StaticFiles(directory="data"), name="data")
+app.mount("/app/stream", StaticFiles(directory="/app/stream"), name="stream")
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse("static/favicon.ico")
 
 
 @app.get("/")  # type: ignore
@@ -273,15 +205,7 @@ def home():
         Head(
             Title("Stop Sign Nanny"),
             Script(src="https://unpkg.com/htmx.org@1.9.4"),
-            Script(src="https://unpkg.com/htmx.org/dist/ext/ws.js"),  # Add WebSocket extension
-            Script("""
-                htmx.on("htmx:wsConnected", function(event) {
-                    console.log("WebSocket Connected!");
-                });
-                htmx.on("htmx:wsError", function(event) {
-                    console.error("WebSocket Error:", event.detail.error);
-                });
-            """),
+            Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest"),
             Script("""
                 function updateStopZone() {
                     const x1 = document.getElementById('x1').value;
@@ -350,6 +274,12 @@ def home():
                     border: 1px solid var(--accent-color);
                     border-radius: 8px;
                 }
+                #videoPlayer {
+                    width: 100%;
+                    height: auto;
+                    border: 1px solid var(--accent-color);
+                    border-radius: 8px;
+                }
                 #selectionCanvas {
                     position: absolute;
                     top: 0;
@@ -373,18 +303,36 @@ def home():
         ),
         Body(
             get_common_header("Stop Sign Nanny"),
+            # Script("""
+            #     document.addEventListener('DOMContentLoaded', function() {
+            #         var video = document.getElementById('videoPlayer');
+            #         if (Hls.isSupported()) {
+            #             var hls = new Hls();
+            #             hls.loadSource('/app/stream/stream.m3u8');
+            #             hls.attachMedia(video);
+            #             hls.on(Hls.Events.MANIFEST_PARSED, function() {
+            #                 video.play();
+            #             });
+            #             hls.on(Hls.Events.ERROR, function(event, data) {
+            #                 console.error('HLS error:', event, data);
+            #             });
+            #         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            #             video.src = '/app/stream/stream.m3u8';
+            #             video.addEventListener('loadedmetadata', function() {
+            #                 video.play();
+            #             });
+            #         }
+            #         video.addEventListener('error', function(e) {
+            #             console.error('Video error:', e);
+            #         });
+            #     });
+            # """),
             Main(
                 Div(
-                    Img(
-                        id="videoFrame",
-                        src="",  # Initial empty source
-                        alt="Live Stream",
-                        cls="video-container",
-                        hx_ext="ws",  # Enable WebSocket extension
-                        hx_ws="connect:/ws",  # Establish WebSocket connection to /ws
-                        hx_swap="outerHTML",  # Replace the entire Img tag on message
-                        # hx_trigger="message",  # Trigger on incoming WebSocket messages
-                        hx_trigger="load, every 100ms",  # Trigger on load and every 100ms
+                    Div(
+                        id="videoContainer",
+                        hx_get="/load-video",
+                        hx_trigger="load",
                     ),
                     cls="video-container",
                 ),
@@ -399,6 +347,28 @@ def home():
                 cls="content-wrapper",
             ),
             get_common_footer(),
+            Script("""
+                document.addEventListener('DOMContentLoaded', function() {
+                    var video = document.getElementById('videoPlayer');
+                    if (Hls.isSupported()) {
+                        var hls = new Hls();
+                        hls.loadSource('/app/stream/stream.m3u8');  // Updated path
+                        hls.attachMedia(video);
+                        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                            video.play();
+                        });
+                    }
+                    // HLS.js is not supported on platforms that do not have Media Source Extensions (MSE) enabled.
+                    // When the browser has built-in HLS support (check using `canPlayType`), we can provide an HLS manifest (i.e. .m3u8 URL) directly to the video element through the `src` property.
+                    // This is using the built-in support of the plain video element, without using HLS.js.
+                    else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                        video.src = '/app/stream/stream.m3u8';  // Updated path
+                        video.addEventListener('loadedmetadata', function() {
+                            video.play();
+                        });
+                    }
+                });
+            """),
         ),
     )
 
@@ -511,6 +481,56 @@ def about():
     )
 
 
+@app.get("/check-stream")
+async def check_stream():
+    import os
+
+    stream_path = "app/stream/stream.m3u8"
+    if os.path.exists(stream_path):
+        logger.info(f"Stream file exists: {stream_path}")
+        with open(stream_path, "r") as f:
+            content = f.read()
+        logger.debug(f"Stream file content:\n{content}")
+        return {"status": "exists", "content": content}
+    else:
+        logger.warning(f"Stream file does not exist: {stream_path}")
+        return {"status": "not found"}
+
+
+@app.get("/load-video")
+def load_video():
+    return Div(
+        Video(
+            id="videoPlayer",
+            controls=True,
+            autoplay=True,
+            muted=True,
+        ),
+        Script("""
+            var video = document.getElementById('videoPlayer');
+            if (Hls.isSupported()) {
+                var hls = new Hls();
+                hls.loadSource('/app/stream/stream.m3u8');
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    console.error('HLS error:', event, data);
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = '/app/stream/stream.m3u8';
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+            }
+            video.addEventListener('error', function(e) {
+                console.error('Video error:', e);
+            });
+        """),
+    )
+
+
 def main(config: Config):
     try:
         db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
@@ -520,15 +540,15 @@ def main(config: Config):
             "stopsign.web_server:app",
             host="0.0.0.0",
             port=8000,
-            reload=True,
-            reload_dirs=["stopsign"],
-            reload_excludes=["data/*"],
+            reload=False,
+            # reload_dirs=["./stopsign"],  # Use a relative path
+            # reload_excludes=["./app/data/*"],  # Use a relative path
         )
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)  # Change to DEBUG level
     config = Config("./config.yaml")
     main(config)
