@@ -41,7 +41,7 @@ MAX_ERRORS = 100
 PROMETHEUS_PORT = int(os.environ["PROMETHEUS_PORT"])
 
 
-class StreamProcessor:
+class VideoAnalyzer:
     def __init__(self, config: Config, db: Database):
         self.config = config
         self.db = db
@@ -416,13 +416,15 @@ class StreamProcessor:
             "-framerate",
             "15",
             "-i",
-            "-",
+            "pipe:",
             "-c:v",
-            "libx264",
+            "h264_nvenc",  # Use NVIDIA GPU encoding
             "-preset",
-            "ultrafast",
+            "p1",  # Lowest latency preset for NVENC
             "-tune",
-            "zerolatency",
+            "ll",  # Low-latency tuning
+            "-zerolatency",
+            "1",  # Enable zero-latency mode
             "-f",
             "hls",
             "-hls_time",
@@ -431,6 +433,8 @@ class StreamProcessor:
             "5",
             "-hls_flags",
             "delete_segments",
+            "-hls_allow_cache",
+            "0",
             "/app/stream/stream.m3u8",
         ]
 
@@ -440,15 +444,24 @@ class StreamProcessor:
         threading.Thread(target=self.feed_ffmpeg_from_redis, daemon=True).start()
 
     def feed_ffmpeg_from_redis(self):
+        buffer = []
+        buffer_size = 5  # Number of frames to buffer before sending to FFmpeg
         while True:
             try:
                 frame = self.get_frame_from_redis("processed_frame_buffer")
                 if frame is not None:
-                    # Write the frame to FFmpeg's stdin
-                    assert self.ffmpeg_process is not None
-                    assert self.ffmpeg_process.stdin is not None
-                    self.ffmpeg_process.stdin.write(frame.tobytes())
-                    self.ffmpeg_process.stdin.flush()
+                    buffer.append(frame)
+
+                    if len(buffer) >= buffer_size:
+                        # Convert the buffer to a single numpy array
+                        frame_array = np.concatenate(buffer)
+
+                        # Write the frames to FFmpeg's stdin
+                        self.ffmpeg_process.stdin.write(frame_array.tobytes())
+                        self.ffmpeg_process.stdin.flush()
+
+                        # Clear the buffer
+                        buffer.clear()
                 else:
                     time.sleep(0.01)  # Short sleep to avoid busy-waiting
             except Exception as e:
@@ -482,5 +495,5 @@ class StreamProcessor:
 if __name__ == "__main__":
     config = Config("./config.yaml")
     db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
-    processor = StreamProcessor(config, db)
+    processor = VideoAnalyzer(config, db)
     processor.run()

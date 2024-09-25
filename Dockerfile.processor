@@ -31,4 +31,4 @@ COPY models /app/models
 COPY config.yaml /app/config.yaml
 
 # Run the application
-CMD ["uv", "run", "python", "-m", "stopsign.stream_processor"]
+CMD ["uv", "run", "python", "-m", "stopsign.video_analyzer"]

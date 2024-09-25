@@ -1,6 +1,6 @@
 services:
 
-  stream_processor:
+  video_analyzer:
     build:
       context: .
       dockerfile: Dockerfile.processor
@@ -40,7 +40,7 @@ services:
     env_file:
       - .env
     depends_on:
-      - stream_processor
+      - video_analyzer
     volumes:
       - ./static:/app/static
       - ./data:/app/data
