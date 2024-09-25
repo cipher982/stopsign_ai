@@ -194,7 +194,7 @@ app.mount("/app/data", StaticFiles(directory="data"), name="data")
 app.mount("/app/stream", StaticFiles(directory="/app/stream"), name="stream")
 
 
-@app.get("/favicon.ico")
+@app.get("/favicon.ico")  # type: ignore
 async def favicon():
     return FileResponse("static/favicon.ico")
 
@@ -481,7 +481,7 @@ def about():
     )
 
 
-@app.get("/check-stream")
+@app.get("/check-stream")  # type: ignore
 async def check_stream():
     import os
 
@@ -497,7 +497,7 @@ async def check_stream():
         return {"status": "not found"}
 
 
-@app.get("/load-video")
+@app.get("/load-video")  # type: ignore
 def load_video():
     return Div(
         Video(
