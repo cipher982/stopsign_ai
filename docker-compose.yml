@@ -30,6 +30,21 @@ services:
               count: 1
               capabilities: [gpu]
 
+  ffmpeg_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.ffmpeg
+    env_file:
+      - .env
+    volumes:
+      - ./stream:/app/stream
+      - ./stopsign:/app/stopsign
+    depends_on:
+      - video_analyzer
+    networks:
+      - default
+      - monitoring
+      - coolify
 
   web_server:
     build:

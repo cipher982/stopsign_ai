@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import queue
-import subprocess
 import threading
 import time
 from typing import Dict
@@ -38,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
-PROMETHEUS_PORT = int(os.environ["PROMETHEUS_PORT"])
+PROMETHEUS_PORT = int(os.environ.get("PROMETHEUS_PORT", 8000))  # Default to 8000 if not set
 
 
 class VideoAnalyzer:
@@ -62,9 +61,20 @@ class VideoAnalyzer:
         self.stats_update_interval = 300  # Update stats every 5 minutes
         self.stats_queue = queue.Queue()
         self.frame_dimensions = self.get_frame_dimensions()
-        self.ffmpeg_process = None
+
+        # Initialize FPS counters for each stage
+        self.incoming_fps_count = 0
+        self.object_detection_fps_count = 0
+        self.car_tracking_fps_count = 0
+        self.visualization_fps_count = 0
+        self.output_fps_count = 0
+
+        # Set the interval for FPS logging (e.g., every 5 seconds)
+        self.fps_log_interval = 5  # seconds
+        self.last_fps_log_time = time.time()
+
         self._start_stats_update_thread()
-        self.start_ffmpeg_stream()
+        self._start_fps_logging_thread()  # Start FPS logging thread
         start_http_server(PROMETHEUS_PORT)
 
     def _start_stats_update_thread(self):
@@ -74,6 +84,39 @@ class VideoAnalyzer:
                 self.stats_queue.put("update_stats")
 
         thread = threading.Thread(target=schedule_stats_update, daemon=True)
+        thread.start()
+
+    def _start_fps_logging_thread(self):
+        def log_fps():
+            while True:
+                time.sleep(self.fps_log_interval)
+                current_time = time.time()
+                elapsed = current_time - self.last_fps_log_time
+                self.last_fps_log_time = current_time
+
+                incoming_fps = self.incoming_fps_count / elapsed
+                object_detection_fps = self.object_detection_fps_count / elapsed
+                car_tracking_fps = self.car_tracking_fps_count / elapsed
+                visualization_fps = self.visualization_fps_count / elapsed
+                output_fps = self.output_fps_count / elapsed
+
+                logger.info(
+                    f"FPS Metrics (Last {self.fps_log_interval} seconds): "
+                    f"Incoming: {incoming_fps:.2f} | "
+                    f"Object Detection: {object_detection_fps:.2f} | "
+                    f"Car Tracking: {car_tracking_fps:.2f} | "
+                    f"Visualization: {visualization_fps:.2f} | "
+                    f"Output: {output_fps:.2f}"
+                )
+
+                # Reset counters after logging
+                self.incoming_fps_count = 0
+                self.object_detection_fps_count = 0
+                self.car_tracking_fps_count = 0
+                self.visualization_fps_count = 0
+                self.output_fps_count = 0
+
+        thread = threading.Thread(target=log_fps, daemon=True)
         thread.start()
 
     def initialize_metrics(self):
@@ -98,17 +141,17 @@ class VideoAnalyzer:
         self.cars_tracked = Gauge("cars_tracked", "Number of cars currently being tracked")
         self.cars_in_stop_zone = Gauge("cars_in_stop_zone", "Number of cars in the stop zone")
 
-        # system metrics
+        # System metrics
         self.cpu_package_temp = Gauge("cpu_package_temp", "CPU package temperature")
         self.cpu_core_temp_avg = Gauge("cpu_core_temp_avg", "Average CPU core temperature")
         self.nvme_temp_avg = Gauge("nvme_temp_avg", "Average NVMe temperature")
         self.acpitz_temp = Gauge("acpitz_temp", "ACPI thermal zone temperature")
 
-        # image metrics
+        # Image metrics
         self.avg_brightness = Gauge("avg_frame_brightness", "Average brightness of processed frames")
         self.contrast = Gauge("frame_contrast", "Contrast of processed frames")
 
-        # timing specific metrics
+        # Timing specific metrics
         self.visualization_time = Histogram("visualization_time_seconds", "Time taken to visualize the frame")
         self.object_detection_time = Histogram("object_detection_time_seconds", "Time taken for object detection")
         self.car_tracking_time = Histogram("car_tracking_time_seconds", "Time taken to update car tracking")
@@ -123,14 +166,17 @@ class VideoAnalyzer:
             cpu_temps = temps["coretemp"]
             self.cpu_package_temp.set(cpu_temps[0].current)  # Package id 0
             core_temps = [t.current for t in cpu_temps[1:]]  # All core temperatures
-            self.cpu_core_temp_avg.set(sum(core_temps) / len(core_temps))
+            if core_temps:
+                self.cpu_core_temp_avg.set(sum(core_temps) / len(core_temps))
 
         if "nvme" in temps:
             nvme_temps = [t.current for t in temps["nvme"] if t.label == "Composite"]
-            self.nvme_temp_avg.set(sum(nvme_temps) / len(nvme_temps))
+            if nvme_temps:
+                self.nvme_temp_avg.set(sum(nvme_temps) / len(nvme_temps))
 
         if "acpitz" in temps:
-            self.acpitz_temp.set(temps["acpitz"][0].current)
+            if temps["acpitz"]:
+                self.acpitz_temp.set(temps["acpitz"][0].current)
 
     def increment_exception_counter(self, exception_type: str, method: str):
         self.exception_counter.labels(type=exception_type, method=method).inc()
@@ -169,12 +215,18 @@ class VideoAnalyzer:
                     time.sleep(1)
                     continue
 
+                # Increment incoming FPS counter
+                self.incoming_fps_count += 1
+
                 start_time = time.time()
                 processed_frame, metadata = self.process_frame(frame)
                 processing_time = time.time() - start_time
                 self.frame_processing_time.observe(processing_time)
 
                 self.store_frame_data(processed_frame, metadata)
+
+                # Increment output FPS counter
+                self.output_fps_count += 1
 
                 self.frame_count += 1
                 self.fps_frame_count += 1
@@ -214,20 +266,30 @@ class VideoAnalyzer:
         self.contrast.set(float(contrast))
 
         frame = self.crop_scale_frame(frame)
+
+        # Object Detection
         object_detection_start = time.time()
         processed_frame, boxes = self.detect_objects(frame)
-        self.object_detection_time.observe(time.time() - object_detection_start)
+        object_detection_time = time.time() - object_detection_start
+        self.object_detection_time.observe(object_detection_time)
+        self.object_detection_fps_count += 1  # Increment object detection FPS counter
 
+        # Car Tracking
         car_tracking_start = time.time()
         self.car_tracker.update_cars(boxes, time.time())
-        self.car_tracking_time.observe(time.time() - car_tracking_start)
+        car_tracking_time = time.time() - car_tracking_start
+        self.car_tracking_time.observe(car_tracking_time)
+        self.car_tracking_fps_count += 1  # Increment car tracking FPS counter
 
+        # Stop Detection
         stop_detection_start = time.time()
         for car in self.car_tracker.get_cars().values():
             if not car.state.is_parked:
                 self.stop_detector.update_car_stop_status(car, time.time(), processed_frame)
-        self.stop_detection_time.observe(time.time() - stop_detection_start)
+        stop_detection_time = time.time() - stop_detection_start
+        self.stop_detection_time.observe(stop_detection_time)
 
+        # Visualization
         visualization_start = time.time()
         annotated_frame = self.visualize(
             processed_frame,
@@ -235,11 +297,14 @@ class VideoAnalyzer:
             boxes,
             self.stop_detector.stop_zone,
         )
-        self.visualization_time.observe(time.time() - visualization_start)
+        visualization_time = time.time() - visualization_start
+        self.visualization_time.observe(visualization_time)
+        self.visualization_fps_count += 1  # Increment visualization FPS counter
 
         if self.config.draw_grid:
             self.draw_gridlines(annotated_frame)
 
+        # Metadata
         metadata_start = time.time()
         metadata = self.create_metadata()
         self.metadata_creation_time.observe(time.time() - metadata_start)
@@ -395,89 +460,20 @@ class VideoAnalyzer:
         logger.debug(f"Frame {self.frame_count} stored in Redis")
 
     def get_frame_dimensions(self):
+        # Attempt to get frame dimensions from Redis
         max_attempts = 3
         for _ in range(max_attempts):
             frame = self.get_frame_from_redis("processed_frame_buffer")
             if frame is not None:
                 return frame.shape[1], frame.shape[0]  # width, height
             time.sleep(0.5)
-        raise ValueError("Unable to determine frame dimensions from Redis")
-
-    def start_ffmpeg_stream(self):
-        width, height = self.frame_dimensions
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "bgr24",
-            "-s",
-            f"{width}x{height}",
-            "-framerate",
-            "15",
-            "-i",
-            "pipe:",
-            "-c:v",
-            "h264_nvenc",  # Use NVIDIA GPU encoding
-            "-preset",
-            "p1",  # Lowest latency preset for NVENC
-            "-tune",
-            "ll",  # Low-latency tuning
-            "-zerolatency",
-            "1",  # Enable zero-latency mode
-            "-f",
-            "hls",
-            "-hls_time",
-            "2",
-            "-hls_list_size",
-            "5",
-            "-hls_flags",
-            "delete_segments",
-            "-hls_allow_cache",
-            "0",
-            "/app/stream/stream.m3u8",
-        ]
-
-        self.ffmpeg_process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
-
-        # Start a thread to read processed frames from Redis and feed them to FFmpeg
-        threading.Thread(target=self.feed_ffmpeg_from_redis, daemon=True).start()
-
-    def feed_ffmpeg_from_redis(self):
-        buffer = []
-        buffer_size = 5  # Number of frames to buffer before sending to FFmpeg
-        while True:
-            try:
-                frame = self.get_frame_from_redis("processed_frame_buffer")
-                if frame is not None:
-                    buffer.append(frame)
-
-                    if len(buffer) >= buffer_size:
-                        # Convert the buffer to a single numpy array
-                        frame_array = np.concatenate(buffer)
-
-                        # Write the frames to FFmpeg's stdin
-                        self.ffmpeg_process.stdin.write(frame_array.tobytes())
-                        self.ffmpeg_process.stdin.flush()
-
-                        # Clear the buffer
-                        buffer.clear()
-                else:
-                    time.sleep(0.01)  # Short sleep to avoid busy-waiting
-            except Exception as e:
-                logger.error(f"Error in feeding FFmpeg: {str(e)}")
-                self.increment_exception_counter(type(e).__name__, "feed_ffmpeg_from_redis")
-                time.sleep(1)
-
-    def __del__(self):
-        if self.ffmpeg_process:
-            self.ffmpeg_process.stdin.close()  # type: ignore
-            self.ffmpeg_process.terminate()
-            self.ffmpeg_process.wait()
+        # Fallback to default if unable to retrieve from Redis
+        logger.warning("Unable to determine frame dimensions from Redis. Using default 1920x1080.")
+        return 1920, 1080
 
     def reload_stop_zone_config(self, new_config):
         self.stop_detector.update_stop_zone(new_config)
-        self.config.update_stop_zone(new_config)  # Add this method to Config class
+        self.config.update_stop_zone(new_config)  # Ensure this method exists in Config class
         logger.info(f"Stop zone configuration updated: {new_config}")
 
     def run(self):
