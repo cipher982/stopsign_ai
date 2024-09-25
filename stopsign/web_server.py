@@ -386,9 +386,7 @@ async def update_stop_zone(request):
         "stop_box_tolerance": stop_box_tolerance,
         "min_stop_duration": min_stop_duration,
     }
-
-    # Update the configuration in your StreamProcessor
-    app.state.stream_processor.reload_stop_zone_config(new_config)
+    app.state.video_analyzer.reload_stop_zone_config(new_config)
 
     return {"status": "success"}
 
