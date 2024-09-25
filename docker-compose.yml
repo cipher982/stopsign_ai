@@ -9,6 +9,7 @@ services:
     environment:
       - YOLO_MODEL_PATH=/app/models/yolov8n.pt
       - PROMETHEUS_PORT=8002
+      - CUDA_VISIBLE_DEVICES=1
     volumes:
       - ./models:/app/models
       - ./data:/app/data
@@ -21,6 +22,14 @@ services:
       - default
       - monitoring
       - coolify
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 
   web_server:
     build:
