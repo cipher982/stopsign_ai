@@ -1,7 +1,11 @@
-FROM python:3.12-slim
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+
+# Avoid interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    python3-pip \
     gcc \
     libgl1-mesa-glx \
     libglib2.0-0 \

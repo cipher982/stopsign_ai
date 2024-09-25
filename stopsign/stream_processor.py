@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import psutil
 import redis
+import torch
 from prometheus_client import Counter
 from prometheus_client import Gauge
 from prometheus_client import Histogram
@@ -138,7 +139,9 @@ class StreamProcessor:
         model_path = os.getenv("YOLO_MODEL_PATH")
         if not model_path:
             raise ValueError("Error: YOLO_MODEL_PATH environment variable is not set.")
-        model = YOLO(model_path, verbose=False)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = YOLO(model_path, task="detect")
+        model.to(device)
         logger.info("Model loaded successfully")
         return model
 
