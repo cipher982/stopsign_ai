@@ -55,6 +55,9 @@ class RTSPToRedis:
         self.redis_errors = Counter("redis_errors", "Number of Redis-related errors")
         self.buffer_utilization = Gauge("buffer_utilization_percent", "Percentage of buffer utilized")
 
+        self.rtsp_input_fps = Gauge("rtsp_input_fps", "Frames per second received from the RTSP stream")
+        self.processed_fps = Gauge("rtsp_to_redis_fps", "Frames per second processed and stored in Redis")
+
     def initialize_redis(self):
         logger.info(f"Attempting to connect to Redis at {self.redis_host}:{self.redis_port}")
         try:
@@ -128,26 +131,33 @@ class RTSPToRedis:
                 last_frame_time = time.time()
                 frames_count = 0
                 fps_update_time = time.time()
+                rtsp_frames_count = 0
 
                 while True:
                     current_time = time.time()
                     elapsed_time = current_time - last_frame_time
 
-                    if elapsed_time >= frame_time:
-                        ret, frame = cap.read()
-                        if not ret:
-                            logger.warning("Failed to read frame. Reinitializing capture.")
-                            self.rtsp_errors.inc()
-                            break
+                    ret, frame = cap.read()
+                    if not ret:
+                        logger.warning("Failed to read frame. Reinitializing capture.")
+                        self.rtsp_errors.inc()
+                        break
 
+                    rtsp_frames_count += 1
+
+                    if elapsed_time >= frame_time:
                         self.store_frame(frame)
                         last_frame_time = current_time
                         frames_count += 1
 
                         # Update FPS every second
                         if current_time - fps_update_time >= 1:
-                            self.actual_fps.set(frames_count / (current_time - fps_update_time))
+                            elapsed_fps_time = current_time - fps_update_time
+                            self.actual_fps.set(frames_count / elapsed_fps_time)
+                            self.rtsp_input_fps.set(rtsp_frames_count / elapsed_fps_time)
+                            self.processed_fps.set(frames_count / elapsed_fps_time)
                             frames_count = 0
+                            rtsp_frames_count = 0
                             fps_update_time = current_time
                     else:
                         time.sleep(frame_time - elapsed_time)
