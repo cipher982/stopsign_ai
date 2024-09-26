@@ -16,7 +16,6 @@ import cv2
 import numpy as np
 import psutil
 import redis
-import torch
 from prometheus_client import Counter
 from prometheus_client import Gauge
 from prometheus_client import Histogram
@@ -100,6 +99,13 @@ class VideoAnalyzer:
                 visualization_fps = self.visualization_fps_count / elapsed
                 output_fps = self.output_fps_count / elapsed
 
+                # Update Prometheus metrics
+                self.analyzer_incoming_fps.set(incoming_fps)
+                self.object_detection_fps.set(object_detection_fps)
+                self.car_tracking_fps.set(car_tracking_fps)
+                self.visualization_fps.set(visualization_fps)
+                self.analyzer_output_fps.set(output_fps)
+
                 logger.info(
                     f"FPS Metrics (Last {self.fps_log_interval} seconds): "
                     f"Incoming: {incoming_fps:.2f} | "
@@ -159,6 +165,13 @@ class VideoAnalyzer:
         self.metadata_creation_time = Histogram("metadata_creation_time_seconds", "Time taken to create metadata")
         self.frame_encoding_time = Histogram("frame_encoding_time_seconds", "Time taken to encode the frame")
 
+        # FPS metrics
+        self.analyzer_incoming_fps = Gauge("analyzer_incoming_fps", "Analyzer incoming frames per second")
+        self.object_detection_fps = Gauge("object_detection_fps", "Object detection frames per second")
+        self.car_tracking_fps = Gauge("car_tracking_fps", "Car tracking frames per second")
+        self.visualization_fps = Gauge("visualization_fps", "Visualization frames per second")
+        self.analyzer_output_fps = Gauge("analyzer_output_fps", "Analyzed to Redis buffer frames per second")
+
     def update_temp_metrics(self):
         temps = psutil.sensors_temperatures()
 
@@ -185,19 +198,15 @@ class VideoAnalyzer:
         model_path = os.getenv("YOLO_MODEL_PATH")
         if not model_path:
             raise ValueError("Error: YOLO_MODEL_PATH environment variable is not set.")
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = YOLO(model_path, task="detect")
-        model.to(device)
+        model.to("cuda")
         logger.info("Model loaded successfully")
         return model
 
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
         frame_data = self.redis_client.lindex(key, 0)
         if frame_data:
-            frame_data_str = frame_data.decode("utf-8") if isinstance(frame_data, bytes) else str(frame_data)
-            frame_dict = json.loads(frame_data_str)
-            encoded_frame = frame_dict["frame"]
-            nparr = np.frombuffer(base64.b64decode(encoded_frame), np.uint8)
+            nparr = np.frombuffer(frame_data, dtype=np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             return frame
         return None
