@@ -1,8 +1,9 @@
-import base64
-import json
 import logging
 import os
+import threading
 import time
+from queue import Empty
+from queue import Queue
 from typing import Optional
 
 import cv2
@@ -25,10 +26,14 @@ class RTSPToRedis:
         self.redis_port = int(os.getenv("REDIS_PORT", 6379))
         self.prometheus_port = int(os.getenv("PROMETHEUS_PORT", 8000))
         self.frame_buffer_size = int(os.getenv("FRAME_BUFFER_SIZE", 500))
-        self.fps = int(os.getenv("FPS", 15))
-        self.jpeg_quality = int(os.getenv("JPEG_QUALITY", 95))
+        self.fps = 15
+        self.jpeg_quality = 85
 
         self.redis_client: Optional[redis.Redis] = None
+        self.frame_queue = Queue(maxsize=1000)
+        self.processing_thread = None
+        self.should_stop = threading.Event()
+
         self.initialize_metrics()
 
     def initialize_metrics(self):
@@ -57,6 +62,9 @@ class RTSPToRedis:
 
         self.rtsp_input_fps = Gauge("rtsp_input_fps", "Frames per second received from the RTSP stream")
         self.processed_fps = Gauge("rtsp_to_redis_fps", "Frames per second processed and stored in Redis")
+
+        self.queue_size = Gauge("rtsp_queue_size", "Current size of the RTSP frame processing queue")
+        self.frames_dropped = Counter("rtsp_frames_dropped", "Number of frames dropped due to full queue")
 
     def initialize_redis(self):
         logger.info(f"Attempting to connect to Redis at {self.redis_host}:{self.redis_port}")
@@ -90,21 +98,31 @@ class RTSPToRedis:
         self.rtsp_connection_status.set(0)
         raise ValueError("Failed to initialize video capture after multiple attempts")
 
-    def store_frame(self, frame):
-        start_time = time.time()
-        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
-        encoded_frame = base64.b64encode(buffer).decode("utf-8")
+    def process_frames(self):
+        while not self.should_stop.is_set():
+            try:
+                frame = self.frame_queue.get(timeout=1)
+                self.store_frame(frame)
+                self.frame_queue.task_done()
+                self.queue_size.set(self.frame_queue.qsize())
+            except Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error processing frame: {str(e)}")
+                self.redis_errors.inc()
 
-        frame_data = json.dumps({"frame": encoded_frame, "timestamp": time.time()})
+    def store_frame(self, frame):
+        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
 
         if self.redis_client is None:
             logger.error("Redis client is not initialized")
             return
 
         try:
+            start_time = time.time()
             redis_start_time = time.time()
             pipeline = self.redis_client.pipeline()
-            pipeline.lpush("raw_frame_buffer", frame_data)
+            pipeline.lpush("raw_frame_buffer", buffer.tobytes())
             pipeline.ltrim("raw_frame_buffer", 0, self.frame_buffer_size - 1)
             pipeline.llen("raw_frame_buffer")
             _, _, current_buffer_size = pipeline.execute()
@@ -122,7 +140,11 @@ class RTSPToRedis:
 
     def run(self):
         start_http_server(self.prometheus_port)
-        while True:
+        self.processing_thread = threading.Thread(target=self.process_frames)
+        self.processing_thread.daemon = True
+        self.processing_thread.start()
+
+        while not self.should_stop.is_set():
             cap = None
             try:
                 self.initialize_redis()
@@ -133,7 +155,7 @@ class RTSPToRedis:
                 fps_update_time = time.time()
                 rtsp_frames_count = 0
 
-                while True:
+                while not self.should_stop.is_set():
                     current_time = time.time()
                     elapsed_time = current_time - last_frame_time
 
@@ -146,9 +168,13 @@ class RTSPToRedis:
                     rtsp_frames_count += 1
 
                     if elapsed_time >= frame_time:
-                        self.store_frame(frame)
-                        last_frame_time = current_time
-                        frames_count += 1
+                        if not self.frame_queue.full():
+                            self.frame_queue.put(frame)
+                            frames_count += 1
+                            last_frame_time = current_time
+                        else:
+                            logger.warning("Frame queue is full. Dropping frame.")
+                            self.frames_dropped.inc()
 
                         # Update FPS every second
                         if current_time - fps_update_time >= 1:
@@ -175,6 +201,12 @@ class RTSPToRedis:
                     cap.release()
                 self.rtsp_connection_status.set(0)
                 logger.info("RTSP to Redis service restarting...")
+
+    def stop(self):
+        self.should_stop.set()
+        if self.processing_thread:
+            self.processing_thread.join()
+        logger.info("RTSP to Redis service stopped.")
 
 
 if __name__ == "__main__":
