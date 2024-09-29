@@ -99,12 +99,23 @@ class RTSPToRedis:
         raise ValueError("Failed to initialize video capture after multiple attempts")
 
     def process_frames(self):
+        frames_processed = 0
+        last_fps_update = time.time()
+
         while not self.should_stop.is_set():
             try:
                 frame = self.frame_queue.get(timeout=1)
                 self.store_frame(frame)
                 self.frame_queue.task_done()
                 self.queue_size.set(self.frame_queue.qsize())
+
+                frames_processed += 1
+                current_time = time.time()
+                if current_time - last_fps_update >= 1:
+                    self.processed_fps.set(frames_processed / (current_time - last_fps_update))
+                    frames_processed = 0
+                    last_fps_update = current_time
+
             except Empty:
                 continue
             except Exception as e:
@@ -151,7 +162,6 @@ class RTSPToRedis:
                 cap = self.initialize_capture()
                 frame_time = 1 / self.fps
                 last_frame_time = time.time()
-                frames_count = 0
                 fps_update_time = time.time()
                 rtsp_frames_count = 0
 
@@ -159,30 +169,28 @@ class RTSPToRedis:
                     current_time = time.time()
                     elapsed_time = current_time - last_frame_time
 
-                    ret, frame = cap.read()
-                    if not ret:
-                        logger.warning("Failed to read frame. Reinitializing capture.")
-                        self.rtsp_errors.inc()
-                        break
-
-                    rtsp_frames_count += 1
-
                     if elapsed_time >= frame_time:
+                        ret, frame = cap.read()
+                        if not ret:
+                            logger.warning("Failed to read frame. Reinitializing capture.")
+                            self.rtsp_errors.inc()
+                            break
+
+                        rtsp_frames_count += 1
+
                         if not self.frame_queue.full():
                             self.frame_queue.put(frame)
-                            frames_count += 1
-                            last_frame_time = current_time
                         else:
                             logger.warning("Frame queue is full. Dropping frame.")
                             self.frames_dropped.inc()
 
+                        last_frame_time = current_time
+
                         # Update FPS every second
                         if current_time - fps_update_time >= 1:
                             elapsed_fps_time = current_time - fps_update_time
-                            self.actual_fps.set(frames_count / elapsed_fps_time)
+                            self.actual_fps.set(rtsp_frames_count / elapsed_fps_time)
                             self.rtsp_input_fps.set(rtsp_frames_count / elapsed_fps_time)
-                            self.processed_fps.set(frames_count / elapsed_fps_time)
-                            frames_count = 0
                             rtsp_frames_count = 0
                             fps_update_time = current_time
                     else:
