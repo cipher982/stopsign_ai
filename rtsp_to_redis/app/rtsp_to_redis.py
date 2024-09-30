@@ -18,6 +18,9 @@ from redis.exceptions import RedisError
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+RAW_FRAME_KEY = str(os.getenv("RAW_FRAME_KEY"))
+logger.info(f"RAW_FRAME_KEY: {RAW_FRAME_KEY}")
+
 
 class RTSPToRedis:
     def __init__(self):
@@ -133,15 +136,16 @@ class RTSPToRedis:
             start_time = time.time()
             redis_start_time = time.time()
             pipeline = self.redis_client.pipeline()
-            pipeline.lpush("raw_frame_buffer", buffer.tobytes())
-            pipeline.ltrim("raw_frame_buffer", 0, self.frame_buffer_size - 1)
-            pipeline.llen("raw_frame_buffer")
+            pipeline.lpush(RAW_FRAME_KEY, buffer.tobytes())
+            pipeline.ltrim(RAW_FRAME_KEY, 0, self.frame_buffer_size - 1)
+            pipeline.llen(RAW_FRAME_KEY)
             _, _, current_buffer_size = pipeline.execute()
             self.redis_operation_latency.observe(time.time() - redis_start_time)
 
             self.frames_processed.inc()
             self.buffer_size.set(float(current_buffer_size))
             self.buffer_utilization.set((float(current_buffer_size) / self.frame_buffer_size) * 100)
+
         except RedisError as e:
             logger.error(f"Redis operation failed: {str(e)}")
             self.redis_errors.inc()

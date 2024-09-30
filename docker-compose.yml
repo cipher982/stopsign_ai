@@ -7,9 +7,7 @@ services:
     env_file:
       - .env
     environment:
-      - YOLO_MODEL_PATH=/app/models/yolov8n.pt
       - PROMETHEUS_PORT=8002
-      - CUDA_VISIBLE_DEVICES=1
     volumes:
       - ./models:/app/models
       - ./data:/app/data
