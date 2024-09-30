@@ -1,4 +1,3 @@
-import base64
 import contextlib
 import io
 import json
@@ -21,6 +20,7 @@ from prometheus_client import Gauge
 from prometheus_client import Histogram
 from prometheus_client import start_http_server
 from redis import Redis
+from redis import exceptions as redis_exceptions
 from ultralytics import YOLO
 
 from stopsign.config import Config
@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
 PROMETHEUS_PORT = int(os.environ.get("PROMETHEUS_PORT", 8000))  # Default to 8000 if not set
+
+RAW_FRAME_KEY = str(os.getenv("RAW_FRAME_KEY"))
+PROCESSED_FRAME_KEY = str(os.getenv("PROCESSED_FRAME_KEY"))
+logger.info(f"RAW_FRAME_KEY: {RAW_FRAME_KEY}")
+logger.info(f"PROCESSED_FRAME_KEY: {PROCESSED_FRAME_KEY}")
 
 
 class VideoAnalyzer:
@@ -200,15 +205,32 @@ class VideoAnalyzer:
             raise ValueError("Error: YOLO_MODEL_PATH environment variable is not set.")
         model = YOLO(model_path, task="detect")
         model.to("cuda")
-        logger.info("Model loaded successfully")
+        logger.info(f"Model loaded successfully: {model_path}")
         return model
 
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
-        frame_data = self.redis_client.lindex(key, 0)
-        if frame_data:
-            nparr = np.frombuffer(frame_data, dtype=np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            return frame
+        try:
+            # Check the length of the list first
+            list_length = self.redis_client.llen(key)
+            if list_length == 0:
+                logger.warning(f"Redis list '{key}' is empty")
+                return None
+
+            # Use LPOP to get the newest frame
+            frame_data = self.redis_client.lpop(key)
+            if frame_data:
+                logger.info(f"Frame retrieved from Redis. Size: {len(frame_data)} bytes")
+                nparr = np.frombuffer(frame_data, dtype=np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if frame is None:
+                    logger.error("Failed to decode frame data")
+                else:
+                    logger.info(f"Frame decoded successfully. Shape: {frame.shape}")
+                return frame
+            else:
+                logger.warning(f"No frame available in Redis for key: {key}")
+        except Exception as e:
+            logger.error(f"Error retrieving frame from Redis: {str(e)}")
         return None
 
     def process_stream(self):
@@ -216,9 +238,25 @@ class VideoAnalyzer:
         self.last_fps_update = time.time()
         self.start_time = time.time()
 
+        logger.info(
+            f"Connecting to Redis at {self.redis_client.connection_pool.connection_kwargs['host']}:"
+            f"{self.redis_client.connection_pool.connection_kwargs['port']}"
+        )
+
+        try:
+            self.redis_client.ping()
+            logger.info("Successfully connected to Redis")
+        except redis_exceptions.ConnectionError as e:
+            logger.error(f"Failed to connect to Redis: {str(e)}")
+            return
+
         while True:
             try:
-                frame = self.get_frame_from_redis("raw_frame_buffer")
+                if self.frame_count % 100 == 0:  # Every 100 iterations
+                    list_length = self.redis_client.llen(RAW_FRAME_KEY)
+                    logger.info(f"Current length of {RAW_FRAME_KEY}: {list_length}")
+
+                frame = self.get_frame_from_redis(RAW_FRAME_KEY)
                 if frame is None:
                     logger.warning("No frame available in Redis. Waiting...")
                     time.sleep(1)
@@ -240,7 +278,7 @@ class VideoAnalyzer:
                 self.frame_count += 1
                 self.fps_frame_count += 1
                 self.frames_processed.inc()
-                self.buffer_size.set(self.redis_client.llen("processed_frame_buffer"))  # type: ignore
+                self.buffer_size.set(self.redis_client.llen(PROCESSED_FRAME_KEY))  # type: ignore
 
                 # Update memory and CPU usage
                 process = psutil.Process(os.getpid())
@@ -451,28 +489,39 @@ class VideoAnalyzer:
         }
 
     def store_frame_data(self, frame: np.ndarray, metadata: Dict):
-        encoding_start = time.time()
-        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality])
-        encoded_frame = base64.b64encode(buffer).decode("utf-8")
-        self.frame_encoding_time.observe(time.time() - encoding_start)
+        # Ensure the frame is in BGR24 format
+        if frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3:
+            raise ValueError("Frame must be in BGR24 format (3-channel uint8 numpy array)")
 
-        timestamp = time.time()
-        frame_data = json.dumps({"frame": encoded_frame, "metadata": metadata, "timestamp": timestamp})
+        # Encode the frame as JPEG
+        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        raw_frame_data = buffer.tobytes()
 
         start_time = time.time()
         pipeline = self.redis_client.pipeline()
-        pipeline.lpush("processed_frame_buffer", frame_data)
-        pipeline.ltrim("processed_frame_buffer", 0, self.frame_buffer_size - 1)
+
+        # Store processed frame data
+        pipeline.lpush(PROCESSED_FRAME_KEY, raw_frame_data)
+        pipeline.ltrim(PROCESSED_FRAME_KEY, 0, self.frame_buffer_size - 1)
+
+        # Store metadata separately
+        if metadata:
+            metadata_key = f"frame_metadata:{self.frame_count}"
+            pipeline.set(metadata_key, json.dumps(metadata))
+            pipeline.expire(metadata_key, 300)  # expire after 5 minutes, adjust as needed
+
         pipeline.execute()
         self.redis_op_latency.observe(time.time() - start_time)
 
-        logger.debug(f"Frame {self.frame_count} stored in Redis")
+        logger.debug(f"Processed frame {self.frame_count} stored in Redis")
+        self.frame_count += 1
 
     def get_frame_dimensions(self):
         # Attempt to get frame dimensions from Redis
+        time.sleep(3)
         max_attempts = 3
         for _ in range(max_attempts):
-            frame = self.get_frame_from_redis("processed_frame_buffer")
+            frame = self.get_frame_from_redis(RAW_FRAME_KEY)
             if frame is not None:
                 return frame.shape[1], frame.shape[0]  # width, height
             time.sleep(0.5)
