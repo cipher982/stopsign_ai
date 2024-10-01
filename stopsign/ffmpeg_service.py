@@ -85,7 +85,7 @@ def main():
     try:
         while True:
             # Blocking pop with timeout
-            task = r.blpop("raw_frame_buffer", timeout=5)
+            task = r.blpop([REDIS_BUFFER_KEY], timeout=5)
             if task:
                 _, data = task
                 try:
