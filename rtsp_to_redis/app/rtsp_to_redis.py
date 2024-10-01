@@ -18,8 +18,7 @@ from redis.exceptions import RedisError
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-RAW_FRAME_KEY = str(os.getenv("RAW_FRAME_KEY"))
-logger.info(f"RAW_FRAME_KEY: {RAW_FRAME_KEY}")
+RAW_FRAME_KEY = "raw_frame_buffer"
 
 
 class RTSPToRedis:
@@ -41,7 +40,7 @@ class RTSPToRedis:
 
     def initialize_metrics(self):
         self.frames_processed = Counter("frames_processed", "Number of frames processed")
-        self.buffer_size = Gauge("buffer_size", "Current size of the frame buffer")
+        self.buffer_size = Gauge("rtsp_redis_buffer_size", "Current size of the frame buffer")
         self.retries = Counter("retries", "Number of retries for video capture initialization")
         self.disconnects = Counter("disconnects", "Number of disconnects from Redis")
         self.rtsp_connection_status = Gauge(
@@ -68,6 +67,7 @@ class RTSPToRedis:
 
         self.queue_size = Gauge("rtsp_queue_size", "Current size of the RTSP frame processing queue")
         self.frames_dropped = Counter("rtsp_frames_dropped", "Number of frames dropped due to full queue")
+        self.redis_buffer_size = Gauge("redis_buffer_size", "Current size of the Redis frame buffer")
 
     def initialize_redis(self):
         logger.info(f"Attempting to connect to Redis at {self.redis_host}:{self.redis_port}")

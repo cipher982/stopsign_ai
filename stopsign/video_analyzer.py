@@ -38,10 +38,8 @@ MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
 PROMETHEUS_PORT = int(os.environ.get("PROMETHEUS_PORT", 8000))  # Default to 8000 if not set
 
-RAW_FRAME_KEY = str(os.getenv("RAW_FRAME_KEY"))
-PROCESSED_FRAME_KEY = str(os.getenv("PROCESSED_FRAME_KEY"))
-logger.info(f"RAW_FRAME_KEY: {RAW_FRAME_KEY}")
-logger.info(f"PROCESSED_FRAME_KEY: {PROCESSED_FRAME_KEY}")
+RAW_FRAME_KEY = "raw_frame_buffer"
+PROCESSED_FRAME_KEY = "processed_frame_buffer"
 
 
 class VideoAnalyzer:
@@ -57,6 +55,7 @@ class VideoAnalyzer:
         self.model = self.initialize_model()
         self.car_tracker = CarTracker(config, self.db)
         self.stop_detector = StopDetector(config, db)
+        self.frame_rate = 15
         self.frame_count = 0
         self.fps_frame_count = 0
         self.frame_buffer_size = self.config.frame_buffer_size
@@ -219,13 +218,10 @@ class VideoAnalyzer:
             # Use LPOP to get the newest frame
             frame_data = self.redis_client.lpop(key)
             if frame_data:
-                logger.info(f"Frame retrieved from Redis. Size: {len(frame_data)} bytes")
-                nparr = np.frombuffer(frame_data, dtype=np.uint8)
+                nparr = np.frombuffer(frame_data, dtype=np.uint8)  # type: ignore
                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 if frame is None:
                     logger.error("Failed to decode frame data")
-                else:
-                    logger.info(f"Frame decoded successfully. Shape: {frame.shape}")
                 return frame
             else:
                 logger.warning(f"No frame available in Redis for key: {key}")
@@ -252,10 +248,6 @@ class VideoAnalyzer:
 
         while True:
             try:
-                if self.frame_count % 100 == 0:  # Every 100 iterations
-                    list_length = self.redis_client.llen(RAW_FRAME_KEY)
-                    logger.info(f"Current length of {RAW_FRAME_KEY}: {list_length}")
-
                 frame = self.get_frame_from_redis(RAW_FRAME_KEY)
                 if frame is None:
                     logger.warning("No frame available in Redis. Waiting...")
@@ -296,6 +288,12 @@ class VideoAnalyzer:
                 while not self.stats_queue.empty():
                     _ = self.stats_queue.get()
                     self.stop_detector.db.update_daily_statistics()
+
+                # Implement frame rate control
+                frame_processing_time = time.time() - start_time
+                time_to_next_frame = (1.0 / self.frame_rate) - frame_processing_time
+                if time_to_next_frame > 0:
+                    time.sleep(time_to_next_frame)
 
             except Exception as e:
                 logger.error(f"Error in stream processing: {str(e)}")
