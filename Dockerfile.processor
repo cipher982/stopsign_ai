@@ -19,16 +19,20 @@ RUN pip install uv
 WORKDIR /app
 
 # Copy over dependency files
-COPY pyproject.toml /app/pyproject.toml
-COPY uv.lock /app/uv.lock
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies using uv
 RUN uv sync
 
-# Copy project
-COPY stopsign /app/stopsign
+RUN uv pip install debugpy
+
+# Copy stuff
 COPY models /app/models
 COPY config.yaml /app/config.yaml
 
+# Add the current directory to PYTHONPATH
+ENV PYTHONPATH="${PYTHONPATH}:/app"
+
 # Run the application
+# CMD ["uv", "run", "python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "stopsign/video_analyzer.py"]
 CMD ["uv", "run", "python", "-m", "stopsign.video_analyzer"]
