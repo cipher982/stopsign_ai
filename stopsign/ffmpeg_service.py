@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -96,6 +97,8 @@ def log_stream_files():
 
 
 def main():
+    clean_stream_directory()
+
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
     frame_shape = get_frame_shape(r)
     if frame_shape is None:
@@ -141,6 +144,20 @@ def main():
             ffmpeg_process.stdin.close()  # type: ignore
             ffmpeg_process.terminate()
             ffmpeg_process.wait()
+
+
+def clean_stream_directory():
+    """Clean up the stream directory by removing all files."""
+    logger.info("Cleaning up stream directory...")
+    for filename in os.listdir(STREAM_DIR):
+        file_path = os.path.join(STREAM_DIR, filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            logger.error(f"Failed to delete {file_path}. Reason: {e}")
 
 
 if __name__ == "__main__":
