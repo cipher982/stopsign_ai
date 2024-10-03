@@ -539,6 +539,7 @@ def main(config: Config):
             host="0.0.0.0",
             port=8000,
             reload=False,
+            log_level="warning",
             # reload_dirs=["./stopsign"],  # Use a relative path
             # reload_excludes=["./app/data/*"],  # Use a relative path
         )
@@ -547,6 +548,6 @@ def main(config: Config):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)  # Change to DEBUG level
+    logging.basicConfig(level=logging.DEBUG)
     config = Config("./config.yaml")
     main(config)
