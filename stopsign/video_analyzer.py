@@ -451,6 +451,12 @@ class VideoAnalyzer:
 
         cv2.putText(frame, f"Frame: {self.frame_count}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
+        # Add timestamp in top-right corner
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        text_size, _ = cv2.getTextSize(current_time, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        text_x = frame.shape[1] - text_size[0] - 10
+        cv2.putText(frame, current_time, (text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
         return frame
 
     def draw_box(self, frame: np.ndarray, car, box, color=(0, 255, 0), thickness=2):
