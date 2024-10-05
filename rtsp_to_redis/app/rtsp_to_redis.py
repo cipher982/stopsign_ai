@@ -40,7 +40,7 @@ class RTSPToRedis:
 
     def initialize_metrics(self):
         self.frames_processed = Counter("frames_processed", "Number of frames processed")
-        self.buffer_size = Gauge("rtsp_redis_buffer_size", "Current size of the frame buffer")
+        self.rtsp_redis_buffer_size = Gauge("rtsp_redis_buffer_size", "Current size of the frame buffer")
         self.retries = Counter("retries", "Number of retries for video capture initialization")
         self.disconnects = Counter("disconnects", "Number of disconnects from Redis")
         self.rtsp_connection_status = Gauge(
@@ -67,7 +67,6 @@ class RTSPToRedis:
 
         self.queue_size = Gauge("rtsp_queue_size", "Current size of the RTSP frame processing queue")
         self.frames_dropped = Counter("rtsp_frames_dropped", "Number of frames dropped due to full queue")
-        self.redis_buffer_size = Gauge("redis_buffer_size", "Current size of the Redis frame buffer")
 
     def initialize_redis(self):
         logger.info(f"Attempting to connect to Redis at {self.redis_host}:{self.redis_port}")
@@ -143,7 +142,7 @@ class RTSPToRedis:
             self.redis_operation_latency.observe(time.time() - redis_start_time)
 
             self.frames_processed.inc()
-            self.buffer_size.set(float(current_buffer_size))
+            self.rtsp_redis_buffer_size.set(float(current_buffer_size))
             self.buffer_utilization.set((float(current_buffer_size) / self.frame_buffer_size) * 100)
 
         except RedisError as e:
