@@ -40,8 +40,6 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         "bgr24",
         "-s",
         f"{frame_shape[0]}x{frame_shape[1]}",
-        "-r",
-        FRAME_RATE,
         "-i",
         "-",
         "-c:v",
@@ -110,6 +108,9 @@ def main():
         logger.error("Failed to start FFmpeg process")
         return
 
+    # last_frame_time = time.time()
+    # frame_duration = 1.0 / float(FRAME_RATE)
+
     try:
         while True:
             # Blocking pop with timeout
@@ -118,16 +119,19 @@ def main():
                 _, data = task  # type: ignore
                 if ffmpeg_process.stdin:
                     try:
-                        # Decode the JPEG data
                         nparr = np.frombuffer(data, np.uint8)
                         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                        # print the frame shape
                         resized_frame = cv2.resize(frame, (frame_shape[0], frame_shape[1]))
                         raw_frame = resized_frame.tobytes()
-
                         ffmpeg_process.stdin.write(raw_frame)
                         ffmpeg_process.stdin.flush()
+
+                        # # Control frame feeding rate
+                        # time_elapsed = time.time() - last_frame_time
+                        # sleep_time = frame_duration - time_elapsed
+                        # if sleep_time > 0:
+                        #     time.sleep(sleep_time)
+                        # last_frame_time = time.time()
                     except BrokenPipeError:
                         logger.error("FFmpeg process closed unexpectedly. Restarting...")
                         ffmpeg_process = start_ffmpeg_process(frame_shape)
@@ -140,8 +144,9 @@ def main():
     except KeyboardInterrupt:
         logger.info("Shutting down...")
     finally:
+        if ffmpeg_process and ffmpeg_process.stdin:
+            ffmpeg_process.stdin.close()
         if ffmpeg_process:
-            ffmpeg_process.stdin.close()  # type: ignore
             ffmpeg_process.terminate()
             ffmpeg_process.wait()
 
