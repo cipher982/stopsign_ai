@@ -133,8 +133,9 @@ class VideoAnalyzer:
         # Frame processing metrics
         self.frames_processed = Counter("frames_processed", "Number of frames processed")
         self.frame_processing_time = Histogram("frame_processing_time_seconds", "Time taken to process each frame")
+        self.total_frame_time = Gauge("total_frame_time_seconds", "Total time taken for each frame")
         self.fps = Gauge("fps", "Frames processed per second")
-        self.buffer_size = Gauge("buffer_size", "Current size of the frame buffer")
+        self.processed_buffer_size = Gauge("processed_frame_buffer_size", "Current size of the processed frame buffer")
 
         # Error and performance metrics
         self.exception_counter = Counter("exceptions_total", "Total number of exceptions", ["type", "method"])
@@ -209,25 +210,20 @@ class VideoAnalyzer:
 
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
         try:
-            # Check the length of the list first
-            list_length = self.redis_client.llen(key)
-            if list_length == 0:
-                logger.warning(f"Redis list '{key}' is empty")
-                return None
-
-            # Use LPOP to get the newest frame
-            frame_data = self.redis_client.lpop(key)
+            # Use BLPOP to block until a frame is available or timeout after 1 second
+            frame_data = self.redis_client.blpop([key], timeout=1)
             if frame_data:
-                nparr = np.frombuffer(frame_data, dtype=np.uint8)  # type: ignore
+                _, data = frame_data  # type: ignore
+                nparr = np.frombuffer(data, dtype=np.uint8)
                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 if frame is None:
                     logger.error("Failed to decode frame data")
                 return frame
             else:
-                logger.warning(f"No frame available in Redis for key: {key}")
+                return None
         except Exception as e:
             logger.error(f"Error retrieving frame from Redis: {str(e)}")
-        return None
+            return None
 
     def process_stream(self):
         logger.info("Starting frame processing")
@@ -246,17 +242,24 @@ class VideoAnalyzer:
             logger.error(f"Failed to connect to Redis: {str(e)}")
             return
 
+        last_usage_update = time.time()
+        usage_update_interval = 60
+
         while True:
             try:
                 frame = self.get_frame_from_redis(RAW_FRAME_KEY)
+
                 if frame is None:
                     logger.warning("No frame available in Redis. Waiting...")
                     time.sleep(1)
                     continue
 
+                frame_start_time = time.time()
+
                 # Increment incoming FPS counter
                 self.incoming_fps_count += 1
 
+                # Timing for frame processing
                 start_time = time.time()
                 processed_frame, metadata = self.process_frame(frame)
                 processing_time = time.time() - start_time
@@ -264,36 +267,33 @@ class VideoAnalyzer:
 
                 self.store_frame_data(processed_frame, metadata)
 
+                self.processed_buffer_size.set(self.redis_client.llen(PROCESSED_FRAME_KEY))  # type: ignore
+
                 # Increment output FPS counter
                 self.output_fps_count += 1
 
                 self.frame_count += 1
                 self.fps_frame_count += 1
                 self.frames_processed.inc()
-                self.buffer_size.set(self.redis_client.llen(PROCESSED_FRAME_KEY))  # type: ignore
 
-                # Update memory and CPU usage
-                process = psutil.Process(os.getpid())
-                self.current_memory_usage.set(process.memory_info().rss)
-                self.current_cpu_usage.set(process.cpu_percent())
-                self.update_temp_metrics()
-
+                # Update usage metrics less frequently
                 current_time = time.time()
-                elapsed_time = current_time - self.last_fps_update
-                if elapsed_time >= 1:  # Update FPS every second
-                    self.fps.set(self.fps_frame_count / elapsed_time)
-                    self.fps_frame_count = 0
-                    self.last_fps_update = current_time
+                if current_time - last_usage_update >= usage_update_interval:
+                    self.update_usage_metrics()
+                    last_usage_update = current_time
 
                 while not self.stats_queue.empty():
                     _ = self.stats_queue.get()
                     self.stop_detector.db.update_daily_statistics()
 
-                # Implement frame rate control
-                frame_processing_time = time.time() - start_time
-                time_to_next_frame = (1.0 / self.frame_rate) - frame_processing_time
-                if time_to_next_frame > 0:
-                    time.sleep(time_to_next_frame)
+                total_frame_time = time.time() - frame_start_time
+                self.total_frame_time.set(total_frame_time)
+
+                # # Implement frame rate control
+                # frame_processing_time = time.time() - start_time
+                # time_to_next_frame = (1.0 / self.frame_rate) - frame_processing_time
+                # if time_to_next_frame > 0:
+                #     time.sleep(time_to_next_frame)
 
             except Exception as e:
                 logger.error(f"Error in stream processing: {str(e)}")
@@ -537,6 +537,12 @@ class VideoAnalyzer:
         self.stop_detector.update_stop_zone(new_config)
         self.config.update_stop_zone(new_config)  # Ensure this method exists in Config class
         logger.info(f"Stop zone configuration updated: {new_config}")
+
+    def update_usage_metrics(self):
+        process = psutil.Process(os.getpid())
+        self.current_memory_usage.set(process.memory_info().rss)
+        self.current_cpu_usage.set(process.cpu_percent())
+        self.update_temp_metrics()
 
     def run(self):
         while True:
