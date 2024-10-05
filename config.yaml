@@ -5,7 +5,7 @@ video_processing:
   frame_buffer_size: 500 # number of frames to buffer
 
 stopsign_detection:
-  stop_line: [[550, 500], [400, 600]]
+  stop_line: [[600, 500], [500, 600]]
   stop_box_tolerance: 50 # pixels
   min_stop_time: 2  # seconds
   max_movement_speed: 20  # pixels / second
