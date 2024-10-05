@@ -40,6 +40,8 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         "bgr24",
         "-s",
         f"{frame_shape[0]}x{frame_shape[1]}",
+        "-r",
+        FRAME_RATE,
         "-i",
         "-",
         "-c:v",
@@ -54,6 +56,8 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         "4M",
         "-g",
         "30",
+        "-r",
+        FRAME_RATE,
         "-f",
         "hls",
         "-hls_time",
@@ -62,6 +66,8 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         "10",
         "-hls_flags",
         "delete_segments",
+        "-loglevel",
+        "warning",
         HLS_PLAYLIST,
     ]
 
@@ -108,12 +114,8 @@ def main():
         logger.error("Failed to start FFmpeg process")
         return
 
-    # last_frame_time = time.time()
-    # frame_duration = 1.0 / float(FRAME_RATE)
-
     try:
         while True:
-            # Blocking pop with timeout
             task = r.blpop([REDIS_BUFFER_KEY], timeout=5)
             if task:
                 _, data = task  # type: ignore
@@ -126,17 +128,10 @@ def main():
                         ffmpeg_process.stdin.write(raw_frame)
                         ffmpeg_process.stdin.flush()
 
-                        # # Control frame feeding rate
-                        # time_elapsed = time.time() - last_frame_time
-                        # sleep_time = frame_duration - time_elapsed
-                        # if sleep_time > 0:
-                        #     time.sleep(sleep_time)
-                        # last_frame_time = time.time()
                     except BrokenPipeError:
                         logger.error("FFmpeg process closed unexpectedly. Restarting...")
                         ffmpeg_process = start_ffmpeg_process(frame_shape)
 
-            # Periodically check FFmpeg process
             if ffmpeg_process.poll() is not None:
                 logger.error("FFmpeg process terminated. Restarting...")
                 ffmpeg_process = start_ffmpeg_process(frame_shape)
