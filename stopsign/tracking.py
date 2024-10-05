@@ -89,18 +89,20 @@ class StopZone:
         return np.array(corners, dtype=np.int32)
 
     def _calculate_stop_box(self) -> List[Point]:
-        perp_vector = np.array([-np.sin(self.angle), np.cos(self.angle)])
-        direction = np.array([np.cos(self.angle), np.sin(self.angle)])
-        half_width = self.zone_width / 2 + self.stop_box_tolerance
-        half_length = self.stop_box_tolerance
+        # Get the start and end points of the stop line
+        (x1, y1), (x2, y2) = self.stop_line
 
-        corners = [
-            self.midpoint + half_width * direction + half_length * perp_vector,
-            self.midpoint - half_width * direction + half_length * perp_vector,
-            self.midpoint - half_width * direction - half_length * perp_vector,
-            self.midpoint + half_width * direction - half_length * perp_vector,
-        ]
-        return [cast(Point, tuple(corner)) for corner in corners]
+        # Extend the box along the x-axis
+        left_x = min(x1, x2) - self.stop_box_tolerance
+        right_x = max(x1, x2) + self.stop_box_tolerance
+
+        # Create the box corners
+        top_left = (left_x, min(y1, y2))
+        top_right = (right_x, min(y1, y2))
+        bottom_right = (right_x, max(y1, y2))
+        bottom_left = (left_x, max(y1, y2))
+
+        return [top_left, top_right, bottom_right, bottom_left]
 
     @property
     def angle(self) -> float:
