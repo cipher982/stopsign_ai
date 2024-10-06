@@ -92,15 +92,17 @@ class StopZone:
         # Get the start and end points of the stop line
         (x1, y1), (x2, y2) = self.stop_line
 
-        # Extend the box along the x-axis
-        left_x = min(x1, x2) - self.stop_box_tolerance
-        right_x = max(x1, x2) + self.stop_box_tolerance
+        # Extend the stop line only on the x-axis by stop_box_tolerance
+        left_x1 = x1 - self.stop_box_tolerance
+        left_x2 = x2 - self.stop_box_tolerance
+        right_x1 = x1 + self.stop_box_tolerance
+        right_x2 = x2 + self.stop_box_tolerance
 
-        # Create the box corners
-        top_left = (left_x, min(y1, y2))
-        top_right = (right_x, min(y1, y2))
-        bottom_right = (right_x, max(y1, y2))
-        bottom_left = (left_x, max(y1, y2))
+        # Create the box corners without altering the y-axis
+        top_left = (left_x1, y1)
+        top_right = (right_x1, y1)
+        bottom_right = (right_x2, y2)
+        bottom_left = (left_x2, y2)
 
         return [top_left, top_right, bottom_right, bottom_left]
 
