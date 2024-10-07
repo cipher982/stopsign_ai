@@ -1,7 +1,9 @@
 # ruff: noqa: E501
 import logging
 import os
+from datetime import datetime
 
+import pytz
 import redis
 import uvicorn
 from fasthtml.common import H1
@@ -398,6 +400,13 @@ async def get_recent_vehicle_passes():
             app.state.db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
         recent_passes = app.state.db.get_recent_vehicle_passes()
 
+        local_tz = pytz.timezone("America/Chicago")
+
+        def format_timestamp(timestamp_str):
+            utc_time = datetime.fromisoformat(timestamp_str).replace(tzinfo=pytz.UTC)
+            chicago_time = utc_time.astimezone(local_tz)
+            return chicago_time.strftime("%Y-%m-%d %I:%M:%S %p")
+
         # Create a styled list of recent passes
         passes_list = Ul(
             *[
@@ -405,7 +414,7 @@ async def get_recent_vehicle_passes():
                     Div(
                         Img(src=pass_data[6], alt="Vehicle Image", style="max-width: 200px; border-radius: 5px;"),
                         Div(
-                            P(f"Timestamp: {pass_data[1]}", style="font-weight: bold;"),
+                            P(f"{format_timestamp(pass_data[1])}", style="font-weight: bold;"),
                             P(f"Vehicle ID: {pass_data[2]}"),
                             P(f"Stop Score: {pass_data[3]}"),
                             P(f"Stop Duration: {pass_data[4]} seconds"),
