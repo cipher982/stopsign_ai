@@ -411,7 +411,9 @@ class VideoAnalyzer:
         overlay = frame.copy()
 
         car_in_stop_zone = any(
-            stop_zone.is_in_stop_zone(car.state.location) for car in cars.values() if not car.state.is_parked
+            stop_zone.is_in_stop_zone(car.state.location) and car.state.direction < 0
+            for car in cars.values()
+            if not car.state.is_parked
         )
 
         color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)

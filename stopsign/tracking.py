@@ -33,6 +33,7 @@ class CarState:
     consecutive_moving_frames: int = 0
     consecutive_stationary_frames: int = 0
     track: List[Tuple[Point, float]] = field(default_factory=list)
+    direction: float = 0.0
     last_update_time: float = 0.0
     stop_score: int = 0
     scored: bool = False
@@ -184,6 +185,7 @@ class Car:
         self._update_movement_status()
         self._update_parked_status()
         self.state.bbox = bbox
+        self.update_direction()
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
@@ -244,6 +246,18 @@ class Car:
             if self.state.consecutive_stationary_frames >= self.config.parked_frame_threshold:
                 self.state.is_parked = True
                 self.state.consecutive_moving_frames = 0
+
+    def update_direction(self) -> None:
+        """Calculate the direction based on the last 10 frames."""
+        window_size = 10
+        if len(self.state.track) < window_size:
+            self.state.direction = 0.0
+            return
+
+        recent_tracks = self.state.track[-window_size:]
+        x_positions = [pos[0] for pos, _ in recent_tracks]
+        delta_x = x_positions[-1] - x_positions[0]
+        self.state.direction = delta_x / window_size  # Average X movement per frame
 
     def __repr__(self) -> str:
         return (
@@ -318,6 +332,9 @@ class StopDetector:
         self.stop_zone.update_configuration(new_config)
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
+        if car.state.direction >= 0:
+            return
+
         if self.stop_zone.is_in_stop_zone(car.state.location):
             self._handle_car_in_stop_zone(car, timestamp)
         else:
