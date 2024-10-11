@@ -172,12 +172,15 @@ class Car:
         self.state = CarState()
         self.kalman_filter = KalmanFilterWrapper(process_noise=10, measurement_noise=10)
         self.config = config
+        self.largest_bbox = (0.0, 0.0, 0.0, 0.0)
+        self.largest_bbox_frame = None
 
     def update(
         self,
         location: Tuple[float, float],
         timestamp: float,
         bbox: Tuple[float, float, float, float],
+        frame: np.ndarray,
     ) -> None:
         """Update the car's state with new location data."""
         self._update_location(location, timestamp)
@@ -186,6 +189,17 @@ class Car:
         self._update_parked_status()
         self.state.bbox = bbox
         self.update_direction()
+        self._update_largest_bbox(bbox, frame)
+
+    def _update_largest_bbox(self, bbox: Tuple[float, float, float, float], frame: np.ndarray) -> None:
+        _, _, w, h = bbox
+        current_area = w * h
+        _, _, largest_w, largest_h = self.largest_bbox
+        largest_area = largest_w * largest_h
+
+        if current_area > largest_area:
+            self.largest_bbox = bbox
+            self.largest_bbox_frame = frame.copy()
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
@@ -274,7 +288,7 @@ class CarTracker:
         self.last_seen: Dict[int, float] = {}
         self.persistence_threshold = 10.0  # seconds
 
-    def update_cars(self, boxes: List, timestamp: float) -> None:
+    def update_cars(self, boxes: List, timestamp: float, frame: np.ndarray) -> None:
         current_car_ids = set()
 
         for box in boxes:
@@ -290,7 +304,7 @@ class CarTracker:
                 if car_id not in self.cars:
                     self.cars[car_id] = Car(id=car_id, config=self.config)
 
-                self.cars[car_id].update(location, timestamp, bbox)
+                self.cars[car_id].update(location, timestamp, bbox, frame)
                 self.last_seen[car_id] = timestamp
             except Exception as e:
                 logger.error(f"Error updating car {box.id}: {str(e)}")
@@ -360,11 +374,15 @@ class StopDetector:
                 car.state.stop_score = self.calculate_stop_score(car)
                 car.state.scored = True
 
-                # Save vehicle image
+                # Save vehicle image using the largest bounding box if available, otherwise use current frame
+                image_frame = car.largest_bbox_frame if car.largest_bbox_frame is not None else frame
+                image_bbox = car.largest_bbox if car.largest_bbox_frame is not None else car.state.bbox
+
+                # Save vehicle image using the largest bounding box
                 image_path = save_vehicle_image(
-                    frame=frame,
+                    frame=image_frame,
                     timestamp=timestamp,
-                    bbox=car.state.bbox,
+                    bbox=image_bbox,
                 )
 
                 # Save data to database
@@ -376,7 +394,6 @@ class StopDetector:
                     image_path=image_path,
                 )
 
-                print(f"Car {car.id} stop score: {car.state.stop_score}")  # Debug print
         elif car.state.stop_zone_state == "EXITED":
             # Reset for next approach
             car.state.stop_zone_state = "APPROACHING"
