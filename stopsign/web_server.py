@@ -2,6 +2,7 @@
 import logging
 import os
 from datetime import datetime
+from datetime import timedelta
 
 import pytz
 import redis
@@ -25,6 +26,7 @@ from fasthtml.common import Main
 from fasthtml.common import Nav
 from fasthtml.common import P
 from fasthtml.common import Script
+from fasthtml.common import Span
 from fasthtml.common import StaticFiles
 from fasthtml.common import Style
 from fasthtml.common import Title
@@ -405,28 +407,68 @@ async def get_recent_vehicle_passes():
         def format_timestamp(timestamp_str):
             utc_time = datetime.fromisoformat(timestamp_str).replace(tzinfo=pytz.UTC)
             chicago_time = utc_time.astimezone(local_tz)
-            return chicago_time.strftime("%Y-%m-%d %I:%M:%S %p")
+            now = datetime.now(local_tz)
+
+            if chicago_time.date() == now.date():
+                return chicago_time.strftime("%-I:%M:%S %p")
+            elif chicago_time.date() == now.date() - timedelta(days=1):
+                return f"Yesterday {chicago_time.strftime('%-I:%M %p')}"
+            elif chicago_time.year == now.year:
+                return chicago_time.strftime("%b %-d, %-I:%M %p")
+            else:
+                return chicago_time.strftime("%b %-d, %Y, %-I:%M %p")
+
+        def calculate_speed_score(min_speed):
+            percentile = app.state.db.get_min_speed_percentile(min_speed)
+            return round(100 - percentile)
 
         # Create a styled list of recent passes
         passes_list = Ul(
             *[
                 Li(
                     Div(
-                        Img(src=pass_data[6], alt="Vehicle Image", style="max-width: 200px; border-radius: 5px;"),
                         Div(
-                            P(f"{format_timestamp(pass_data[1])}", style="font-weight: bold;"),
-                            P(f"Vehicle ID: {pass_data[2]}"),
-                            P(f"Stop Score: {pass_data[3]}"),
-                            P(f"Stop Duration: {pass_data[4]} seconds"),
-                            P(f"Min Speed: {pass_data[5]:.2f} km/h"),
-                            style="margin-left: 20px;",
+                            Img(
+                                src=pass_data[6],
+                                alt="Vehicle Image",
+                                style="width: 100%; height: auto; border-radius: 5px;",
+                            ),
+                            style="flex: 0 0 150px; margin-right: 15px;",
                         ),
-                        style="display: flex; align-items: center; background-color: var(--card-bg); padding: 15px; border-radius: 10px; margin-bottom: 15px;",
+                        Div(
+                            Div(
+                                f"{format_timestamp(pass_data[1])}",
+                                style="font-weight: bold; font-size: 1.1em; margin-bottom: 5px;",
+                            ),
+                            # Div(f"Vehicle ID: {pass_data[2]}", style="margin-bottom: 5px;"),
+                            Div(
+                                Span("Stop Score: ", style="font-weight: bold;"),
+                                Span(
+                                    f"{pass_data[3]}",
+                                    style=f"font-weight: bold; color: hsl({pass_data[3] * 1.2}, 100%, 50%);",
+                                ),
+                                style="margin-bottom: 3px;",
+                            ),
+                            Div(
+                                Span("Speed Score: ", style="font-weight: bold;"),
+                                Span(
+                                    f"{calculate_speed_score(pass_data[5]) // 10}",
+                                    style=f"font-weight: bold; color: hsl({calculate_speed_score(pass_data[5]) * 1.2}, 100%, 50%);",
+                                ),
+                                style="margin-bottom: 3px;",
+                            ),
+                            Div(
+                                f"Stop Duration: {pass_data[4]} seconds", style="font-size: 0.9em; margin-bottom: 3px;"
+                            ),
+                            Div(f"Min Speed: {pass_data[5]:.2f} pixels/second", style="font-size: 0.9em;"),
+                            style="flex: 1;",
+                        ),
+                        style="display: flex; align-items: center; background-color: var(--card-bg); padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
                     )
                 )
                 for pass_data in recent_passes
             ],
-            style="list-style-type: none; padding: 0;",
+            style="list-style-type: none; padding: 0; margin: 0;",
         )
 
         return Div(
