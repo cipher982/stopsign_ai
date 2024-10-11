@@ -110,17 +110,43 @@ class Database:
                 ),
             )
 
-    def add_vehicle_pass(self, vehicle_id, stop_score, stop_duration, min_speed, image_path):
+    def add_vehicle_pass(
+        self, vehicle_id: int, stop_score: int, stop_duration: float, min_speed: float, image_path: str
+    ):
         with self.get_cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO vehicle_passes (
-                    timestamp, vehicle_id, stop_score, stop_duration, min_speed, image_path
-                )
+                INSERT INTO vehicle_passes 
+                (timestamp, vehicle_id, stop_score, stop_duration, min_speed, image_path) 
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (datetime.now(), vehicle_id, stop_score, stop_duration, min_speed, image_path),
             )
+
+    def get_min_speed_percentile(self, min_speed: float, hours: int = 24) -> float:
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) * 100.0 / (
+                    SELECT COUNT(*) FROM vehicle_passes 
+                    WHERE timestamp >= datetime('now', ? || ' hours')
+                )
+                FROM vehicle_passes
+                WHERE min_speed <= ? AND timestamp >= datetime('now', ? || ' hours')
+                """,
+                (f"-{hours}", min_speed, f"-{hours}"),
+            )
+            return cursor.fetchone()[0]
+
+    def get_total_passes_last_24h(self):
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM vehicle_passes 
+                WHERE timestamp >= datetime('now', '-24 hours')
+                """
+            )
+            return cursor.fetchone()[0]
 
     def update_daily_statistics(self):
         with self.get_cursor() as cursor:
