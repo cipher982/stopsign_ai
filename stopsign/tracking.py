@@ -29,16 +29,18 @@ class CarState:
     bbox: Tuple[float, float, float, float] = field(default_factory=lambda: (0.0, 0.0, 0.0, 0.0))
     speed: float = 0.0
     prev_speed: float = 0.0
+    velocity: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
+    direction: float = 0.0
     is_parked: bool = False
     consecutive_moving_frames: int = 0
     consecutive_stationary_frames: int = 0
     track: List[Tuple[Point, float]] = field(default_factory=list)
-    direction: float = 0.0
     last_update_time: float = 0.0
     stop_score: float = 0
     scored: bool = False
     # stop detection
     stop_zone_state: str = "APPROACHING"
+    in_stop_zone: bool = False
     entry_time: float = 0.0
     exit_time: float = 0.0
     min_speed_in_zone: float = float("inf")
@@ -95,11 +97,15 @@ class StopZone:
         # Get the start and end points of the stop line
         (x1, y1), (x2, y2) = self.stop_line
 
-        # Extend the stop line only on the x-axis by stop_box_tolerance
-        left_x1 = x1 - self.stop_box_tolerance
-        left_x2 = x2 - self.stop_box_tolerance
-        right_x1 = x1 + self.stop_box_tolerance
-        right_x2 = x2 + self.stop_box_tolerance
+        # Calculate tolerances
+        left_tolerance = self.stop_box_tolerance
+        right_tolerance = self.stop_box_tolerance * 1.5
+
+        # Extend the stop line on the x-axis
+        left_x1 = x1 - left_tolerance
+        left_x2 = x2 - left_tolerance
+        right_x1 = x1 + right_tolerance
+        right_x2 = x2 + right_tolerance
 
         # Create the box corners without altering the y-axis
         top_left = (left_x1, y1)
@@ -125,12 +131,24 @@ class StopZone:
         half_width = self.zone_width / 2 + 50
 
         entry: Line = (
-            (float(entry_mid[0] - half_width * direction[0]), float(entry_mid[1] - half_width * direction[1])),
-            (float(entry_mid[0] + half_width * direction[0]), float(entry_mid[1] + half_width * direction[1])),
+            (
+                float(entry_mid[0] - half_width * direction[0]),
+                float(entry_mid[1] - half_width * direction[1]),
+            ),
+            (
+                float(entry_mid[0] + half_width * direction[0]),
+                float(entry_mid[1] + half_width * direction[1]),
+            ),
         )
         exit: Line = (
-            (float(exit_mid[0] - half_width * direction[0]), float(exit_mid[1] - half_width * direction[1])),
-            (float(exit_mid[0] + half_width * direction[0]), float(exit_mid[1] + half_width * direction[1])),
+            (
+                float(exit_mid[0] - half_width * direction[0]),
+                float(exit_mid[1] - half_width * direction[1]),
+            ),
+            (
+                float(exit_mid[0] + half_width * direction[0]),
+                float(exit_mid[1] + half_width * direction[1]),
+            ),
         )
         return entry, exit
 
@@ -139,7 +157,7 @@ class StopZone:
         return ((min(x_coords), min(y_coords)), (max(x_coords), max(y_coords)))
 
     def is_in_stop_zone(self, point: Point) -> bool:
-        return cv2.pointPolygonTest(self.corners, point, False) >= 0
+        return cv2.pointPolygonTest(np.array(self.stop_box, dtype=np.int32), point, False) >= 0
 
     def is_crossing_line(self, prev_point: Point, current_point: Point, line: Line) -> bool:
         def ccw(A, B, C):
@@ -172,7 +190,7 @@ class Car:
     def __init__(self, id: int, config: Config):
         self.id = id
         self.state = CarState()
-        self.kalman_filter = KalmanFilterWrapper(process_noise=10, measurement_noise=10)
+        self.kalman_filter = KalmanFilterWrapper(process_noise=0.1, measurement_noise=1.0)
         self.config = config
 
     def update(
@@ -199,40 +217,31 @@ class Car:
         self.state.last_update_time = timestamp
 
     def _update_speed(self, current_timestamp: float) -> None:
-        """Calculate and update the car's speed."""
+        """Calculate and update the car's velocity and speed."""
         history_length = min(len(self.state.track), 10)
         if history_length > 1:
-            # Use only the last 10 positions (or less if not available)
             recent_track = self.state.track[-history_length:]
-
-            # Calculate time differences and distances
             time_diffs = [current_timestamp - t for _, t in recent_track]
             positions = np.array([pos for pos, _ in recent_track])
-            distances = np.linalg.norm(np.diff(positions, axis=0), axis=1)
 
-            # Calculate speeds
-            speeds = distances / np.diff(time_diffs)
+            # Calculate velocity vector
+            velocities = np.diff(positions, axis=0) / np.diff(time_diffs)[:, np.newaxis]
+            median_velocity = np.median(velocities, axis=0)
 
-            # Use median speed to reduce impact of outliers
-            median_speed = np.median(speeds)
-            self.state.speed = float(median_speed) if len(speeds) > 0 else 0.0
+            self.state.velocity = (float(median_velocity[0]), float(median_velocity[1]))
+            self.state.speed = float(np.linalg.norm(median_velocity))
         else:
+            self.state.velocity = (0.0, 0.0)
             self.state.speed = 0.0
 
-        self.state.speed = abs(self.state.speed)
-        self.state.speed = min(self.state.speed, 200)  # Max speed limit
-
-        # Apply low-pass filter
-        alpha = 0.2
+        # Apply low-pass filter to speed
+        alpha = 0.3
         self.state.speed = alpha * self.state.speed + (1 - alpha) * self.state.prev_speed
         self.state.prev_speed = self.state.speed
 
-        # Set minimum speed threshold
-        self.state.speed = 0.0 if self.state.speed < 1.0 else self.state.speed
-
     def _update_movement_status(self) -> None:
         """Update the car's movement status based on its speed."""
-        if self.state.speed < self.config.max_movement_speed:
+        if abs(self.state.speed) < self.config.max_movement_speed:
             self.state.consecutive_moving_frames = 0
             self.state.consecutive_stationary_frames += 1
         else:
@@ -251,16 +260,9 @@ class Car:
                 self.state.consecutive_stationary_frames = 0
 
     def update_direction(self) -> None:
-        """Calculate the direction based on the last 10 frames."""
-        window_size = 10
-        if len(self.state.track) < window_size:
-            self.state.direction = 0.0
-            return
-
-        recent_tracks = self.state.track[-window_size:]
-        x_positions = [pos[0] for pos, _ in recent_tracks]
-        delta_x = x_positions[-1] - x_positions[0]
-        self.state.direction = delta_x / window_size  # Average X movement per frame
+        """Calculate the direction based on the velocity."""
+        vx, vy = self.state.velocity
+        self.state.direction = np.arctan2(vy, vx)
 
     def __repr__(self) -> str:
         return (
@@ -337,23 +339,28 @@ class StopDetector:
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
         if car.state.direction >= 0:
-            return
+            return  # moving left to right, ignore
 
         # Use bottom center of bounding box
         x, y, w, h = car.state.bbox
-        bottom_center = (x, y + h / 2)
+        car_box = np.array(
+            [
+                [x - w / 2, y - h / 2],  # Top-left
+                [x + w / 2, y - h / 2],  # Top-right
+                [x + w / 2, y + h / 2],  # Bottom-right
+                [x - w / 2, y + h / 2],  # Bottom-left
+            ],
+            dtype=np.int32,
+        )
 
-        # Check if bottom center or any corner of the bounding box is in the stop zone
-        corners = [
-            (x - w / 2, y - h / 2),  # Top-left
-            (x + w / 2, y - h / 2),  # Top-right
-            (x - w / 2, y + h / 2),  # Bottom-left
-            (x + w / 2, y + h / 2),  # Bottom-right
-        ]
+        stop_box = np.array(self.stop_zone._calculate_stop_box(), dtype=np.int32)
 
-        if self.stop_zone.is_in_stop_zone(bottom_center) or any(
-            self.stop_zone.is_in_stop_zone(corner) for corner in corners
-        ):
+        car.state.in_stop_zone = (
+            cv2.rotatedRectangleIntersection(cv2.minAreaRect(car_box), cv2.minAreaRect(stop_box))[0]
+            != cv2.INTERSECT_NONE
+        )
+
+        if car.state.in_stop_zone:
             self._handle_car_in_stop_zone(car, timestamp)
         else:
             self._handle_car_outside_stop_zone(car, timestamp, frame)
@@ -378,7 +385,7 @@ class StopDetector:
             car.state.stop_zone_state = "ENTERED"
             car.state.entry_time = timestamp
         elif car.state.stop_zone_state == "ENTERED":
-            car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, car.state.speed)
+            car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, abs(car.state.speed))
             if car.state.speed == 0:
                 car.state.time_at_zero += timestamp - car.state.last_update_time
             if self._is_crossing_stop_line(car):
@@ -418,8 +425,8 @@ class StopDetector:
             car.state.image_path = ""
 
     def _is_crossing_stop_line(self, car: Car) -> bool:
-        if len(car.state.track) < 2:
-            return False
+        if car.state.direction >= 0:
+            return False  # Moving left to right, not in the correct lane
         prev_point, _ = car.state.track[-2]
         current_point = car.state.location
         return self.stop_zone.is_crossing_line(prev_point, current_point, self.stop_zone.stop_line)
@@ -430,8 +437,8 @@ class StopDetector:
         max_expected_time = 10.0  # Adjust this value as needed
         time_score = min(time_in_zone / max_expected_time, 1.0)
 
-        # How close to a complete stop (0 speed is best)
-        speed_score = 1.0 - min(car.state.min_speed_in_zone / self.config.max_movement_speed, 1.0)
+        # Use absolute speed for speed score
+        speed_score = 1.0 - min(abs(car.state.min_speed_in_zone) / self.config.max_movement_speed, 1.0)
 
         # Combine time and speed scores (equal weight)
         raw_score = (time_score + speed_score) / 2

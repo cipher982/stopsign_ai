@@ -401,11 +401,7 @@ class VideoAnalyzer:
     def visualize(self, frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone) -> np.ndarray:
         overlay = frame.copy()
 
-        car_in_stop_zone = any(
-            stop_zone.is_in_stop_zone(car.state.location) and car.state.direction < 0
-            for car in cars.values()
-            if not car.state.is_parked
-        )
+        car_in_stop_zone = any(car.state.in_stop_zone for car in cars.values() if not car.state.is_parked)
 
         color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)
 

@@ -290,7 +290,7 @@ def home():
                 }
                 .recent-passes {
                     width: 100%;
-                    max-width: 400px;
+                    max-width: 500px;
                 }
                 @media (min-width: 768px) {
                     .content-wrapper {
