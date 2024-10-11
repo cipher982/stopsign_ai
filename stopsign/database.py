@@ -50,7 +50,7 @@ class Database:
                 speed FLOAT,
                 is_parked BOOLEAN,
                 stop_zone_state TEXT,
-                stop_score INTEGER,
+                stop_score FLOAT,
                 min_speed_in_zone FLOAT,
                 time_at_zero FLOAT,
                 entry_time FLOAT,
@@ -65,7 +65,7 @@ class Database:
                 id INTEGER PRIMARY KEY,
                 timestamp DATETIME,
                 vehicle_id INTEGER,
-                stop_score INTEGER,
+                stop_score FLOAT,
                 stop_duration FLOAT,
                 min_speed FLOAT,
                 image_path TEXT
@@ -111,7 +111,7 @@ class Database:
             )
 
     def add_vehicle_pass(
-        self, vehicle_id: int, stop_score: int, stop_duration: float, min_speed: float, image_path: str
+        self, vehicle_id: int, stop_score: float, stop_duration: float, min_speed: float, image_path: str
     ):
         with self.get_cursor() as cursor:
             cursor.execute(
@@ -135,6 +135,21 @@ class Database:
                 WHERE min_speed <= ? AND timestamp >= datetime('now', ? || ' hours')
                 """,
                 (f"-{hours}", min_speed, f"-{hours}"),
+            )
+            return cursor.fetchone()[0]
+
+    def get_stop_score_percentile(self, stop_score: float, hours: int = 24) -> float:
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) * 100.0 / (
+                    SELECT COUNT(*) FROM vehicle_passes 
+                    WHERE timestamp >= datetime('now', ? || ' hours')
+                )
+                FROM vehicle_passes
+                WHERE stop_score <= ? AND timestamp >= datetime('now', ? || ' hours')
+                """,
+                (f"-{hours}", stop_score, f"-{hours}"),
             )
             return cursor.fetchone()[0]
 
