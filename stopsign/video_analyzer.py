@@ -454,10 +454,10 @@ class VideoAnalyzer:
 
         # format velocity and direction
         vx, vy = car.state.velocity
-        direction_deg = np.degrees(car.state.direction) % 360
+        direction = car.state.direction
 
         label1 = f"ID: {car.id}, Speed: {car.state.speed:.1f}"
-        label2 = f"Vel: {int(vx)}, {int(vy)}, Dir: {int(direction_deg)}"
+        label2 = f"Vel: {int(vx)}, {int(vy)}, Dir: {direction:.2f}"
         cv2.putText(frame, label1, (x1, y1 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         cv2.putText(frame, label2, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 

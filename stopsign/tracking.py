@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import uuid
 from dataclasses import dataclass
@@ -209,6 +210,14 @@ class Car:
         self._update_parked_status()
         self.state.bbox = bbox
 
+        if not self.state.is_parked:
+            logger.info(
+                f"Car {self.id} - Location: {self.state.location}, "
+                f"Velocity: {self.state.velocity}, "
+                f"Speed: {self.state.speed:.2f}, "
+                f"Direction: {self.state.direction:.2f}"
+            )
+
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
         self.kalman_filter.predict()
@@ -261,11 +270,30 @@ class Car:
             self.state.consecutive_stationary_frames = 0
 
     def _update_direction(self) -> None:
-        """Calculate the direction based on the velocity."""
-        vx, vy = self.state.velocity
-        speed = np.hypot(vx, vy)  # Equivalent to sqrt(vx**2 + vy**2)
-        if speed > 0:
-            self.state.direction = vx / speed  # Normalized x-component
+        """Calculate the direction based on recent trajectory."""
+        history_length = min(len(self.state.track), 10)
+        if history_length > 2:
+            recent_track = self.state.track[-history_length:]
+            positions = np.array([pos for pos, _ in recent_track])
+
+            # Calculate direction vector using first and last points
+            direction_vector = positions[-1] - positions[0]
+
+            # Normalize the direction vector
+            direction_norm = np.linalg.norm(direction_vector)
+            if direction_norm > 0:
+                normalized_direction = direction_vector / direction_norm
+
+                # Calculate angle in radians (-pi to pi)
+                angle = math.atan2(normalized_direction[1], normalized_direction[0])
+
+                # Map angle to direction value:
+                # -pi radians (180 degrees) -> -1 (Right to Left)
+                #  0 radians (0 degrees)   -> +1 (Left to Right)
+                #  pi/2 radians (90 degrees) or -pi/2 radians (-90 degrees) -> 0 (Up or Down)
+                self.state.direction = math.cos(angle)
+            else:
+                self.state.direction = 0.0
         else:
             self.state.direction = 0.0
 
@@ -402,7 +430,7 @@ class StopDetector:
             car.state.entry_time = timestamp
         elif car.state.stop_zone_state == "ENTERED":
             car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, abs(car.state.speed))
-            if car.state.raw_speed < 10:
+            if car.state.raw_speed < 20:
                 car.state.time_at_zero += timestamp - car.state.last_update_time
             if self._is_crossing_stop_line(car):
                 car.state.stop_zone_state = "EXITING"
