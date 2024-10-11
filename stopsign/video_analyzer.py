@@ -110,15 +110,6 @@ class VideoAnalyzer:
                 self.visualization_fps.set(visualization_fps)
                 self.analyzer_output_fps.set(output_fps)
 
-                logger.info(
-                    f"FPS Metrics (Last {self.fps_log_interval} seconds): "
-                    f"Incoming: {incoming_fps:.2f} | "
-                    f"Object Detection: {object_detection_fps:.2f} | "
-                    f"Car Tracking: {car_tracking_fps:.2f} | "
-                    f"Visualization: {visualization_fps:.2f} | "
-                    f"Output: {output_fps:.2f}"
-                )
-
                 # Reset counters after logging
                 self.incoming_fps_count = 0
                 self.object_detection_fps_count = 0
@@ -321,7 +312,7 @@ class VideoAnalyzer:
 
         # Car Tracking
         car_tracking_start = time.time()
-        self.car_tracker.update_cars(boxes, time.time())
+        self.car_tracker.update_cars(boxes, time.time(), processed_frame)
         car_tracking_time = time.time() - car_tracking_start
         self.car_tracking_time.observe(car_tracking_time)
         self.car_tracking_fps_count += 1  # Increment car tracking FPS counter
