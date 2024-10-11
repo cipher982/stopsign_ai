@@ -29,7 +29,7 @@ class RTSPToRedis:
         self.prometheus_port = int(os.getenv("PROMETHEUS_PORT", 8000))
         self.frame_buffer_size = int(os.getenv("FRAME_BUFFER_SIZE", 500))
         self.fps = 15
-        self.jpeg_quality = 85
+        self.jpeg_quality = 100
 
         self.redis_client: Optional[redis.Redis] = None
         self.frame_queue = Queue(maxsize=1000)
