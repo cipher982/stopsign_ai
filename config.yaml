@@ -12,6 +12,9 @@ stopsign_detection:
   parked_frame_threshold: 60
   unparked_frame_threshold: 20
 
+car_analysis:
+  image_capture_zone: [800, 900]
+
 tracking:
   use_kalman_filter: true
 
