@@ -38,13 +38,13 @@ class CarState:
     consecutive_stationary_frames: int = 0
     track: List[Tuple[Point, float]] = field(default_factory=list)
     last_update_time: float = 0.0
-    stop_score: float = 0
     scored: bool = False
     # stop detection
     stop_zone_state: str = "APPROACHING"
     in_stop_zone: bool = False
     entry_time: float = 0.0
     exit_time: float = 0.0
+    time_in_zone: float = 0.0
     min_speed_in_zone: float = float("inf")
     time_at_zero: float = 0.0
     stop_position: Point = field(default_factory=lambda: (0.0, 0.0))
@@ -441,7 +441,7 @@ class StopDetector:
         if car.state.stop_zone_state in ["ENTERED", "EXITING"]:
             car.state.stop_zone_state = "EXITED"
             if not car.state.scored and car.state.entry_time > 0:
-                car.state.stop_score = self.calculate_stop_score(car)
+                car.state.time_in_zone = self.calculate_time_in_zone(car)
                 car.state.scored = True
 
                 # Capture an image now if the capture area did not work
@@ -451,7 +451,7 @@ class StopDetector:
                 # Save data to database
                 self.db.add_vehicle_pass(
                     vehicle_id=car.id,
-                    stop_score=car.state.stop_score,
+                    time_in_zone=car.state.time_in_zone,
                     stop_duration=car.state.time_at_zero,
                     min_speed=car.state.min_speed_in_zone,
                     image_path=car.state.image_path,
@@ -475,19 +475,9 @@ class StopDetector:
         current_point = car.state.location
         return self.stop_zone.is_crossing_line(prev_point, current_point, self.stop_zone.stop_line)
 
-    def calculate_stop_score(self, car: Car) -> float:
-        # Time spent in zone (normalized to a 0-1 range)
+    def calculate_time_in_zone(self, car: Car) -> float:
         time_in_zone = car.state.exit_time - car.state.entry_time
-        max_expected_time = 10.0  # Adjust this value as needed
-        time_score = min(time_in_zone / max_expected_time, 1.0)
-
-        # Use absolute speed for speed score
-        speed_score = 1.0 - min(abs(car.state.min_speed_in_zone) / self.config.max_movement_speed, 1.0)
-
-        # Combine time and speed scores (equal weight)
-        raw_score = (time_score + speed_score) / 2
-
-        return raw_score
+        return time_in_zone
 
     def _get_speed_at_line_crossing(self, car: Car) -> float:
         for i in range(1, len(car.state.track)):

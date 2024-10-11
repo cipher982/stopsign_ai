@@ -275,7 +275,7 @@ class VideoAnalyzer:
 
                 while not self.stats_queue.empty():
                     _ = self.stats_queue.get()
-                    self.stop_detector.db.update_daily_statistics()
+                    # self.stop_detector.db.update_daily_statistics()
 
                 total_frame_time = time.time() - frame_start_time
                 self.total_frame_time.set(total_frame_time)
@@ -480,7 +480,7 @@ class VideoAnalyzer:
                     "location": car.state.location,
                     "speed": car.state.speed,
                     "is_parked": car.state.is_parked,
-                    "stop_score": car.state.stop_score,
+                    "time_in_zone": car.state.time_in_zone,
                     "stop_zone_state": car.state.stop_zone_state,
                 }
                 for car in self.car_tracker.get_cars().values()
