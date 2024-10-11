@@ -8,6 +8,9 @@ Tracking stop sign behavior with an IP camera and AI
 - Display recent vehicle passes and statistics on a web interface.
 - Allow user interaction to adjust the stop zone and view analytics.
 
+### Screenshot
+![Night Screenshot](./static/screenshot_night.png)
+
 ### System Components and Flow
 
 **IP Camera:**
