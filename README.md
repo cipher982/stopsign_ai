@@ -1,77 +1,50 @@
 # stopsign_ai
-Tracking stop sign behavior with an IP camera and AI
+Tracking stop sign behavior with a camera and AI
 
-### Objective:
-- Monitor a street intersection with an IP camera streaming video feed via RTSP to a server.
-- Analyze the feed in real-time using AI to detect vehicles and evaluate their stop sign behavior.
-- Store processed images and metadata for each vehicle pass.
-- Display recent vehicle passes and statistics on a web interface.
-- Allow user interaction to adjust the stop zone and view analytics.
+## Objective:
+
+- **Monitor** a street intersection with a camera streaming video via RTSP.
+- **Analyze** the feed in real-time using AI to detect vehicles and evaluate their stop sign behavior.
+- **Store** processed images and metadata for each vehicle pass.
+- **Display** recent vehicle passes and statistics on a web interface.
 
 ### Screenshot
 ![Night Screenshot](./static/screenshot_night.png)
 
-### System Components and Flow
+## System Components and Flow
 
-**IP Camera:**
-- Function: Capture and stream video feed.
-- Protocol: RTSP (Real-Time Streaming Protocol).
+### 1. RTSP Stream Capture (`rtsp_to_redis.py`)
+- **Function:** Captures video frames from the RTSP IP camera.
+- **Process:**
+  - Connects to the RTSP stream.
+  - Encodes frames as JPEG.
+  - Pushes frames to Redis.
 
-**Backend Server:**
-- Function: Process the video feed, detect vehicles, and analyze stop behavior.
-- Components:
-  - Stream Processor: Handles video processing, object detection, and vehicle tracking.
-  - Web Server: Serves the web interface and handles API requests.
-- Technologies: Python, OpenCV, YOLO, Redis, SQLite, FastAPI
+### 2. Video Analysis (`video_analyzer.py`)
+- **Function:** Processes frames from Redis, performs object detection, tracking, and stop sign behavior analysis.
+- **Process:**
+  - Retrieves frames from Redis.
+  - Uses YOLO AI model for vehicle detection.
+  - Tracks detected vehicles and analyzes their stop sign behavior.
+  - Annotates frames and pushes to new Redis queue.
+  - Stores metadata and images in SQLite.
 
-**AI Model:**
-- Function: Detect vehicles in video frames.
-- Model: YOLOv8
-- Libraries: Ultralytics YOLO, OpenCV
+### 3. FFmpeg Streaming (`ffmpeg_service.py`)
+- **Function:** Converts processed frames into an HLS video stream for web display.
+- **Process:**
+  - Consumes annotated frames from Redis.
+  - Feeds frames into FFmpeg to generate HLS stream.
 
-**Storage System:**
-- Function: Store processed frames, vehicle images, and metadata.
-- Technologies: Redis for frame buffering, SQLite for persistent storage
+### 4. Web Server (`web_server.py`)
+- **Function:** Serves the web interface and live video stream.
+- **Features:**
+  - Displays live HLS video stream.
+  - Shows recent vehicle passes with images and scores.
+  - Integrates with Grafana for detailed statistics.
 
-**Frontend:**
-- Function: Display live video feed, recent vehicle passes, and statistics.
-- Technologies: FastHTML, WebSocket for real-time updates
-
-### Workflow
-
-**Video Processing:**
-- The Stream Processor receives video frames from the RTSP stream.
-- Frames are processed using YOLO for vehicle detection.
-- Detected vehicles are tracked across frames to analyze their behavior in the stop zone.
-
-**Stop Behavior Analysis:**
-- A configurable stop zone is defined in the video frame.
-- Vehicle speed and position are monitored as they approach and pass through the stop zone.
-- Each vehicle pass is scored based on stopping behavior, duration, and position.
-
-**Data Storage:**
-- Processed frames are temporarily stored in Redis for efficient retrieval.
-- Vehicle pass data, including scores and cropped images, are stored in SQLite.
-
-**Web Interface:**
-- Displays live video feed with overlaid detection and tracking information.
-- Shows a list of recent vehicle passes with images and scores.
-- Provides an interface to adjust the stop zone.
-- Includes a statistics page with embedded Grafana dashboard.
-
-**Monitoring and Analytics:**
-- Prometheus metrics are collected for system performance and vehicle statistics.
-- Grafana dashboard visualizes long-term trends and real-time data.
-
-### Setup and Deployment
-
-The project is containerized using Docker for easy deployment:
-
-- `Dockerfile.processor`: Builds the container for the Stream Processor.
-- `Dockerfile.web`: Builds the container for the Web Server.
-
-Use Docker Compose to orchestrate the full system deployment, including Redis and other necessary services.
-
-### Future Enhancements
-- speed up with TensorRT
-- ???
+### 5. Monitoring and Metrics
+- **Prometheus Integration:**
+  - All services expose metrics to Prometheus for monitoring.
+  - Metrics include frame processing times, FPS, memory usage, and more.
+- **Grafana Dashboards:**
+  - Visualize collected metrics for real-time monitoring and long-term trends.
