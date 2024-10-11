@@ -42,14 +42,14 @@ logger = logging.getLogger(__name__)
 def get_common_styles():
     return Style("""
             :root {
-                --bg-color: #0a0a0a;
+                --bg-color: #1a1a1a;
                 --text-color: #e0e0e0;
-                --accent-color: #00ff9d;
-                --secondary-color: #ff00ff;
-                --card-bg: #1a1a1a;
+                --accent-color: #ff6600;
+                --secondary-color: #8b00ff;
+                --card-bg: #2a2a2a;
             }
             body {
-                font-family: 'Roboto', sans-serif;
+                font-family: 'Creepster', cursive;
                 background-color: var(--bg-color);
                 color: var(--text-color);
                 line-height: 1.6;
@@ -60,6 +60,7 @@ def get_common_styles():
             }
             h1, h2, h3 {
                 color: var(--accent-color);
+                text-shadow: 2px 2px 4px rgba(255, 102, 0, 0.5);
             }
             a {
                 color: var(--secondary-color);
@@ -79,16 +80,11 @@ def get_common_styles():
                 border-radius: 8px;
                 padding: 20px;
                 margin-bottom: 20px;
-                box-shadow: 0 4px 6px rgba(0, 255, 157, 0.1);
+                box-shadow: 0 4px 6px rgba(255, 102, 0, 0.2);
                 transition: transform 0.3s ease;
             }
             .card:hover {
                 transform: translateY(-5px);
-            }
-            .container {
-                max-width: 1400px;
-                margin: 0 auto;
-                padding: 0 20px;
             }
             button {
                 background-color: var(--accent-color);
@@ -104,7 +100,7 @@ def get_common_styles():
             }
             code {
                 font-family: 'Roboto Mono', monospace;
-                background-color: #2a2a2a;
+                background-color: #3a3a3a;
                 padding: 2px 4px;
                 border-radius: 4px;
             }
@@ -445,7 +441,7 @@ async def get_recent_vehicle_passes():
                                 Span("Stop Score: ", style="font-weight: bold;"),
                                 Span(
                                     f"{pass_data[3]}",
-                                    style=f"font-weight: bold; color: hsl({pass_data[3] * 1.2}, 100%, 50%);",
+                                    style=f"font-weight: bold; color: hsl({pass_data[3] * 12}, 100%, 50%);",
                                 ),
                                 style="margin-bottom: 3px;",
                             ),
