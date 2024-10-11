@@ -33,6 +33,9 @@ class Config:
         self.parked_frame_threshold = stop_sign["parked_frame_threshold"]
         self.unparked_frame_threshold = stop_sign["unparked_frame_threshold"]
 
+        # Car Analysis
+        self.image_capture_zone = config["car_analysis"]["image_capture_zone"]
+
         # Tracking
         self.use_kalman_filter = config["tracking"]["use_kalman_filter"]
 

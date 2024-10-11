@@ -44,6 +44,8 @@ class CarState:
     min_speed_in_zone: float = float("inf")
     time_at_zero: float = 0.0
     stop_position: Point = field(default_factory=lambda: (0.0, 0.0))
+    image_captured: bool = False
+    image_path: str = ""
 
 
 class StopZone:
@@ -172,8 +174,6 @@ class Car:
         self.state = CarState()
         self.kalman_filter = KalmanFilterWrapper(process_noise=10, measurement_noise=10)
         self.config = config
-        self.largest_bbox = (0.0, 0.0, 0.0, 0.0)
-        self.largest_bbox_frame = None
 
     def update(
         self,
@@ -189,17 +189,6 @@ class Car:
         self._update_parked_status()
         self.state.bbox = bbox
         self.update_direction()
-        self._update_largest_bbox(bbox, frame)
-
-    def _update_largest_bbox(self, bbox: Tuple[float, float, float, float], frame: np.ndarray) -> None:
-        _, _, w, h = bbox
-        current_area = w * h
-        _, _, largest_w, largest_h = self.largest_bbox
-        largest_area = largest_w * largest_h
-
-        if current_area > largest_area:
-            self.largest_bbox = bbox
-            self.largest_bbox_frame = frame.copy()
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
@@ -328,8 +317,9 @@ class CarTracker:
 class StopDetector:
     def __init__(self, config: Config, db: Database):
         self.config = config
-        self.stop_zone = self._create_stop_zone()
         self.db = db
+        self.stop_zone = self._create_stop_zone()
+        self.image_capture_zone = self.config.image_capture_zone
 
     def _create_stop_zone(self) -> StopZone:
         stop_line: Line = (
@@ -368,6 +358,21 @@ class StopDetector:
         else:
             self._handle_car_outside_stop_zone(car, timestamp, frame)
 
+        if not car.state.image_captured and self.is_in_capture_zone(car.state.location[0]):
+            self.capture_car_image(car, timestamp, frame)
+
+    def is_in_capture_zone(self, x: float) -> bool:
+        return self.image_capture_zone[0] <= x <= self.image_capture_zone[1]
+
+    def capture_car_image(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
+        image_path = save_vehicle_image(
+            frame=frame,
+            timestamp=timestamp,
+            bbox=car.state.bbox,
+        )
+        car.state.image_captured = True
+        car.state.image_path = image_path
+
     def _handle_car_in_stop_zone(self, car: Car, timestamp: float) -> None:
         if car.state.stop_zone_state == "APPROACHING":
             car.state.stop_zone_state = "ENTERED"
@@ -388,16 +393,9 @@ class StopDetector:
                 car.state.stop_score = self.calculate_stop_score(car)
                 car.state.scored = True
 
-                # Save vehicle image using the largest bounding box if available, otherwise use current frame
-                image_frame = car.largest_bbox_frame if car.largest_bbox_frame is not None else frame
-                image_bbox = car.largest_bbox if car.largest_bbox_frame is not None else car.state.bbox
-
-                # Save vehicle image using the largest bounding box
-                image_path = save_vehicle_image(
-                    frame=image_frame,
-                    timestamp=timestamp,
-                    bbox=image_bbox,
-                )
+                # Capture an image now if the capture area did not work
+                if not car.state.image_path:
+                    self.capture_car_image(car, timestamp, frame)
 
                 # Save data to database
                 self.db.add_vehicle_pass(
@@ -405,9 +403,8 @@ class StopDetector:
                     stop_score=car.state.stop_score,
                     stop_duration=car.state.time_at_zero,
                     min_speed=car.state.min_speed_in_zone,
-                    image_path=image_path,
+                    image_path=car.state.image_path,
                 )
-
         elif car.state.stop_zone_state == "EXITED":
             # Reset for next approach
             car.state.stop_zone_state = "APPROACHING"
@@ -417,6 +414,8 @@ class StopDetector:
             car.state.exit_time = 0.0
             car.state.scored = False
             car.state.stop_position = (0.0, 0.0)
+            car.state.image_captured = False
+            car.state.image_path = ""
 
     def _is_crossing_stop_line(self, car: Car) -> bool:
         if len(car.state.track) < 2:
@@ -425,6 +424,21 @@ class StopDetector:
         current_point = car.state.location
         return self.stop_zone.is_crossing_line(prev_point, current_point, self.stop_zone.stop_line)
 
+    def calculate_raw_stop_score(self, car: Car) -> float:
+        # Time spent in zone (normalized to a 0-1 range)
+        time_in_zone = car.state.exit_time - car.state.entry_time
+        max_expected_time = 10.0  # Adjust this value as needed
+        time_score = min(time_in_zone / max_expected_time, 1.0)
+
+        # How close to a complete stop (0 speed is best)
+        speed_score = 1.0 - min(car.state.min_speed_in_zone / self.config.max_movement_speed, 1.0)
+
+        # Combine time and speed scores (equal weight)
+        raw_score = (time_score + speed_score) / 2
+
+        return raw_score
+
+    # deprecating
     def calculate_stop_score(self, car: Car) -> int:
         base_score = 10
 
