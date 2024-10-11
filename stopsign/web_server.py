@@ -439,7 +439,7 @@ async def get_recent_vehicle_passes():
                         Div(
                             Div(
                                 f"{format_timestamp(pass_data[1])}",
-                                style="font-weight: bold; font-size: 1.1em; margin-bottom: 5px;",
+                                style="font-weight: bold; font-size: 1.3em; margin-bottom: 5px;",
                             ),
                             # Div(f"Vehicle ID: {pass_data[2]}", style="margin-bottom: 5px;"),
                             # Div(
@@ -451,18 +451,18 @@ async def get_recent_vehicle_passes():
                             #     style="margin-bottom: 3px;",
                             # ),
                             Div(
-                                Span("Stop Score: ", style="font-weight: bold;"),
+                                Span("Score: ", style="font-weight: bold; font-size: 1.2em;"),
                                 Span(
                                     f"{calculate_speed_score(pass_data[5]) // 10}",
-                                    style=f"font-weight: bold; color: hsl({calculate_speed_score(pass_data[5]) * 1.2}, 100%, 50%);",
+                                    style=f"font-weight: bold; font-size: 1.2em; color: hsl({calculate_speed_score(pass_data[5]) * 1.2}, 100%, 50%);",
                                 ),
                                 style="margin-bottom: 3px;",
                             ),
                             Div(
-                                f"Stop Duration: {pass_data[4]:.2f} seconds",
+                                f"Stop Time: {pass_data[4]:.2f} seconds",
                                 style="font-size: 0.9em; margin-bottom: 3px;",
                             ),
-                            Div(f"Min Speed: {pass_data[5]:.2f} pixels/second", style="font-size: 0.9em;"),
+                            Div(f"Min Speed: {pass_data[5]:.2f} pixels/sec", style="font-size: 0.9em;"),
                             style="flex: 1;",
                         ),
                         style="display: flex; align-items: center; background-color: var(--card-bg); padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
