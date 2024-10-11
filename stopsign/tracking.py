@@ -29,7 +29,7 @@ class CarState:
     bbox: Tuple[float, float, float, float] = field(default_factory=lambda: (0.0, 0.0, 0.0, 0.0))
     speed: float = 0.0
     prev_speed: float = 0.0
-    is_parked: bool = True
+    is_parked: bool = False
     consecutive_moving_frames: int = 0
     consecutive_stationary_frames: int = 0
     track: List[Tuple[Point, float]] = field(default_factory=list)
@@ -252,14 +252,14 @@ class Car:
 
     def _update_parked_status(self) -> None:
         """Update the car's parked status based on its movement."""
-        if self.state.is_parked:
-            if self.state.consecutive_moving_frames >= self.config.unparked_frame_threshold:
-                self.state.is_parked = False
-                self.state.consecutive_stationary_frames = 0
-        else:
+        if not self.state.is_parked:
             if self.state.consecutive_stationary_frames >= self.config.parked_frame_threshold:
                 self.state.is_parked = True
                 self.state.consecutive_moving_frames = 0
+        else:
+            if self.state.consecutive_moving_frames >= self.config.unparked_frame_threshold:
+                self.state.is_parked = False
+                self.state.consecutive_stationary_frames = 0
 
     def update_direction(self) -> None:
         """Calculate the direction based on the last 10 frames."""
