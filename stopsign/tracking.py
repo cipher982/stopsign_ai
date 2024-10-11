@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 class CarState:
     location: Point = field(default_factory=lambda: (0.0, 0.0))
     bbox: Tuple[float, float, float, float] = field(default_factory=lambda: (0.0, 0.0, 0.0, 0.0))
+    raw_speed: float = 0.0
     speed: float = 0.0
     prev_speed: float = 0.0
     velocity: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
@@ -217,9 +218,9 @@ class Car:
         self.state.last_update_time = timestamp
 
     def _update_speed(self, current_timestamp: float) -> None:
-        """Calculate and update the car's velocity and speed."""
+        """Calculate and update the car's velocity, raw speed, and smoothed speed."""
         history_length = min(len(self.state.track), 10)
-        if history_length > 1:
+        if history_length > 2:
             recent_track = self.state.track[-history_length:]
             time_diffs = [current_timestamp - t for _, t in recent_track]
             positions = np.array([pos for pos, _ in recent_track])
@@ -230,11 +231,22 @@ class Car:
 
             self.state.velocity = (float(median_velocity[0]), float(median_velocity[1]))
             self.state.speed = float(np.linalg.norm(median_velocity))
+
+            # Calculate raw speed using the last 3 frames
+            last_3_positions = positions[-3:]
+            last_3_times = time_diffs[-3:]
+            raw_velocities = np.diff(last_3_positions, axis=0) / np.diff(last_3_times)[:, np.newaxis]
+            raw_speed = float(np.mean(np.linalg.norm(raw_velocities, axis=1)))
+
+            # Apply light smoothing to raw speed
+            raw_alpha = 0.5
+            self.state.raw_speed = raw_alpha * raw_speed + (1 - raw_alpha) * self.state.raw_speed
         else:
             self.state.velocity = (0.0, 0.0)
             self.state.speed = 0.0
+            self.state.raw_speed = 0.0
 
-        # Apply low-pass filter to speed
+        # Apply low-pass filter to smoothed speed
         alpha = 0.3
         self.state.speed = alpha * self.state.speed + (1 - alpha) * self.state.prev_speed
         self.state.prev_speed = self.state.speed
@@ -386,7 +398,7 @@ class StopDetector:
             car.state.entry_time = timestamp
         elif car.state.stop_zone_state == "ENTERED":
             car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, abs(car.state.speed))
-            if car.state.speed == 0:
+            if car.state.raw_speed < 10:
                 car.state.time_at_zero += timestamp - car.state.last_update_time
             if self._is_crossing_stop_line(car):
                 car.state.stop_zone_state = "EXITING"

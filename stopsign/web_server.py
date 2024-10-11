@@ -459,7 +459,8 @@ async def get_recent_vehicle_passes():
                                 style="margin-bottom: 3px;",
                             ),
                             Div(
-                                f"Stop Duration: {pass_data[4]} seconds", style="font-size: 0.9em; margin-bottom: 3px;"
+                                f"Stop Duration: {pass_data[4]:.2f} seconds",
+                                style="font-size: 0.9em; margin-bottom: 3px;",
                             ),
                             Div(f"Min Speed: {pass_data[5]:.2f} pixels/second", style="font-size: 0.9em;"),
                             style="flex: 1;",
