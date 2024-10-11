@@ -452,8 +452,14 @@ class VideoAnalyzer:
         x1, y1, x2, y2 = map(int, box.xyxy[0])
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
-        label = f"ID: {car.id}, Speed: {car.state.speed:.2f}"
-        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        # format velocity and direction
+        vx, vy = car.state.velocity
+        direction_deg = np.degrees(car.state.direction) % 360
+
+        label1 = f"ID: {car.id}, Speed: {car.state.speed:.1f}"
+        label2 = f"Vel: {int(vx)}, {int(vy)}, Dir: {int(direction_deg)}"
+        cv2.putText(frame, label1, (x1, y1 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.putText(frame, label2, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
     def draw_gridlines(self, frame: np.ndarray):
         height, width = frame.shape[:2]

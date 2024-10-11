@@ -204,10 +204,10 @@ class Car:
         """Update the car's state with new location data."""
         self._update_location(location, timestamp)
         self._update_speed(timestamp)
+        self._update_direction()
         self._update_movement_status()
         self._update_parked_status()
         self.state.bbox = bbox
-        self.update_direction()
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
@@ -260,6 +260,15 @@ class Car:
             self.state.consecutive_moving_frames += 1
             self.state.consecutive_stationary_frames = 0
 
+    def _update_direction(self) -> None:
+        """Calculate the direction based on the velocity."""
+        vx, vy = self.state.velocity
+        speed = np.hypot(vx, vy)  # Equivalent to sqrt(vx**2 + vy**2)
+        if speed > 0:
+            self.state.direction = vx / speed  # Normalized x-component
+        else:
+            self.state.direction = 0.0
+
     def _update_parked_status(self) -> None:
         """Update the car's parked status based on its movement."""
         if not self.state.is_parked:
@@ -270,11 +279,6 @@ class Car:
             if self.state.consecutive_moving_frames >= self.config.unparked_frame_threshold:
                 self.state.is_parked = False
                 self.state.consecutive_stationary_frames = 0
-
-    def update_direction(self) -> None:
-        """Calculate the direction based on the velocity."""
-        vx, vy = self.state.velocity
-        self.state.direction = np.arctan2(vy, vx)
 
     def __repr__(self) -> str:
         return (
@@ -350,7 +354,7 @@ class StopDetector:
         self.stop_zone.update_configuration(new_config)
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
-        if car.state.direction >= 0:
+        if car.state.direction > -0.5:
             return  # moving left to right, ignore
 
         # Use bottom center of bounding box
@@ -437,7 +441,7 @@ class StopDetector:
             car.state.image_path = ""
 
     def _is_crossing_stop_line(self, car: Car) -> bool:
-        if car.state.direction >= 0:
+        if car.state.direction > -0.2:
             return False  # Moving left to right, not in the correct lane
         prev_point, _ = car.state.track[-2]
         current_point = car.state.location
