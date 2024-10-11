@@ -290,6 +290,7 @@ def home():
                 }
                 .recent-passes {
                     width: 100%;
+                    max-width: 400px;
                 }
                 @media (min-width: 768px) {
                     .content-wrapper {
@@ -414,6 +415,10 @@ async def get_recent_vehicle_passes():
             else:
                 return chicago_time.strftime("%b %-d, %Y, %-I:%M %p")
 
+        def calculate_stop_score(stop_score):
+            percentile = app.state.db.get_stop_score_percentile(stop_score)
+            return round(percentile / 10)  # Divide by 10 to get a 0-10 scale
+
         def calculate_speed_score(min_speed):
             percentile = app.state.db.get_min_speed_percentile(min_speed)
             return round(100 - percentile)
@@ -427,9 +432,9 @@ async def get_recent_vehicle_passes():
                             Img(
                                 src=pass_data[6],
                                 alt="Vehicle Image",
-                                style="width: 100%; height: auto; border-radius: 5px;",
+                                style="width: 200px; height: auto; border-radius: 5px;",
                             ),
-                            style="flex: 0 0 150px; margin-right: 15px;",
+                            style="flex: 0 0 200px; margin-right: 15px;",
                         ),
                         Div(
                             Div(
@@ -437,16 +442,16 @@ async def get_recent_vehicle_passes():
                                 style="font-weight: bold; font-size: 1.1em; margin-bottom: 5px;",
                             ),
                             # Div(f"Vehicle ID: {pass_data[2]}", style="margin-bottom: 5px;"),
+                            # Div(
+                            #     Span("Stop Score: ", style="font-weight: bold;"),
+                            #     Span(
+                            #         f"{calculate_stop_score(pass_data[3])}",
+                            #         style=f"font-weight: bold; color: hsl({calculate_stop_score(pass_data[3]) * 12}, 100%, 50%);",
+                            #     ),
+                            #     style="margin-bottom: 3px;",
+                            # ),
                             Div(
                                 Span("Stop Score: ", style="font-weight: bold;"),
-                                Span(
-                                    f"{pass_data[3]}",
-                                    style=f"font-weight: bold; color: hsl({pass_data[3] * 12}, 100%, 50%);",
-                                ),
-                                style="margin-bottom: 3px;",
-                            ),
-                            Div(
-                                Span("Speed Score: ", style="font-weight: bold;"),
                                 Span(
                                     f"{calculate_speed_score(pass_data[5]) // 10}",
                                     style=f"font-weight: bold; color: hsl({calculate_speed_score(pass_data[5]) * 1.2}, 100%, 50%);",

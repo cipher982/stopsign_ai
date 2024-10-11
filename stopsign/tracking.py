@@ -35,7 +35,7 @@ class CarState:
     track: List[Tuple[Point, float]] = field(default_factory=list)
     direction: float = 0.0
     last_update_time: float = 0.0
-    stop_score: int = 0
+    stop_score: float = 0
     scored: bool = False
     # stop detection
     stop_zone_state: str = "APPROACHING"
@@ -424,7 +424,7 @@ class StopDetector:
         current_point = car.state.location
         return self.stop_zone.is_crossing_line(prev_point, current_point, self.stop_zone.stop_line)
 
-    def calculate_raw_stop_score(self, car: Car) -> float:
+    def calculate_stop_score(self, car: Car) -> float:
         # Time spent in zone (normalized to a 0-1 range)
         time_in_zone = car.state.exit_time - car.state.entry_time
         max_expected_time = 10.0  # Adjust this value as needed
@@ -437,47 +437,6 @@ class StopDetector:
         raw_score = (time_score + speed_score) / 2
 
         return raw_score
-
-    # deprecating
-    def calculate_stop_score(self, car: Car) -> int:
-        base_score = 10
-
-        # Stopping
-        if car.state.min_speed_in_zone == 0:
-            full_stop_bonus = 3
-            rolling_stop_penalty = 0
-        else:
-            full_stop_bonus = 0
-            rolling_stop_penalty = min(car.state.min_speed_in_zone * 2, 3)
-
-        # Stop position
-        if car.state.stop_position != (0.0, 0.0):
-            distance_from_line = self.stop_zone.min_distance_to_line(car.state.stop_position, self.stop_zone.stop_line)
-            position_penalty = min(distance_from_line / self.config.stop_box_tolerance, 2)
-        else:
-            position_penalty = 2
-
-        # Stop duration
-        stop_duration_score = min(car.state.time_at_zero / self.config.min_stop_time, 1) * 3
-
-        # Speed at stop line crossing
-        stop_line_crossing_speed = self._get_speed_at_line_crossing(car)
-        line_crossing_penalty = min(stop_line_crossing_speed / self.config.max_movement_speed, 2)
-
-        # Smooth deceleration and acceleration
-        smoothness_score = self._calculate_smoothness(car.state.track) * 2
-
-        final_score = (
-            base_score
-            + full_stop_bonus
-            - rolling_stop_penalty
-            - position_penalty
-            + stop_duration_score
-            - line_crossing_penalty
-            + smoothness_score
-        )
-
-        return max(min(round(final_score), 10), 0)  # Ensure score is between 0 and 10
 
     def _get_speed_at_line_crossing(self, car: Car) -> float:
         for i in range(1, len(car.state.track)):
