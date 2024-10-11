@@ -415,9 +415,9 @@ async def get_recent_vehicle_passes():
             else:
                 return chicago_time.strftime("%b %-d, %Y, %-I:%M %p")
 
-        def calculate_stop_score(stop_score):
-            percentile = app.state.db.get_stop_score_percentile(stop_score)
-            return round(percentile / 10)  # Divide by 10 to get a 0-10 scale
+        def calculate_time_in_zone_score(time_in_zone):
+            percentile = app.state.db.get_time_in_zone_percentile(time_in_zone)
+            return round(percentile / 10)
 
         def calculate_speed_score(min_speed):
             percentile = app.state.db.get_min_speed_percentile(min_speed)
@@ -441,15 +441,6 @@ async def get_recent_vehicle_passes():
                                 f"{format_timestamp(pass_data[1])}",
                                 style="font-weight: bold; font-size: 1.3em; margin-bottom: 5px;",
                             ),
-                            # Div(f"Vehicle ID: {pass_data[2]}", style="margin-bottom: 5px;"),
-                            # Div(
-                            #     Span("Stop Score: ", style="font-weight: bold;"),
-                            #     Span(
-                            #         f"{calculate_stop_score(pass_data[3])}",
-                            #         style=f"font-weight: bold; color: hsl({calculate_stop_score(pass_data[3]) * 12}, 100%, 50%);",
-                            #     ),
-                            #     style="margin-bottom: 3px;",
-                            # ),
                             Div(
                                 Span("Score: ", style="font-weight: bold; font-size: 1.2em;"),
                                 Span(
