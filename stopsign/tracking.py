@@ -349,7 +349,21 @@ class StopDetector:
         if car.state.direction >= 0:
             return
 
-        if self.stop_zone.is_in_stop_zone(car.state.location):
+        # Use bottom center of bounding box
+        x, y, w, h = car.state.bbox
+        bottom_center = (x, y + h / 2)
+
+        # Check if bottom center or any corner of the bounding box is in the stop zone
+        corners = [
+            (x - w / 2, y - h / 2),  # Top-left
+            (x + w / 2, y - h / 2),  # Top-right
+            (x - w / 2, y + h / 2),  # Bottom-left
+            (x + w / 2, y + h / 2),  # Bottom-right
+        ]
+
+        if self.stop_zone.is_in_stop_zone(bottom_center) or any(
+            self.stop_zone.is_in_stop_zone(corner) for corner in corners
+        ):
             self._handle_car_in_stop_zone(car, timestamp)
         else:
             self._handle_car_outside_stop_zone(car, timestamp, frame)
