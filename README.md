@@ -9,7 +9,7 @@ Tracking stop sign behavior with a camera and AI
 - **Display** recent vehicle passes and statistics on a web interface.
 
 ### Screenshot
-![Night Screenshot](./static/screenshot_night.png)
+![Night Screenshot](./static/screenshot_afternoon.png)
 
 ## System Components and Flow
 
