@@ -1,5 +1,4 @@
 import logging
-import math
 import os
 import uuid
 from dataclasses import dataclass
@@ -270,28 +269,32 @@ class Car:
             self.state.consecutive_stationary_frames = 0
 
     def _update_direction(self) -> None:
-        """Calculate the direction based on recent trajectory."""
+        """Calculate the direction based on recent trajectory using linear regression."""
         history_length = min(len(self.state.track), 10)
         if history_length > 2:
             recent_track = self.state.track[-history_length:]
             positions = np.array([pos for pos, _ in recent_track])
 
-            # Calculate direction vector using first and last points
-            direction_vector = positions[-1] - positions[0]
+            # Use linear regression to find the best fit line
+            x = positions[:, 0]
+            y = positions[:, 1]
+            A = np.vstack([x, np.ones(len(x))]).T
+            m, _ = np.linalg.lstsq(A, y, rcond=None)[0]
 
-            # Normalize the direction vector
-            direction_norm = np.linalg.norm(direction_vector)
-            if direction_norm > 0:
-                normalized_direction = direction_vector / direction_norm
+            # Determine the direction of movement along X
+            dx_total = x[-1] - x[0]
+            sign_dx = np.sign(dx_total) if dx_total != 0 else 1.0
 
-                # Calculate angle in radians (-pi to pi)
-                angle = math.atan2(normalized_direction[1], normalized_direction[0])
+            # Calculate unit direction vector from the slope
+            dx = sign_dx / np.sqrt(1 + m**2)
+            dy = (m * sign_dx) / np.sqrt(1 + m**2)
 
-                # Map angle to direction value:
-                # -pi radians (180 degrees) -> -1 (Right to Left)
-                #  0 radians (0 degrees)   -> +1 (Left to Right)
-                #  pi/2 radians (90 degrees) or -pi/2 radians (-90 degrees) -> 0 (Up or Down)
-                self.state.direction = math.cos(angle)
+            # Calculate total movement
+            total_movement = abs(dx) + abs(dy)
+
+            if total_movement > 0:
+                # Calculate direction value
+                self.state.direction = dx / total_movement
             else:
                 self.state.direction = 0.0
         else:
@@ -382,7 +385,7 @@ class StopDetector:
         self.stop_zone.update_configuration(new_config)
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
-        if car.state.direction > -0.5:
+        if car.state.direction > -0.8:
             return  # moving left to right, ignore
 
         # Use bottom center of bounding box
