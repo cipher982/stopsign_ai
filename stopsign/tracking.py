@@ -39,6 +39,7 @@ class CarState:
     last_update_time: float = 0.0
     scored: bool = False
     # stop detection
+    passed_entry_zone: bool = False
     stop_zone_state: str = "APPROACHING"
     in_stop_zone: bool = False
     entry_time: float = 0.0
@@ -369,6 +370,7 @@ class StopDetector:
         self.db = db
         self.stop_zone = self._create_stop_zone()
         self.image_capture_zone = self.config.image_capture_zone
+        self.entry_zone = self.config.stopsign_entry_zone
 
     def _create_stop_zone(self) -> StopZone:
         stop_line: Line = (
@@ -381,11 +383,24 @@ class StopDetector:
             min_stop_duration=self.config.min_stop_time,
         )
 
+    def is_in_entry_zone(self, point: Point) -> bool:
+        x, _ = point
+        entry_x1, entry_x2 = self.entry_zone
+        return entry_x1 <= x <= entry_x2
+
     def update_stop_zone(self, new_config):
         self.stop_zone.update_configuration(new_config)
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
-        if car.state.direction > -0.8:
+        if not car.state.image_captured and self.is_in_capture_zone(car.state.location[0]):
+            self.capture_car_image(car, timestamp, frame)
+
+        if not car.state.passed_entry_zone:
+            if self.is_in_entry_zone(car.state.location):
+                car.state.passed_entry_zone = True
+            else:
+                return
+        if car.state.direction > -0.75:
             return  # moving left to right, ignore
 
         # Use bottom center of bounding box
@@ -411,9 +426,6 @@ class StopDetector:
             self._handle_car_in_stop_zone(car, timestamp)
         else:
             self._handle_car_outside_stop_zone(car, timestamp, frame)
-
-        if not car.state.image_captured and self.is_in_capture_zone(car.state.location[0]):
-            self.capture_car_image(car, timestamp, frame)
 
     def is_in_capture_zone(self, x: float) -> bool:
         return self.image_capture_zone[0] <= x <= self.image_capture_zone[1]
