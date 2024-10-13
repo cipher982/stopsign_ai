@@ -14,6 +14,7 @@ stopsign_detection:
 
 car_analysis:
   image_capture_zone: [800, 900]
+  stopsign_entry_zone: [750, 800]
 
 tracking:
   use_kalman_filter: true

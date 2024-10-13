@@ -35,6 +35,7 @@ class Config:
 
         # Car Analysis
         self.image_capture_zone = config["car_analysis"]["image_capture_zone"]
+        self.stopsign_entry_zone = config["car_analysis"]["stopsign_entry_zone"]
 
         # Tracking
         self.use_kalman_filter = config["tracking"]["use_kalman_filter"]
