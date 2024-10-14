@@ -36,6 +36,7 @@ class Config:
         self.max_movement_speed = stop_sign["max_movement_speed"]
         self.parked_frame_threshold = stop_sign["parked_frame_threshold"]
         self.unparked_frame_threshold = stop_sign["unparked_frame_threshold"]
+        self.unparked_speed_threshold = stop_sign["unparked_speed_threshold"]
 
         # Tracking
         self.use_kalman_filter = config["tracking"]["use_kalman_filter"]
