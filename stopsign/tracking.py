@@ -31,7 +31,7 @@ class CarState:
     prev_speed: float = 0.0
     velocity: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
     direction: float = 0.0
-    is_parked: bool = False
+    is_parked: bool = True
     consecutive_moving_frames: int = 0
     consecutive_stationary_frames: int = 0
     track: List[Tuple[Point, float]] = field(default_factory=list)
@@ -155,15 +155,18 @@ class Car:
             self.state.direction = 0.0
 
     def _update_parked_status(self) -> None:
-        """Update the car's parked status based on its movement."""
-        if not self.state.is_parked:
+        """Update the car's parked status based on its movement and speed."""
+        if self.state.is_parked:
+            if (
+                self.state.consecutive_moving_frames >= self.config.unparked_frame_threshold
+                or self.state.speed > self.config.unparked_speed_threshold
+            ):
+                self.state.is_parked = False
+                self.state.consecutive_stationary_frames = 0
+        else:
             if self.state.consecutive_stationary_frames >= self.config.parked_frame_threshold:
                 self.state.is_parked = True
                 self.state.consecutive_moving_frames = 0
-        else:
-            if self.state.consecutive_moving_frames >= self.config.unparked_frame_threshold:
-                self.state.is_parked = False
-                self.state.consecutive_stationary_frames = 0
 
     def __repr__(self) -> str:
         return (
@@ -303,7 +306,12 @@ class StopDetector:
 
         # Check if car is in pre-stop zone
         in_pre_stop_zone = self.pre_stop_zone[0] <= car_x <= self.pre_stop_zone[1]
-        if in_pre_stop_zone:
+
+        # Check if car is in stop zone
+        in_stop_zone = self._check_polygon_intersection(car_polygon, self.stop_zone)
+
+        # Update pre-stop zone flag only if not already in stop zone
+        if in_pre_stop_zone and not in_stop_zone and not car.state.passed_pre_stop_zone:
             car.state.passed_pre_stop_zone = True
 
         # Check if car is in image capture zone
@@ -311,16 +319,12 @@ class StopDetector:
         if not car.state.image_captured and in_image_capture_zone:
             self.capture_car_image(car, timestamp, frame)
 
-        # Get bounding box polygon for the car
-        car_polygon = self._get_car_polygon(car.state.bbox)
-        stop_zone_polygon = self.stop_zone
-
-        in_zone = self._check_polygon_intersection(car_polygon, stop_zone_polygon)
+        # Only proceed with stop zone logic if pre-stop zone was passed
         if not car.state.passed_pre_stop_zone:
             return
 
         # Update consecutive frame counters
-        if in_zone:
+        if in_stop_zone:
             car.state.consecutive_in_zone_frames += 1
             car.state.consecutive_out_zone_frames = 0
         else:
