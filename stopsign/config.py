@@ -27,15 +27,15 @@ class Config:
         # Stop sign detection
         stop_sign = config["stopsign_detection"]
         self.stop_line = tuple(tuple(i) for i in stop_sign["stop_line"])
-        self.stop_box_tolerance = stop_sign["stop_box_tolerance"]
-        self.min_stop_time = stop_sign["min_stop_time"]
+        self.stop_box_tolerance = tuple(stop_sign["stop_box_tolerance"])
+        self.pre_stop_zone = tuple(stop_sign["pre_stop_zone"])
+        self.image_capture_zone = tuple(stop_sign["image_capture_zone"])
+        self.in_zone_frame_threshold = stop_sign["in_zone_frame_threshold"]
+        self.out_zone_frame_threshold = stop_sign["out_zone_frame_threshold"]
+        self.stop_speed_threshold = stop_sign["stop_speed_threshold"]
         self.max_movement_speed = stop_sign["max_movement_speed"]
         self.parked_frame_threshold = stop_sign["parked_frame_threshold"]
         self.unparked_frame_threshold = stop_sign["unparked_frame_threshold"]
-
-        # Car Analysis
-        self.image_capture_zone = config["car_analysis"]["image_capture_zone"]
-        self.stopsign_entry_zone = config["car_analysis"]["stopsign_entry_zone"]
 
         # Tracking
         self.use_kalman_filter = config["tracking"]["use_kalman_filter"]

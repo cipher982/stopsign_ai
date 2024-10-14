@@ -28,7 +28,6 @@ from stopsign.database import Database
 from stopsign.tracking import Car
 from stopsign.tracking import CarTracker
 from stopsign.tracking import StopDetector
-from stopsign.tracking import StopZone
 
 # Load environment variables
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -331,7 +330,7 @@ class VideoAnalyzer:
             processed_frame,
             self.car_tracker.cars,
             boxes,
-            self.stop_detector.stop_zone,
+            self.stop_detector,
         )
         visualization_time = time.time() - visualization_start
         self.visualization_time.observe(visualization_time)
@@ -347,9 +346,7 @@ class VideoAnalyzer:
 
         self.cars_tracked.set(len(self.car_tracker.get_cars()))
         cars_in_stop_zone = sum(
-            1
-            for car in self.car_tracker.get_cars().values()
-            if self.stop_detector.stop_zone.is_in_stop_zone(car.state.location) and not car.state.is_parked
+            1 for car in self.car_tracker.get_cars().values() if car.state.in_stop_zone and not car.state.is_parked
         )
         self.cars_in_stop_zone.set(cars_in_stop_zone)
 
@@ -398,21 +395,22 @@ class VideoAnalyzer:
             self.increment_exception_counter(type(e).__name__, "detect_objects")
             raise
 
-    def visualize(self, frame, cars: Dict[int, Car], boxes: List, stop_zone: StopZone) -> np.ndarray:
+    def visualize(self, frame, cars: Dict[int, Car], boxes: List, stop_detector: StopDetector) -> np.ndarray:
         overlay = frame.copy()
 
         car_in_stop_zone = any(car.state.in_stop_zone for car in cars.values() if not car.state.is_parked)
 
+        # draw stop zone
         color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)
-
-        stop_box_corners = np.array(stop_zone._calculate_stop_box(), dtype=np.int32)
+        stop_box_corners = np.array(stop_detector.stop_zone, dtype=np.int32)
         cv2.fillPoly(overlay, [stop_box_corners], color)
         alpha = 0.3
         frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
 
-        start_point = tuple(map(int, stop_zone.stop_line[0]))
-        end_point = tuple(map(int, stop_zone.stop_line[1]))
-        cv2.line(frame, start_point, end_point, (0, 0, 255), 2)
+        # draw stop zone midline
+        top_mid = (stop_box_corners[0] + stop_box_corners[1]) // 2
+        bottom_mid = (stop_box_corners[2] + stop_box_corners[3]) // 2
+        cv2.line(frame, tuple(top_mid), tuple(bottom_mid), (0, 0, 255), 2)
 
         for box in boxes:
             if box.id is None:
@@ -481,7 +479,6 @@ class VideoAnalyzer:
                     "speed": car.state.speed,
                     "is_parked": car.state.is_parked,
                     "time_in_zone": car.state.time_in_zone,
-                    "stop_zone_state": car.state.stop_zone_state,
                 }
                 for car in self.car_tracker.get_cars().values()
             ],
@@ -527,11 +524,6 @@ class VideoAnalyzer:
         # Fallback to default if unable to retrieve from Redis
         logger.warning("Unable to determine frame dimensions from Redis. Using default 1920x1080.")
         return 1920, 1080
-
-    def reload_stop_zone_config(self, new_config):
-        self.stop_detector.update_stop_zone(new_config)
-        self.config.update_stop_zone(new_config)  # Ensure this method exists in Config class
-        logger.info(f"Stop zone configuration updated: {new_config}")
 
     def update_usage_metrics(self):
         process = psutil.Process(os.getpid())

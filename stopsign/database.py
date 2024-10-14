@@ -49,10 +49,10 @@ class Database:
                 location TEXT,
                 speed FLOAT,
                 is_parked BOOLEAN,
-                stop_zone_state TEXT,
+                in_stop_zone BOOLEAN,
                 time_in_zone FLOAT,
                 min_speed_in_zone FLOAT,
-                time_at_zero FLOAT,
+                stop_duration FLOAT,
                 entry_time FLOAT,
                 exit_time FLOAT,
                 track TEXT
@@ -77,8 +77,8 @@ class Database:
             cursor.execute(
                 """
                 INSERT INTO car_state_history (
-                    car_id, last_seen, location, speed, is_parked, stop_zone_state,
-                    time_in_zone, min_speed_in_zone, time_at_zero, entry_time, exit_time, track
+                    car_id, last_seen, location, speed, is_parked, in_stop_zone,
+                    time_in_zone, min_speed_in_zone, stop_duration, entry_time, exit_time, track
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -87,10 +87,10 @@ class Database:
                     json.dumps(car.state.location),
                     car.state.speed,
                     car.state.is_parked,
-                    car.state.stop_zone_state,
+                    car.state.in_stop_zone,
                     car.state.time_in_zone,
                     car.state.min_speed_in_zone,
-                    car.state.time_at_zero,
+                    car.state.stop_duration,
                     car.state.entry_time,
                     car.state.exit_time,
                     json.dumps(car.state.track),
