@@ -12,8 +12,8 @@ stopsign_detection:
   max_movement_speed: 20  # pixels / second
   parked_frame_threshold: 60
   unparked_frame_threshold: 20
-  in_zone_frame_threshold: 10
-  out_zone_frame_threshold: 10
+  in_zone_frame_threshold: 2
+  out_zone_frame_threshold: 2
   stop_speed_threshold: 20
 
 tracking:

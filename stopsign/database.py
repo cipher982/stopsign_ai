@@ -47,14 +47,14 @@ class Database:
                 car_id INTEGER,
                 last_seen DATETIME,
                 location TEXT,
-                speed FLOAT,
+                speed REAL,
                 is_parked BOOLEAN,
                 in_stop_zone BOOLEAN,
-                time_in_zone FLOAT,
-                min_speed_in_zone FLOAT,
-                stop_duration FLOAT,
-                entry_time FLOAT,
-                exit_time FLOAT,
+                time_in_zone REAL,
+                min_speed_in_zone REAL,
+                stop_duration REAL,
+                entry_time REAL,
+                exit_time REAL,
                 track TEXT
             )
             """)
@@ -65,9 +65,9 @@ class Database:
                 id INTEGER PRIMARY KEY,
                 timestamp DATETIME,
                 vehicle_id INTEGER,
-                time_in_zone FLOAT,
-                stop_duration FLOAT,
-                min_speed FLOAT,
+                time_in_zone REAL,
+                stop_duration REAL,
+                min_speed REAL,
                 image_path TEXT
             )
             """)

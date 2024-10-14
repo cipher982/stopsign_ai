@@ -455,12 +455,12 @@ async def get_recent_vehicle_passes():
                                 Div(
                                     Span("Time Score: ", style="font-weight: bold; font-size: 1.1em;"),
                                     Span(
-                                        f"{calculate_time_in_zone_score(pass_data[4])}",
-                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_time_in_zone_score(pass_data[4]) * 1.2}, 100%, 50%);",
+                                        f"{calculate_time_in_zone_score(pass_data[3])}",
+                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_time_in_zone_score(pass_data[3]) * 12}, 100%, 50%);",
                                     ),
                                 ),
                                 Div(
-                                    f"Time in Zone: {pass_data[4]:.2f} seconds",
+                                    f"Time in Zone: {pass_data[3]:.2f} seconds",
                                     style="font-size: 0.9em; margin-left: 10px;",
                                 ),
                                 style="margin-bottom: 3px;",
