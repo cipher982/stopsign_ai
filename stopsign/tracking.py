@@ -62,7 +62,6 @@ class Car:
         location: Tuple[float, float],
         timestamp: float,
         bbox: Tuple[float, float, float, float],
-        frame: np.ndarray,
     ) -> None:
         """Update the car's state with new location data."""
         self._update_location(location, timestamp)
@@ -197,7 +196,7 @@ class CarTracker:
                 if car_id not in self.cars:
                     self.cars[car_id] = Car(id=car_id, config=self.config)
 
-                self.cars[car_id].update(location, timestamp, bbox, frame)
+                self.cars[car_id].update(location, timestamp, bbox)
                 self.last_seen[car_id] = timestamp
             except Exception as e:
                 logger.error(f"Error updating car {box.id}: {str(e)}")
@@ -340,7 +339,6 @@ class StopDetector:
                 car.state.exit_time = timestamp
                 car.state.time_in_zone = car.state.exit_time - car.state.entry_time
                 logger.debug(f"Car {car.id} has exited the stop zone at {timestamp}")
-                logger.info(f"Car {car.id} time in zone: {car.state.time_in_zone:.2f} seconds")
                 # Save data to the database
                 self.db.add_vehicle_pass(
                     vehicle_id=car.id,
