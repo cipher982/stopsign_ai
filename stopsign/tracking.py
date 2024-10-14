@@ -359,7 +359,27 @@ class StopDetector:
             car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, car.state.raw_speed)
 
     def _reset_car_state(self, car: Car) -> None:
-        pass
+        # Reset stop zone related attributes
+        car.state.in_stop_zone = False
+        car.state.passed_pre_stop_zone = False
+        car.state.entry_time = 0.0
+        car.state.exit_time = 0.0
+        car.state.time_in_zone = 0.0
+        car.state.consecutive_in_zone_frames = 0
+        car.state.consecutive_out_zone_frames = 0
+        car.state.min_speed_in_zone = float("inf")
+        car.state.stop_duration = 0.0
+        car.state.stop_position = (0.0, 0.0)
+
+        # Reset image capture related attributes
+        car.state.image_captured = False
+        car.state.image_path = ""
+
+        # Optionally, you might want to reset some movement-related attributes
+        car.state.consecutive_moving_frames = 0
+        car.state.consecutive_stationary_frames = 0
+
+        logger.debug(f"Reset state for Car {car.id}")
 
     def is_in_capture_zone(self, x: float) -> bool:
         return self.image_capture_zone[0] <= x <= self.image_capture_zone[1]
