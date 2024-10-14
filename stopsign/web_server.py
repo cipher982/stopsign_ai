@@ -397,7 +397,7 @@ async def get_recent_vehicle_passes():
     try:
         if not hasattr(app.state, "db"):
             app.state.db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
-        recent_passes = app.state.db.get_recent_vehicle_passes()
+        recent_passes = app.state.db.get_recent_vehicle_passes(limit=50)
 
         local_tz = pytz.timezone("America/Chicago")
 
@@ -421,7 +421,7 @@ async def get_recent_vehicle_passes():
 
         def calculate_speed_score(min_speed):
             percentile = app.state.db.get_min_speed_percentile(min_speed)
-            return round(100 - percentile)
+            return round((100 - percentile) / 10)
 
         # Create a styled list of recent passes
         passes_list = Ul(
@@ -438,26 +438,38 @@ async def get_recent_vehicle_passes():
                         ),
                         Div(
                             Div(
-                                f"{format_timestamp(pass_data[1])}",
-                                style="font-weight: bold; font-size: 1.3em; margin-bottom: 5px;",
+                                Div(
+                                    Span("Speed Score: ", style="font-weight: bold; font-size: 1.1em;"),
+                                    Span(
+                                        f"{calculate_speed_score(pass_data[5])}",
+                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_speed_score(pass_data[5]) * 12}, 100%, 50%);",
+                                    ),
+                                ),
+                                Div(
+                                    f"Min Speed: {pass_data[5]:.2f} pixels/sec",
+                                    style="font-size: 0.9em; margin-left: 10px;",
+                                ),
+                                style="margin-bottom: 10px;",
                             ),
                             Div(
-                                Span("Score: ", style="font-weight: bold; font-size: 1.2em;"),
-                                Span(
-                                    f"{calculate_speed_score(pass_data[5]) // 10}",
-                                    style=f"font-weight: bold; font-size: 1.2em; color: hsl({calculate_speed_score(pass_data[5]) * 1.2}, 100%, 50%);",
+                                Div(
+                                    Span("Time Score: ", style="font-weight: bold; font-size: 1.1em;"),
+                                    Span(
+                                        f"{calculate_time_in_zone_score(pass_data[4])}",
+                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_time_in_zone_score(pass_data[4]) * 1.2}, 100%, 50%);",
+                                    ),
+                                ),
+                                Div(
+                                    f"Time in Zone: {pass_data[4]:.2f} seconds",
+                                    style="font-size: 0.9em; margin-left: 10px;",
                                 ),
                                 style="margin-bottom: 3px;",
                             ),
-                            Div(
-                                f"Stop Time: {pass_data[4]:.2f} seconds",
-                                style="font-size: 0.9em; margin-bottom: 3px;",
-                            ),
-                            Div(f"Min Speed: {pass_data[5]:.2f} pixels/sec", style="font-size: 0.9em;"),
                             style="flex: 1;",
                         ),
-                        style="display: flex; align-items: center; background-color: var(--card-bg); padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-                    )
+                        style="display: flex; align-items: flex-start;",
+                    ),
+                    style="margin-bottom: 20px; background-color: var(--card-bg); padding: 15px; border-radius: 8px;",
                 )
                 for pass_data in recent_passes
             ],

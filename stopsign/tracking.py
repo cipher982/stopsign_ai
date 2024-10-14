@@ -447,6 +447,7 @@ class StopDetector:
             car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, abs(car.state.speed))
             if car.state.raw_speed < 20:
                 car.state.time_at_zero += timestamp - car.state.last_update_time
+            car.state.time_in_zone = timestamp - car.state.entry_time
             if self._is_crossing_stop_line(car):
                 car.state.stop_zone_state = "EXITING"
                 car.state.exit_time = timestamp
@@ -456,7 +457,7 @@ class StopDetector:
         if car.state.stop_zone_state in ["ENTERED", "EXITING"]:
             car.state.stop_zone_state = "EXITED"
             if not car.state.scored and car.state.entry_time > 0:
-                car.state.time_in_zone = self.calculate_time_in_zone(car)
+                car.state.time_in_zone = timestamp - car.state.entry_time
                 car.state.scored = True
 
                 # Capture an image now if the capture area did not work
@@ -478,6 +479,7 @@ class StopDetector:
             car.state.time_at_zero = 0.0
             car.state.entry_time = 0.0
             car.state.exit_time = 0.0
+            car.state.time_in_zone = 0.0
             car.state.scored = False
             car.state.stop_position = (0.0, 0.0)
             car.state.image_captured = False
