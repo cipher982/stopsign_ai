@@ -5,13 +5,14 @@ video_processing:
   frame_buffer_size: 500 # number of frames to buffer
 
 stopsign_detection:
-  stop_line: [[600, 500], [500, 600]]
+  stop_line: [[650, 500], [450, 600]]
   stop_box_tolerance: [50, 50]
-  pre_stop_zone: [750, 800]
+  pre_stop_zone: [1000, 1100]
   image_capture_zone: [800, 900]
   max_movement_speed: 20  # pixels / second
   parked_frame_threshold: 60
   unparked_frame_threshold: 20
+  unparked_speed_threshold: 30
   in_zone_frame_threshold: 2
   out_zone_frame_threshold: 2
   stop_speed_threshold: 20
