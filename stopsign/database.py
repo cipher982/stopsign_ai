@@ -139,6 +139,25 @@ class Database:
             )
             return cursor.fetchone()[0]
 
+    def get_extreme_passes(self, criteria: str, order: str, limit: int = 10):
+        valid_criteria = ["min_speed", "time_in_zone", "stop_duration"]
+        valid_orders = ["ASC", "DESC"]
+
+        if criteria not in valid_criteria or order not in valid_orders:
+            raise ValueError("Invalid criteria or order")
+
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id, timestamp, vehicle_id, time_in_zone, stop_duration, min_speed, image_path
+                FROM vehicle_passes
+                ORDER BY {criteria} {order}
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return cursor.fetchall()
+
     def get_total_passes_last_24h(self):
         with self.get_cursor() as cursor:
             cursor.execute(
