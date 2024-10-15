@@ -4,13 +4,13 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     volumes:
-      - ../app:/app
+      - .:/app
     env_file:
-      - ../.env
+      - .env
     environment:
-      - PROMETHEUS_PORT=8001
+      - PROMETHEUS_PORT=9100
     expose:
-      - 8001
+      - 9100
     networks:
       - default
       - monitoring
