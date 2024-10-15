@@ -158,6 +158,12 @@ class RTSPToRedis:
         self.processing_thread.daemon = True
         self.processing_thread.start()
 
+        last_log_time = time.time()
+        log_interval = 60
+
+        logger.info("RTSP to Redis service starting...")
+        self.log_status()
+
         while not self.should_stop.is_set():
             cap = None
             try:
@@ -196,6 +202,12 @@ class RTSPToRedis:
                             self.rtsp_input_fps.set(rtsp_frames_count / elapsed_fps_time)
                             rtsp_frames_count = 0
                             fps_update_time = current_time
+
+                        # Log status periodically
+                        if current_time - last_log_time >= log_interval:
+                            self.log_status()
+                            last_log_time = current_time
+
                     else:
                         time.sleep(frame_time - elapsed_time)
 
@@ -218,6 +230,18 @@ class RTSPToRedis:
         if self.processing_thread:
             self.processing_thread.join()
         logger.info("RTSP to Redis service stopped.")
+
+    def log_status(self):
+        logger.info(
+            f"Status Update: "
+            f"FPS: {self.actual_fps._value.get():.2f}, "
+            f"Queue Size: {self.frame_queue.qsize()}, "
+            f"Frames Processed: {self.frames_processed._value.get()}, "
+            f"Frames Dropped: {self.frames_dropped._value.get()}, "
+            f"Buffer Utilization: {self.buffer_utilization._value.get():.2f}%, "
+            f"RTSP Errors: {self.rtsp_errors._value.get()}, "
+            f"Redis Errors: {self.redis_errors._value.get()}"
+        )
 
 
 if __name__ == "__main__":
