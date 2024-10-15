@@ -242,7 +242,45 @@ class RTSPToRedis:
             f"Redis Errors: {self.redis_errors._value.get()}"
         )
 
+    def health_check(self):
+        try:
+            if self.redis_client and self.redis_client.ping():
+                if self.processing_thread and self.processing_thread.is_alive():
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Health check failed: {str(e)}")
+            return False
+
 
 if __name__ == "__main__":
     rtsp_to_redis = RTSPToRedis()
+
+    from http.server import BaseHTTPRequestHandler
+    from http.server import HTTPServer
+
+    class HealthCheckHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/health":
+                if rtsp_to_redis.health_check():
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"OK")
+                else:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(b"Not OK")
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    def run_health_server():
+        server = HTTPServer(("0.0.0.0", 8080), HealthCheckHandler)
+        server.serve_forever()
+
+    import threading
+
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+
     rtsp_to_redis.run()
