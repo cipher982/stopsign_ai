@@ -79,6 +79,7 @@ class RTSPToRedis:
             raise
 
     def initialize_capture(self):
+        logger.info(f"Attempting to connect to RTSP at {self.rtsp_url}")
         max_attempts = 5
         for attempt in range(max_attempts):
             if not self.rtsp_url:
