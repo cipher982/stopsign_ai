@@ -9,6 +9,8 @@ import redis
 import uvicorn
 from fasthtml.common import H1
 from fasthtml.common import H2
+from fasthtml.common import H3
+from fasthtml.common import H4
 from fasthtml.common import A
 from fasthtml.common import Body
 from fasthtml.common import Div
@@ -49,7 +51,7 @@ def get_common_styles():
                 --card-bg: #2a2a2a;
             }
             body {
-                font-family: 'Creepster', cursive;
+                font-family: 'Roboto', sans-serif;
                 background-color: var(--bg-color);
                 color: var(--text-color);
                 line-height: 1.6;
@@ -144,6 +146,7 @@ def get_common_header(title):
         H1(title, style="text-align: center; flex-grow: 1;"),
         Nav(
             A("Home", href="/"),
+            A("Records", href="/records"),
             A("Statistics", href="/statistics"),
             A("About", href="/about"),
             A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
@@ -304,30 +307,6 @@ def home():
         ),
         Body(
             get_common_header("Stop Sign Nanny"),
-            # Script("""
-            #     document.addEventListener('DOMContentLoaded', function() {
-            #         var video = document.getElementById('videoPlayer');
-            #         if (Hls.isSupported()) {
-            #             var hls = new Hls();
-            #             hls.loadSource('/app/stream/stream.m3u8');
-            #             hls.attachMedia(video);
-            #             hls.on(Hls.Events.MANIFEST_PARSED, function() {
-            #                 video.play();
-            #             });
-            #             hls.on(Hls.Events.ERROR, function(event, data) {
-            #                 console.error('HLS error:', event, data);
-            #             });
-            #         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            #             video.src = '/app/stream/stream.m3u8';
-            #             video.addEventListener('loadedmetadata', function() {
-            #                 video.play();
-            #             });
-            #         }
-            #         video.addEventListener('error', function(e) {
-            #             console.error('Video error:', e);
-            #         });
-            #     });
-            # """),
             Main(
                 Div(
                     Div(
@@ -415,14 +394,6 @@ async def get_recent_vehicle_passes():
             else:
                 return chicago_time.strftime("%b %-d, %Y, %-I:%M %p")
 
-        def calculate_time_in_zone_score(time_in_zone):
-            percentile = app.state.db.get_time_in_zone_percentile(time_in_zone)
-            return round(percentile / 10)
-
-        def calculate_speed_score(min_speed):
-            percentile = app.state.db.get_min_speed_percentile(min_speed)
-            return round((100 - percentile) / 10)
-
         # Create a styled list of recent passes
         passes_list = Ul(
             *[
@@ -484,6 +455,93 @@ async def get_recent_vehicle_passes():
     except Exception as e:
         logger.error(f"Error in get_recent_vehicle_passes: {str(e)}")
         return Div(P(f"Error: {str(e)}"), id="recentPasses")
+
+
+@app.get("/records")  # type: ignore
+def records():
+    return Html(
+        Head(
+            Title("Records - Stop Sign Nanny"),
+            Script(src="https://unpkg.com/htmx.org@1.9.4"),
+        ),
+        Body(
+            get_common_header("Records"),
+            get_common_styles(),
+            Main(
+                Div(
+                    H2("Vehicle Records", style="text-align: center;"),
+                    Div(
+                        Div(id="worstPasses", hx_get="/api/worst-passes", hx_trigger="load"),
+                        Div(id="bestPasses", hx_get="/api/best-passes", hx_trigger="load"),
+                        style="display: flex; justify-content: center; gap: 20px;",
+                    ),
+                    cls="container",
+                    style="margin: 20px auto; max-width: 1200px;",
+                ),
+            ),
+            get_common_footer(),
+        ),
+    )
+
+
+@app.get("/api/worst-passes")  # type: ignore
+async def get_worst_passes():
+    try:
+        worst_speed_passes = app.state.db.get_extreme_passes("min_speed", "DESC", 5)
+        worst_time_passes = app.state.db.get_extreme_passes("time_in_zone", "ASC", 5)
+        return create_pass_list("Worst Passes", worst_speed_passes, worst_time_passes, "worstPasses")
+    except Exception as e:
+        logger.error(f"Error in get_worst_passes: {str(e)}")
+        return Div(P(f"Error: {str(e)}"), id="worstPasses")
+
+
+@app.get("/api/best-passes")  # type: ignore
+async def get_best_passes():
+    try:
+        best_speed_passes = app.state.db.get_extreme_passes("min_speed", "ASC", 5)
+        best_time_passes = app.state.db.get_extreme_passes("time_in_zone", "DESC", 5)
+        return create_pass_list("Best Passes", best_speed_passes, best_time_passes, "bestPasses")
+    except Exception as e:
+        logger.error(f"Error in get_best_passes: {str(e)}")
+        return Div(P(f"Error: {str(e)}"), id="bestPasses")
+
+
+def create_pass_list(title, speed_passes, time_passes, div_id):
+    return Div(
+        H3(title),
+        H4("Minimum Speed"),
+        Div(*[create_pass_item(pass_data, "speed") for pass_data in speed_passes]),
+        H4("Time in Stop Zone"),
+        Div(*[create_pass_item(pass_data, "time") for pass_data in time_passes]),
+        id=div_id,
+        cls="card",
+    )
+
+
+def create_pass_item(pass_data, pass_type):
+    # Determine if it's a best or worst pass
+    is_best = (pass_type == "speed" and pass_data[5] < 10) or (pass_type == "time" and pass_data[3] > 3)
+
+    # Set border color based on whether it's a best or worst pass
+    border_color = "green" if is_best else "red"
+
+    return Div(
+        Div(
+            Img(src=pass_data[6], alt="Vehicle Image", style="width: 200px; height: auto;"),
+            style="display: inline-block; vertical-align: middle; margin-right: 10px;",
+        ),
+        Div(
+            f"{pass_data[5]:.2f} pixels/sec" if pass_type == "speed" else f"{pass_data[3]:.2f} seconds",
+            style="display: inline-block; vertical-align: middle;",
+        ),
+        style=f"""
+            margin-bottom: 20px;
+            text-align: left;
+            border: 2px solid {border_color};
+            border-radius: 8px;
+            padding: 10px;
+        """,
+    )
 
 
 @app.get("/statistics")  # type: ignore
@@ -585,11 +643,19 @@ def load_video():
     )
 
 
+def calculate_time_in_zone_score(time_in_zone):
+    percentile = app.state.db.get_time_in_zone_percentile(time_in_zone)
+    return round(percentile / 10)
+
+
+def calculate_speed_score(min_speed):
+    percentile = app.state.db.get_min_speed_percentile(min_speed)
+    return round((100 - percentile) / 10)
+
+
 def main(config: Config):
     try:
-        db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
-        app.state.db = db
-
+        app.state.db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
         uvicorn.run(
             "stopsign.web_server:app",
             host="0.0.0.0",
