@@ -24,8 +24,7 @@ RAW_FRAME_KEY = "raw_frame_buffer"
 class RTSPToRedis:
     def __init__(self):
         self.rtsp_url = os.getenv("RTSP_URL")
-        self.redis_host = os.getenv("REDIS_HOST", "localhost")
-        self.redis_port = int(os.getenv("REDIS_PORT", 6379))
+        self.redis_url = os.getenv("REDIS_URL")
         self.prometheus_port = int(os.getenv("PROMETHEUS_PORT", 8000))
         self.frame_buffer_size = int(os.getenv("FRAME_BUFFER_SIZE", 20))
         self.fps = 15
@@ -69,9 +68,9 @@ class RTSPToRedis:
         self.frames_dropped = Counter("rtsp_frames_dropped", "Number of frames dropped due to full queue")
 
     def initialize_redis(self):
-        logger.info(f"Attempting to connect to Redis at {self.redis_host}:{self.redis_port}")
+        logger.info(f"Attempting to connect to Redis at {self.redis_url}")
         try:
-            self.redis_client = redis.Redis(host=self.redis_host, port=self.redis_port, db=0, socket_timeout=5)
+            self.redis_client = redis.from_url(self.redis_url, socket_timeout=5)
             self.redis_client.ping()
             logger.info("Successfully connected to Redis")
         except RedisError as e:
