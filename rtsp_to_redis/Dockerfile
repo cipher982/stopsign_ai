@@ -6,6 +6,6 @@ RUN pip install --upgrade pip
 RUN pip install redis opencv-python prometheus_client
 
 WORKDIR /app
-COPY app/ .
+COPY . .
 
 CMD ["python", "rtsp_to_redis.py"]
