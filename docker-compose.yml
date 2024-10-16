@@ -70,7 +70,6 @@ services:
       - video_analyzer
     volumes:
       - ./static:/app/static
-      - ${SQL_DB_PATH}:/app/data
       - ${DATA_DIR}:/app/data
       - ${STREAM_DIR}:/app/stream
     networks:
