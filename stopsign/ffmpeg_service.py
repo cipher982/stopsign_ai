@@ -29,7 +29,8 @@ def get_env(key: str) -> str:
 # Environment Variables
 REDIS_URL = get_env("REDIS_URL")
 PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
-STREAM_DIR = "./stream"
+
+STREAM_DIR = "/app/data/stream"
 FRAME_RATE = "15"
 RESOLUTION = "1920x1080"
 

@@ -11,14 +11,11 @@ services:
       - PROMETHEUS_PORT=${PROMETHEUS_PORT}
       - RAW_FRAME_KEY=${RAW_FRAME_KEY}
       - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
-      - SQL_DB_NAME=${SQL_DB_NAME}
-      - VEHICLE_IMAGE_DIR=${VEHICLE_IMAGE_DIR}
-      - YOLO_MODEL_DIR=${YOLO_MODEL_DIR}
       - YOLO_MODEL_NAME=${YOLO_MODEL_NAME}
+      - DB_NAME=${DB_NAME}
     volumes:
-      - ${YOLO_MODEL_DIR}:/app/models
-      - ${DATA_DIR}:/app/data
-      - ${STREAM_DIR}:/app/stream
+      - ${STORAGE_DIR}:/app/data
+      - ${MODEL_DIR}:/app/models
     networks:
       - default
       - monitoring
@@ -41,7 +38,7 @@ services:
       - REDIS_URL=${REDIS_URL}
       - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
     volumes:
-      - ${STREAM_DIR}:/app/stream
+      - ${STORAGE_DIR}:/app/data
     depends_on:
       - video_analyzer
     networks:
@@ -65,13 +62,12 @@ services:
     env_file:
       - .env
     environment:
-      - SQL_DB_NAME=${SQL_DB_NAME}
+      - DB_NAME=${DB_NAME}
     depends_on:
       - video_analyzer
     volumes:
       - ./static:/app/static
-      - ${DATA_DIR}:/app/data
-      - ${STREAM_DIR}:/app/stream
+      - ${STORAGE_DIR}:/app/data
     networks:
       - default
       - monitoring

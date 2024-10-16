@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 def get_env(key: str) -> str:
     value = os.getenv(key)
     assert value is not None, f"{key} is not set"
+    logger.info(f"Loaded env var {key}: {value}")
     return value
 
 
@@ -46,10 +47,11 @@ PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
 REDIS_URL = get_env("REDIS_URL")
 RAW_FRAME_KEY = get_env("RAW_FRAME_KEY")
 PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
-SQL_DB_NAME = get_env("SQL_DB_NAME")
-SQL_DB_PATH = f"/app/data/{SQL_DB_NAME}"
+DB_NAME = get_env("DB_NAME")
 YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME")
-YOLO_MODEL_PATH = f"/app/models/{YOLO_MODEL_NAME}"
+
+YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
+DB_PATH = os.path.join("/app/data", DB_NAME)
 
 
 class VideoAnalyzer:
@@ -544,6 +546,6 @@ class VideoAnalyzer:
 
 if __name__ == "__main__":
     config = Config("./config.yaml")
-    db = Database(db_file=SQL_DB_PATH)
+    db = Database(db_file=DB_PATH)
     processor = VideoAnalyzer(config, db)
     processor.run()

@@ -3,6 +3,7 @@ import os
 import uuid
 from dataclasses import dataclass
 from dataclasses import field
+from datetime import datetime
 from typing import Dict
 from typing import List
 from typing import Tuple
@@ -20,6 +21,15 @@ Line = Tuple[Point, Point]
 # Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_env(key: str) -> str:
+    value = os.getenv(key)
+    assert value is not None, f"{key} is not set"
+    return value
+
+
+VEHICLE_IMAGE_DIR = "/app/data/vehicle_images"
 
 
 @dataclass
@@ -351,6 +361,13 @@ class StopDetector:
                     min_speed=car.state.min_speed_in_zone,
                     image_path=car.state.image_path,
                 )
+                logger.info(
+                    f"Vehicle pass recorded: ID={car.id}, "
+                    f"Time in zone={car.state.time_in_zone:.2f}s, "
+                    f"Stop duration={car.state.stop_duration:.2f}s, "
+                    f"Min speed={car.state.min_speed_in_zone:.2f}px/s "
+                    f"Timestamp={datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')}"
+                )
                 # Reset state
                 self._reset_car_state(car)
 
@@ -399,7 +416,7 @@ def save_vehicle_image(
     timestamp: float,
     bbox: Tuple[float, float, float, float],
 ) -> str:
-    image_dir = str(os.getenv("VEHICLE_IMAGE_DIR"))
+    image_dir = VEHICLE_IMAGE_DIR
     os.makedirs(image_dir, exist_ok=True)
 
     # Generate a random UUID for the filename
