@@ -6,13 +6,11 @@ services:
     env_file:
       - .env
     environment:
-      - PROMETHEUS_PORT=${PROMETHEUS_PORT:-9100}
-      - REDIS_URL=${REDIS_URL}
+      - PROMETHEUS_PORT=${PROMETHEUS_PORT}
       - RTSP_URL=${RTSP_URL}
-      - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE:-20}
-    expose:
-      - 9100
-      - 8080
+      - REDIS_URL=${REDIS_URL}
+      - RAW_FRAME_KEY=${RAW_FRAME_KEY}
+      - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
