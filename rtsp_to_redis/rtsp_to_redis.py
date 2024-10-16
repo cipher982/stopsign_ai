@@ -18,7 +18,16 @@ from redis.exceptions import RedisError
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-RAW_FRAME_KEY = "raw_frame_buffer"
+
+def get_env(key: str) -> str:
+    value = os.getenv(key)
+    assert value is not None, f"{key} is not set"
+    return value
+
+
+RTSP_URL: str = get_env("RTSP_URL")
+REDIS_URL: str = get_env("REDIS_URL")
+RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
 
 
 class RTSPToRedis:
