@@ -12,7 +12,6 @@ services:
       - ${YOLO_MODEL_DIR}:/app/models
       - ${DATA_DIR}:/app/data
       - ${STREAM_DIR}:/app/stream
-      - ./config.yaml:/app/config.yaml
     networks:
       - default
       - monitoring
