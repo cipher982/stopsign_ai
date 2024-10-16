@@ -5,7 +5,6 @@ from datetime import datetime
 from datetime import timedelta
 
 import pytz
-import redis
 import uvicorn
 from fasthtml.common import H1
 from fasthtml.common import H2
@@ -39,6 +38,19 @@ from stopsign.config import Config
 from stopsign.database import Database
 
 logger = logging.getLogger(__name__)
+
+
+def get_env(key: str) -> str:
+    value = os.getenv(key)
+    assert value is not None, f"{key} is not set"
+    return value
+
+
+SQL_DB_NAME = get_env("SQL_DB_NAME")
+SQL_DB_PATH = f"/app/data/{SQL_DB_NAME}"
+GRAFANA_URL = get_env("GRAFANA_URL")
+ORIGINAL_WIDTH = 1920
+ORIGINAL_HEIGHT = 1080
 
 
 def get_common_styles():
@@ -178,19 +190,6 @@ app = FastHTML(
     ),
 )
 
-# Initialize Redis client
-redis_client = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", 6379)),
-    db=0,
-)
-
-# Global variables
-original_width = 1920
-original_height = 1080
-
-# Grafana dashboard URL
-GRAFANA_URL = os.getenv("GRAFANA_URL")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/app/data", StaticFiles(directory="data"), name="data")
@@ -375,7 +374,7 @@ async def update_stop_zone(request):
 async def get_recent_vehicle_passes():
     try:
         if not hasattr(app.state, "db"):
-            app.state.db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
+            app.state.db = Database(db_file=SQL_DB_PATH)
         recent_passes = app.state.db.get_recent_vehicle_passes(limit=50)
 
         local_tz = pytz.timezone("America/Chicago")
@@ -655,7 +654,7 @@ def calculate_speed_score(min_speed):
 
 def main(config: Config):
     try:
-        app.state.db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
+        app.state.db = Database(db_file=SQL_DB_PATH)
         uvicorn.run(
             "stopsign.web_server:app",
             host="0.0.0.0",
