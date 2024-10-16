@@ -331,7 +331,7 @@ def home():
                     var video = document.getElementById('videoPlayer');
                     if (Hls.isSupported()) {
                         var hls = new Hls();
-                        hls.loadSource('/app/stream/stream.m3u8');  // Updated path
+                        hls.loadSource('/app/stream/stream.m3u8');
                         hls.attachMedia(video);
                         hls.on(Hls.Events.MANIFEST_PARSED, function() {
                             video.play();
@@ -341,7 +341,7 @@ def home():
                     // When the browser has built-in HLS support (check using `canPlayType`), we can provide an HLS manifest (i.e. .m3u8 URL) directly to the video element through the `src` property.
                     // This is using the built-in support of the plain video element, without using HLS.js.
                     else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                        video.src = '/app/stream/stream.m3u8';  // Updated path
+                        video.src = '/app/stream/stream.m3u8';
                         video.addEventListener('loadedmetadata', function() {
                             video.play();
                         });

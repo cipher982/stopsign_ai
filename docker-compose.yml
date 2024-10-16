@@ -7,7 +7,14 @@ services:
     env_file:
       - .env
     environment:
+      - REDIS_URL=${REDIS_URL}
       - PROMETHEUS_PORT=${PROMETHEUS_PORT}
+      - RAW_FRAME_KEY=${RAW_FRAME_KEY}
+      - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
+      - SQL_DB_NAME=${SQL_DB_NAME}
+      - VEHICLE_IMAGE_DIR=${VEHICLE_IMAGE_DIR}
+      - YOLO_MODEL_DIR=${YOLO_MODEL_DIR}
+      - YOLO_MODEL_NAME=${YOLO_MODEL_NAME}
     volumes:
       - ${YOLO_MODEL_DIR}:/app/models
       - ${DATA_DIR}:/app/data
@@ -30,6 +37,9 @@ services:
       dockerfile: Dockerfile.ffmpeg
     env_file:
       - .env
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
     volumes:
       - ./stream:/app/stream
     depends_on:
@@ -54,10 +64,13 @@ services:
       - ${WEB_SERVER_PORT}:8000
     env_file:
       - .env
+    environment:
+      - SQL_DB_NAME=${SQL_DB_NAME}
     depends_on:
       - video_analyzer
     volumes:
       - ./static:/app/static
+      - ${SQL_DB_PATH}:/app/data
       - ${DATA_DIR}:/app/data
       - ${STREAM_DIR}:/app/stream
     networks:
