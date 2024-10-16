@@ -197,6 +197,8 @@ class VideoAnalyzer:
         self.exception_counter.labels(type=exception_type, method=method).inc()
 
     def initialize_model(self):
+        logger.info(f"Attempting to load model from: {YOLO_MODEL_PATH}")
+        logger.info(f"Contents of /app/models: {os.system('ls -la /app/models')}")
         model = YOLO(YOLO_MODEL_PATH, task="detect")
         model.to("cuda")
         logger.info(f"Model loaded successfully: {YOLO_MODEL_PATH}")
