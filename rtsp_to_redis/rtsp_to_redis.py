@@ -22,21 +22,23 @@ logger = logging.getLogger(__name__)
 def get_env(key: str) -> str:
     value = os.getenv(key)
     assert value is not None, f"{key} is not set"
+    logger.info(f"Loaded env var {key}: {value}")
     return value
 
 
+PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
 RTSP_URL: str = get_env("RTSP_URL")
 REDIS_URL: str = get_env("REDIS_URL")
 RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
-PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
+FRAME_BUFFER_SIZE: int = int(get_env("FRAME_BUFFER_SIZE"))
 
 
 class RTSPToRedis:
     def __init__(self):
-        self.rtsp_url = os.getenv("RTSP_URL")
-        self.redis_url = os.getenv("REDIS_URL")
-        self.prometheus_port = int(os.getenv("PROMETHEUS_PORT", 8000))
-        self.frame_buffer_size = int(os.getenv("FRAME_BUFFER_SIZE", 20))
+        self.rtsp_url = RTSP_URL
+        self.redis_url = REDIS_URL
+        self.prometheus_port = PROMETHEUS_PORT
+        self.frame_buffer_size = FRAME_BUFFER_SIZE
         self.fps = 15
         self.jpeg_quality = 100
 
