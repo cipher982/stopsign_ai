@@ -60,7 +60,6 @@ services:
       - ./static:/app/static
       - ${DATA_DIR}:/app/data
       - ${STREAM_DIR}:/app/stream
-      - ./config.yaml:/app/config.yaml
     networks:
       - default
       - monitoring
