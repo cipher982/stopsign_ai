@@ -29,6 +29,8 @@ RTSP_URL: str = get_env("RTSP_URL")
 REDIS_URL: str = get_env("REDIS_URL")
 RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
 
+print(5 / 0)
+
 
 class RTSPToRedis:
     def __init__(self):
