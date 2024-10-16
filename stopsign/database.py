@@ -17,6 +17,17 @@ class Database:
         self.ensure_connection()
         self.create_tables()
         logger.info(f"Database connection established at {self.db_file}")
+        self.log_database_summary()
+
+    def log_database_summary(self):
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM vehicle_passes;")
+            total_passes = cursor.fetchone()[0]
+
+            summary = f"Database summary for {self.db_file}:\n"
+            summary += f"Total vehicle passes: {total_passes:,}\n"
+
+            logger.info(summary)
 
     @contextlib.contextmanager
     def get_cursor(self):

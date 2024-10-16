@@ -28,6 +28,7 @@ def get_env(key: str) -> str:
 RTSP_URL: str = get_env("RTSP_URL")
 REDIS_URL: str = get_env("REDIS_URL")
 RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
+PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
 
 
 class RTSPToRedis:

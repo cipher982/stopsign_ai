@@ -33,23 +33,30 @@ from stopsign.tracking import StopDetector
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
+def get_env(key: str) -> str:
+    value = os.getenv(key)
+    assert value is not None, f"{key} is not set"
+    return value
+
+
 MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
-PROMETHEUS_PORT = int(os.environ.get("PROMETHEUS_PORT", 8000))  # Default to 8000 if not set
-
-RAW_FRAME_KEY = "raw_frame_buffer"
-PROCESSED_FRAME_KEY = "processed_frame_buffer"
+PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
+REDIS_URL = get_env("REDIS_URL")
+RAW_FRAME_KEY = get_env("RAW_FRAME_KEY")
+PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
+SQL_DB_NAME = get_env("SQL_DB_NAME")
+SQL_DB_PATH = f"/app/data/{SQL_DB_NAME}"
+YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME")
+YOLO_MODEL_PATH = f"/app/models/{YOLO_MODEL_NAME}"
 
 
 class VideoAnalyzer:
     def __init__(self, config: Config, db: Database):
         self.config = config
         self.db = db
-        self.redis_client: Redis = redis.Redis(
-            host=os.getenv("REDIS_HOST", "localhost"),
-            port=int(os.getenv("REDIS_PORT", 6379)),
-            db=0,
-        )
+        self.redis_client: Redis = redis.from_url(REDIS_URL)
         self.initialize_metrics()
         self.model = self.initialize_model()
         self.car_tracker = CarTracker(config, self.db)
@@ -190,12 +197,9 @@ class VideoAnalyzer:
         self.exception_counter.labels(type=exception_type, method=method).inc()
 
     def initialize_model(self):
-        model_path = os.getenv("YOLO_MODEL_PATH")
-        if not model_path:
-            raise ValueError("Error: YOLO_MODEL_PATH environment variable is not set.")
-        model = YOLO(model_path, task="detect")
+        model = YOLO(YOLO_MODEL_PATH, task="detect")
         model.to("cuda")
-        logger.info(f"Model loaded successfully: {model_path}")
+        logger.info(f"Model loaded successfully: {YOLO_MODEL_PATH}")
         return model
 
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
@@ -274,16 +278,9 @@ class VideoAnalyzer:
 
                 while not self.stats_queue.empty():
                     _ = self.stats_queue.get()
-                    # self.stop_detector.db.update_daily_statistics()
 
                 total_frame_time = time.time() - frame_start_time
                 self.total_frame_time.set(total_frame_time)
-
-                # # Implement frame rate control
-                # frame_processing_time = time.time() - start_time
-                # time_to_next_frame = (1.0 / self.frame_rate) - frame_processing_time
-                # if time_to_next_frame > 0:
-                #     time.sleep(time_to_next_frame)
 
             except Exception as e:
                 logger.error(f"Error in stream processing: {str(e)}")
@@ -545,6 +542,6 @@ class VideoAnalyzer:
 
 if __name__ == "__main__":
     config = Config("./config.yaml")
-    db = Database(db_file=str(os.getenv("SQL_DB_PATH")))
+    db = Database(db_file=SQL_DB_PATH)
     processor = VideoAnalyzer(config, db)
     processor.run()

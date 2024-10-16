@@ -20,9 +20,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Environment Variables
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-REDIS_BUFFER_KEY = "processed_frame_buffer"
+REDIS_URL = os.environ.get("REDIS_URL")
+PROCESSED_FRAME_KEY = os.environ.get("PROCESSED_FRAME_KEY")
 STREAM_DIR = "/app/stream"
 FRAME_RATE = "15"
 RESOLUTION = "1920x1080"
@@ -77,7 +76,7 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
 def get_frame_shape(r: redis.Redis) -> tuple[int, int] | None:
     """Get the shape of the first frame from Redis."""
     while True:
-        task = r.blpop([REDIS_BUFFER_KEY], timeout=5)
+        task = r.blpop([PROCESSED_FRAME_KEY], timeout=5)
         if task:
             _, data = task  # type: ignore
             nparr = np.frombuffer(data, np.uint8)
@@ -105,7 +104,7 @@ def log_stream_files():
 def main():
     clean_stream_directory()
 
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
+    r = redis.from_url(REDIS_URL)
     frame_shape = get_frame_shape(r)
     if frame_shape is None:
         logger.error("Failed to get frame shape")
@@ -118,7 +117,7 @@ def main():
 
     try:
         while True:
-            task = r.blpop([REDIS_BUFFER_KEY], timeout=5)
+            task = r.blpop([PROCESSED_FRAME_KEY], timeout=5)
             if task:
                 _, data = task  # type: ignore
                 if ffmpeg_process.stdin:
