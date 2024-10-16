@@ -52,7 +52,7 @@ ORIGINAL_WIDTH = 1920
 ORIGINAL_HEIGHT = 1080
 
 DB_PATH = os.path.join("/app/data", DB_NAME)
-STREAM_URL = "/data/stream/stream.m3u8"
+STREAM_URL = "/app/data/stream/stream.m3u8"
 
 
 def get_common_styles():
@@ -194,7 +194,7 @@ app = FastHTML(
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/app/data", StaticFiles(directory="data"), name="data")
+app.mount("/app/data", StaticFiles(directory="/app/data"), name="data")
 
 
 @app.get("/favicon.ico")  # type: ignore
@@ -592,18 +592,20 @@ def about():
 
 @app.get("/check-stream")  # type: ignore
 async def check_stream():
-    import os
-
-    stream_path = "/data/stream/stream.m3u8"
-    if os.path.exists(stream_path):
-        logger.info(f"Stream file exists: {stream_path}")
-        with open(stream_path, "r") as f:
+    if os.path.exists(STREAM_URL):
+        logger.info(f"Stream file exists: {STREAM_URL}")
+        with open(STREAM_URL, "r") as f:
             content = f.read()
         logger.debug(f"Stream file content:\n{content}")
         return {"status": "exists", "content": content}
     else:
-        logger.warning(f"Stream file does not exist: {stream_path}")
-        return {"status": "not found"}
+        logger.warning(f"Stream file does not exist: {STREAM_URL}")
+        stream_dir = os.path.dirname(STREAM_URL)
+        if os.path.exists(stream_dir):
+            logger.warning(f"Files in stream directory: {os.listdir(stream_dir)}")
+        else:
+            logger.warning(f"Stream directory does not exist: {stream_dir}")
+        return {"status": f"HLS file not found at {STREAM_URL}"}
 
 
 @app.get("/load-video")  # type: ignore
@@ -617,21 +619,28 @@ def load_video():
         ),
         Script(f"""
             var video = document.getElementById('videoPlayer');
+            console.log('Attempting to load video');
             if (Hls.isSupported()) {{
-                var hls = new Hls();
+                console.log('HLS is supported');
+                var hls = new Hls({{debug: true}});
                 hls.loadSource('{STREAM_URL}');
                 hls.attachMedia(video);
                 hls.on(Hls.Events.MANIFEST_PARSED, function() {{
+                    console.log('Manifest parsed, attempting to play');
                     video.play();
                 }});
                 hls.on(Hls.Events.ERROR, function(event, data) {{
                     console.error('HLS error:', event, data);
                 }});
             }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
+                console.log('HLS not supported, but can play HLS natively');
                 video.src = '{STREAM_URL}';
                 video.addEventListener('loadedmetadata', function() {{
+                    console.log('Metadata loaded, attempting to play');
                     video.play();
                 }});
+            }} else {{
+                console.error('HLS is not supported and cannot play HLS natively');
             }}
             video.addEventListener('error', function(e) {{
                 console.error('Video error:', e);
