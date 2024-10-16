@@ -46,11 +46,13 @@ def get_env(key: str) -> str:
     return value
 
 
-SQL_DB_NAME = get_env("SQL_DB_NAME")
-SQL_DB_PATH = f"/app/data/{SQL_DB_NAME}"
+DB_NAME = get_env("DB_NAME")
 GRAFANA_URL = get_env("GRAFANA_URL")
 ORIGINAL_WIDTH = 1920
 ORIGINAL_HEIGHT = 1080
+
+DB_PATH = os.path.join("/app/data", DB_NAME)
+STREAM_URL = "/data/stream/stream.m3u8"
 
 
 def get_common_styles():
@@ -193,7 +195,6 @@ app = FastHTML(
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/app/data", StaticFiles(directory="data"), name="data")
-app.mount("/app/stream", StaticFiles(directory="/app/stream"), name="stream")
 
 
 @app.get("/favicon.ico")  # type: ignore
@@ -326,28 +327,25 @@ def home():
                 cls="content-wrapper",
             ),
             get_common_footer(),
-            Script("""
-                document.addEventListener('DOMContentLoaded', function() {
-                    var video = document.getElementById('videoPlayer');
-                    if (Hls.isSupported()) {
-                        var hls = new Hls();
-                        hls.loadSource('/app/stream/stream.m3u8');
-                        hls.attachMedia(video);
-                        hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                            video.play();
-                        });
-                    }
-                    // HLS.js is not supported on platforms that do not have Media Source Extensions (MSE) enabled.
-                    // When the browser has built-in HLS support (check using `canPlayType`), we can provide an HLS manifest (i.e. .m3u8 URL) directly to the video element through the `src` property.
-                    // This is using the built-in support of the plain video element, without using HLS.js.
-                    else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                        video.src = '/app/stream/stream.m3u8';
-                        video.addEventListener('loadedmetadata', function() {
-                            video.play();
-                        });
-                    }
-                });
-            """),
+            # Script(f"""
+            #     document.addEventListener('DOMContentLoaded', function() {{
+            #         var video = document.getElementById('videoPlayer');
+            #         if (Hls.isSupported()) {{
+            #             var hls = new Hls();
+            #             hls.loadSource('{STREAM_URL}');
+            #             hls.attachMedia(video);
+            #             hls.on(Hls.Events.MANIFEST_PARSED, function() {{
+            #                 video.play();
+            #             }});
+            #         }}
+            #         else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
+            #             video.src = '{STREAM_URL}';
+            #             video.addEventListener('loadedmetadata', function() {{
+            #                 video.play();
+            #             }});
+            #         }}
+            #     }});
+            # """),
         ),
     )
 
@@ -374,7 +372,7 @@ async def update_stop_zone(request):
 async def get_recent_vehicle_passes():
     try:
         if not hasattr(app.state, "db"):
-            app.state.db = Database(db_file=SQL_DB_PATH)
+            app.state.db = Database(db_file=DB_PATH)
         recent_passes = app.state.db.get_recent_vehicle_passes(limit=50)
 
         local_tz = pytz.timezone("America/Chicago")
@@ -596,7 +594,7 @@ def about():
 async def check_stream():
     import os
 
-    stream_path = "app/stream/stream.m3u8"
+    stream_path = "/data/stream/stream.m3u8"
     if os.path.exists(stream_path):
         logger.info(f"Stream file exists: {stream_path}")
         with open(stream_path, "r") as f:
@@ -617,27 +615,27 @@ def load_video():
             autoplay=True,
             muted=True,
         ),
-        Script("""
+        Script(f"""
             var video = document.getElementById('videoPlayer');
-            if (Hls.isSupported()) {
+            if (Hls.isSupported()) {{
                 var hls = new Hls();
-                hls.loadSource('/app/stream/stream.m3u8');
+                hls.loadSource('{STREAM_URL}');
                 hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {{
                     video.play();
-                });
-                hls.on(Hls.Events.ERROR, function(event, data) {
+                }});
+                hls.on(Hls.Events.ERROR, function(event, data) {{
                     console.error('HLS error:', event, data);
-                });
-            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                video.src = '/app/stream/stream.m3u8';
-                video.addEventListener('loadedmetadata', function() {
+                }});
+            }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
+                video.src = '{STREAM_URL}';
+                video.addEventListener('loadedmetadata', function() {{
                     video.play();
-                });
-            }
-            video.addEventListener('error', function(e) {
+                }});
+            }}
+            video.addEventListener('error', function(e) {{
                 console.error('Video error:', e);
-            });
+            }});
         """),
     )
 
@@ -654,7 +652,7 @@ def calculate_speed_score(min_speed):
 
 def main(config: Config):
     try:
-        app.state.db = Database(db_file=SQL_DB_PATH)
+        app.state.db = Database(db_file=DB_PATH)
         uvicorn.run(
             "stopsign.web_server:app",
             host="0.0.0.0",
