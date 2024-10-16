@@ -109,13 +109,17 @@ def log_stream_files():
 
 
 def main():
+    logger.info(f"Starting FFmpeg service with STREAM_DIR: {STREAM_DIR}")
     clean_stream_directory()
 
     r = redis.from_url(REDIS_URL)
+    logger.info(f"Connected to Redis at {REDIS_URL}")
     frame_shape = get_frame_shape(r)
     if frame_shape is None:
         logger.error("Failed to get frame shape")
         return
+    else:
+        logger.info(f"Frame shape: {frame_shape}")
 
     ffmpeg_process = start_ffmpeg_process(frame_shape)
     if ffmpeg_process is None or ffmpeg_process.stdin is None:
@@ -123,6 +127,7 @@ def main():
         return
 
     try:
+        logger.info("Starting main loop")
         while True:
             task = r.blpop([PROCESSED_FRAME_KEY], timeout=5)
             if task:
