@@ -163,6 +163,7 @@ def main():
 def clean_stream_directory():
     """Clean up the stream directory by removing all files."""
     logger.info("Cleaning up stream directory...")
+    os.makedirs(STREAM_DIR, exist_ok=True)
     for filename in os.listdir(STREAM_DIR):
         file_path = os.path.join(STREAM_DIR, filename)
         try:
