@@ -7,15 +7,15 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_URL=${REDIS_URL}
-      - PROMETHEUS_PORT=${PROMETHEUS_PORT}
-      - RAW_FRAME_KEY=${RAW_FRAME_KEY}
-      - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
-      - YOLO_MODEL_NAME=${YOLO_MODEL_NAME}
-      - DB_NAME=${DB_NAME}
+      REDIS_URL: ${REDIS_URL}
+      PROMETHEUS_PORT: ${PROMETHEUS_PORT}
+      RAW_FRAME_KEY: ${RAW_FRAME_KEY}
+      PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
+      YOLO_MODEL_NAME: ${YOLO_MODEL_NAME}
+      DB_NAME: ${DB_NAME}
     volumes:
-      - ${STORAGE_DIR}:/app/data
-      - ${MODEL_DIR}:/app/models
+      - storage-dir:/app/data
+      - model-dir:/app/models
     networks:
       - default
       - monitoring
@@ -35,10 +35,10 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_URL=${REDIS_URL}
-      - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
+      REDIS_URL: ${REDIS_URL}
+      PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
     volumes:
-      - ${STORAGE_DIR}:/app/data
+      - storage-dir:/app/data
     depends_on:
       - video_analyzer
     networks:
@@ -51,7 +51,9 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu, video]
+              capabilities:
+                - gpu
+                - video
 
   web_server:
     build:
@@ -62,12 +64,11 @@ services:
     env_file:
       - .env
     environment:
-      - DB_NAME=${DB_NAME}
+      DB_NAME: ${DB_NAME}
     depends_on:
       - video_analyzer
     volumes:
-      - ./static:/app/static
-      - ${STORAGE_DIR}:/app/data
+      - storage-dir:/app/data
     networks:
       - default
       - monitoring
@@ -81,3 +82,17 @@ networks:
   coolify:
     name: coolify
     external: true
+
+volumes:
+  storage-dir:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /gemini/data
+  model-dir:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /gemini/models
