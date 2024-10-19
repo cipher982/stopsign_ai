@@ -11,10 +11,13 @@ dependencies = [
     "lapx>=0.5.10.post1",
     "opencv-python>=4.10.0.84",
     "prometheus-client>=0.20.0",
+    "psycopg2-binary>=2.9.10",
     "python-dotenv>=1.0.1",
     "python-fasthtml>=0.6.2",
     "redis>=5.0.8",
     "shapely>=2.0.6",
+    "sqlalchemy-utils>=0.41.2",
+    "sqlalchemy>=2.0.36",
     "ultralytics>=8.2.96",
 ]
 

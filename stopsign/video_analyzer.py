@@ -48,6 +48,7 @@ REDIS_URL = get_env("REDIS_URL")
 RAW_FRAME_KEY = get_env("RAW_FRAME_KEY")
 PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
 DB_NAME = get_env("DB_NAME")
+DB_URL = get_env("POSTGRES_URL")
 YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME")
 
 YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
@@ -546,6 +547,6 @@ class VideoAnalyzer:
 
 if __name__ == "__main__":
     config = Config("./config.yaml")
-    db = Database(db_file=DB_PATH)
+    db = Database(db_url=DB_URL)
     processor = VideoAnalyzer(config, db)
     processor.run()

@@ -47,11 +47,12 @@ def get_env(key: str) -> str:
 
 
 DB_NAME = get_env("DB_NAME")
+DB_URL = get_env("POSTGRES_URL")
 GRAFANA_URL = get_env("GRAFANA_URL")
 ORIGINAL_WIDTH = 1920
 ORIGINAL_HEIGHT = 1080
 
-DB_PATH = os.path.join("/app/data", DB_NAME)
+# DB_PATH = os.path.join("/app/data", DB_NAME)
 STREAM_URL = "/app/data/stream/stream.m3u8"
 
 
@@ -372,7 +373,7 @@ async def update_stop_zone(request):
 async def get_recent_vehicle_passes():
     try:
         if not hasattr(app.state, "db"):
-            app.state.db = Database(db_file=DB_PATH)
+            app.state.db = Database(db_url=DB_URL)
         recent_passes = app.state.db.get_recent_vehicle_passes(limit=50)
 
         local_tz = pytz.timezone("America/Chicago")
@@ -661,7 +662,7 @@ def calculate_speed_score(min_speed):
 
 def main(config: Config):
     try:
-        app.state.db = Database(db_file=DB_PATH)
+        app.state.db = Database(db_url=DB_URL)
         uvicorn.run(
             "stopsign.web_server:app",
             host="0.0.0.0",
