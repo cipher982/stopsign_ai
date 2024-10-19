@@ -13,6 +13,7 @@ services:
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
       YOLO_MODEL_NAME: ${YOLO_MODEL_NAME}
       DB_NAME: ${DB_NAME}
+      DB_URL: ${DB_URL}
     volumes:
       - storage-dir:/app/data
       - model-dir:/app/models
@@ -65,6 +66,7 @@ services:
       - .env
     environment:
       DB_NAME: ${DB_NAME}
+      DB_URL: ${DB_URL}
     depends_on:
       - video_analyzer
     volumes:
