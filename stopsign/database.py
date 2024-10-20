@@ -10,6 +10,7 @@ from sqlalchemy import Float
 from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
@@ -103,7 +104,7 @@ class Database:
         with self.Session() as session:
             total_count = (
                 session.query(VehiclePass)
-                .filter(VehiclePass.timestamp >= func.now() - func.interval(f"{hours} hours"))
+                .filter(VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"))
                 .count()
             )
 
@@ -111,7 +112,7 @@ class Database:
                 session.query(VehiclePass)
                 .filter(
                     VehiclePass.min_speed <= min_speed,
-                    VehiclePass.timestamp >= func.now() - func.interval(f"{hours} hours"),
+                    VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"),
                 )
                 .count()
             )
@@ -122,7 +123,7 @@ class Database:
         with self.Session() as session:
             total_count = (
                 session.query(VehiclePass)
-                .filter(VehiclePass.timestamp >= func.now() - func.interval(f"{hours} hours"))
+                .filter(VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"))
                 .count()
             )
 
@@ -130,7 +131,7 @@ class Database:
                 session.query(VehiclePass)
                 .filter(
                     VehiclePass.time_in_zone <= time_in_zone,
-                    VehiclePass.timestamp >= func.now() - func.interval(f"{hours} hours"),
+                    VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"),
                 )
                 .count()
             )
@@ -152,9 +153,7 @@ class Database:
     def get_total_passes_last_24h(self):
         with self.Session() as session:
             return (
-                session.query(VehiclePass)
-                .filter(VehiclePass.timestamp >= func.now() - func.interval("24 hours"))
-                .count()
+                session.query(VehiclePass).filter(VehiclePass.timestamp >= func.now() - func.interval("1 day")).count()
             )
 
     def get_daily_statistics(self, date):

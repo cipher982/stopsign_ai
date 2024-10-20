@@ -399,7 +399,7 @@ async def get_recent_vehicle_passes():
                     Div(
                         Div(
                             Img(
-                                src=pass_data[6],
+                                src=pass_data.image_path,
                                 alt="Vehicle Image",
                                 style="width: 200px; height: auto; border-radius: 5px;",
                             ),
@@ -410,12 +410,12 @@ async def get_recent_vehicle_passes():
                                 Div(
                                     Span("Speed Score: ", style="font-weight: bold; font-size: 1.1em;"),
                                     Span(
-                                        f"{calculate_speed_score(pass_data[5])}",
-                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_speed_score(pass_data[5]) * 12}, 100%, 50%);",
+                                        f"{calculate_speed_score(pass_data.min_speed)}",
+                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_speed_score(pass_data.min_speed) * 12}, 100%, 50%);",
                                     ),
                                 ),
                                 Div(
-                                    f"Min Speed: {pass_data[5]:.2f} pixels/sec",
+                                    f"Min Speed: {pass_data.min_speed:.2f} pixels/sec",
                                     style="font-size: 0.9em; margin-left: 10px;",
                                 ),
                                 style="margin-bottom: 10px;",
@@ -424,12 +424,12 @@ async def get_recent_vehicle_passes():
                                 Div(
                                     Span("Time Score: ", style="font-weight: bold; font-size: 1.1em;"),
                                     Span(
-                                        f"{calculate_time_in_zone_score(pass_data[3])}",
-                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_time_in_zone_score(pass_data[3]) * 12}, 100%, 50%);",
+                                        f"{calculate_time_in_zone_score(pass_data.time_in_zone)}",
+                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_time_in_zone_score(pass_data.time_in_zone) * 12}, 100%, 50%);",
                                     ),
                                 ),
                                 Div(
-                                    f"Time in Zone: {pass_data[3]:.2f} seconds",
+                                    f"Time in Zone: {pass_data.time_in_zone:.2f} seconds",
                                     style="font-size: 0.9em; margin-left: 10px;",
                                 ),
                                 style="margin-bottom: 3px;",
