@@ -11,12 +11,11 @@ services:
       PROMETHEUS_PORT: ${PROMETHEUS_PORT}
       RAW_FRAME_KEY: ${RAW_FRAME_KEY}
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
+      MODEL_DIR: ${MODEL_DIR}
       YOLO_MODEL_NAME: ${YOLO_MODEL_NAME}
-      DB_NAME: ${DB_NAME}
       DB_URL: ${DB_URL}
     volumes:
       - storage-dir:/app/data
-      - model-dir:/app/models
     networks:
       - default
       - monitoring
@@ -65,7 +64,6 @@ services:
     env_file:
       - .env
     environment:
-      DB_NAME: ${DB_NAME}
       DB_URL: ${DB_URL}
     depends_on:
       - video_analyzer
@@ -92,9 +90,3 @@ volumes:
       type: none
       o: bind
       device: /gemini/data
-  model-dir:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /gemini/models
