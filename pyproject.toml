@@ -8,7 +8,9 @@ requires-python = "~=3.12.0"
 dependencies = [
     "ffmpeg-python>=0.2.0",
     "filterpy>=1.4.5",
+    "ipykernel>=6.29.5",
     "lapx>=0.5.10.post1",
+    "minio>=7.2.9",
     "opencv-python>=4.10.0.84",
     "prometheus-client>=0.20.0",
     "psycopg2-binary>=2.9.10",

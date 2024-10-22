@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import uuid
@@ -10,6 +11,7 @@ from typing import Tuple
 
 import cv2
 import numpy as np
+from minio import Minio
 
 from stopsign.config import Config
 from stopsign.database import Database
@@ -29,7 +31,10 @@ def get_env(key: str) -> str:
     return value
 
 
-VEHICLE_IMAGE_DIR = "/app/data/vehicle_images"
+MINIO_ENDPOINT = get_env("MINIO_ENDPOINT")
+MINIO_ACCESS_KEY = get_env("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = get_env("MINIO_SECRET_KEY")
+MINIO_BUCKET = get_env("MINIO_BUCKET")
 
 
 @dataclass
@@ -416,14 +421,19 @@ def save_vehicle_image(
     timestamp: float,
     bbox: Tuple[float, float, float, float],
 ) -> str:
-    image_dir = VEHICLE_IMAGE_DIR
-    os.makedirs(image_dir, exist_ok=True)
+    # Initialize Minio client
+    minio_client = Minio(
+        MINIO_ENDPOINT,
+        access_key=MINIO_ACCESS_KEY,
+        secret_key=MINIO_SECRET_KEY,
+        secure=False,  # Set to True if using HTTPS
+    )
 
     # Generate a random UUID for the filename
     file_id = uuid.uuid4().hex
-    filename = f"{image_dir}/vehicle_{file_id}_{int(timestamp)}.jpg"
+    object_name = f"vehicle_{file_id}_{int(timestamp)}.jpg"
 
-    # Crop and save the image
+    # Crop the image
     x, y, w, h = bbox
     padding_factor = 0.1
     padding_x = int(w * padding_factor)
@@ -435,6 +445,21 @@ def save_vehicle_image(
     x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
 
     cropped_image = frame[y1:y2, x1:x2]
-    cv2.imwrite(filename, cropped_image)
 
-    return filename
+    # Convert image to bytes
+    _, img_encoded = cv2.imencode(".jpg", cropped_image)
+    img_bytes = io.BytesIO(img_encoded.tobytes())
+
+    # Upload to Minio
+    try:
+        minio_client.put_object(
+            MINIO_BUCKET,
+            object_name,
+            img_bytes,
+            img_bytes.getbuffer().nbytes,
+            content_type="image/jpeg",
+        )
+        return f"minio://{MINIO_BUCKET}/{object_name}"
+    except Exception as e:
+        logger.error(f"Failed to upload image to Minio: {str(e)}")
+        return ""
