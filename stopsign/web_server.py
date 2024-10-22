@@ -46,13 +46,11 @@ def get_env(key: str) -> str:
     return value
 
 
-DB_NAME = get_env("DB_NAME")
 DB_URL = get_env("POSTGRES_URL")
 GRAFANA_URL = get_env("GRAFANA_URL")
 ORIGINAL_WIDTH = 1920
 ORIGINAL_HEIGHT = 1080
 
-# DB_PATH = os.path.join("/app/data", DB_NAME)
 STREAM_URL = "/app/data/stream/stream.m3u8"
 
 
@@ -181,7 +179,7 @@ def get_common_footer():
 # Initialize FastHTML app
 app = FastHTML(
     ws_hdr=True,
-    pico=False,  # We'll use our own styles instead of Pico CSS
+    pico=False,
     hdrs=(
         Link(
             rel="stylesheet",
@@ -189,7 +187,6 @@ app = FastHTML(
         ),
         get_common_styles(),
         Script(src="https://unpkg.com/htmx.org@1.9.4"),
-        # Script(src="https://unpkg.com/htmx.org/dist/ext/sse.js"),
     ),
 )
 
@@ -328,25 +325,6 @@ def home():
                 cls="content-wrapper",
             ),
             get_common_footer(),
-            # Script(f"""
-            #     document.addEventListener('DOMContentLoaded', function() {{
-            #         var video = document.getElementById('videoPlayer');
-            #         if (Hls.isSupported()) {{
-            #             var hls = new Hls();
-            #             hls.loadSource('{STREAM_URL}');
-            #             hls.attachMedia(video);
-            #             hls.on(Hls.Events.MANIFEST_PARSED, function() {{
-            #                 video.play();
-            #             }});
-            #         }}
-            #         else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
-            #             video.src = '{STREAM_URL}';
-            #             video.addEventListener('loadedmetadata', function() {{
-            #                 video.play();
-            #             }});
-            #         }}
-            #     }});
-            # """),
         ),
     )
 
@@ -376,6 +354,25 @@ async def get_recent_vehicle_passes():
             app.state.db = Database(db_url=DB_URL)
         recent_passes = app.state.db.get_recent_vehicle_passes(limit=50)
 
+        # Get all scores at once
+        scores = app.state.db.get_bulk_scores(
+            [{"min_speed": p.min_speed, "time_in_zone": p.time_in_zone} for p in recent_passes]
+        )
+
+        # Create a dict to map scores to passes
+        scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
+
+        passes_list = Ul(
+            *[
+                Li(
+                    create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)]),
+                    style="margin-bottom: 20px; background-color: var(--card-bg); padding: 15px; border-radius: 8px;",
+                )
+                for pass_data in recent_passes
+            ],
+            style="list-style-type: none; padding: 0; margin: 0;",
+        )
+
         local_tz = pytz.timezone("America/Chicago")
 
         def format_timestamp(timestamp_str):
@@ -391,59 +388,6 @@ async def get_recent_vehicle_passes():
                 return chicago_time.strftime("%b %-d, %-I:%M %p")
             else:
                 return chicago_time.strftime("%b %-d, %Y, %-I:%M %p")
-
-        # Create a styled list of recent passes
-        passes_list = Ul(
-            *[
-                Li(
-                    Div(
-                        Div(
-                            Img(
-                                src=pass_data.image_path,
-                                alt="Vehicle Image",
-                                style="width: 200px; height: auto; border-radius: 5px;",
-                            ),
-                            style="flex: 0 0 200px; margin-right: 15px;",
-                        ),
-                        Div(
-                            Div(
-                                Div(
-                                    Span("Speed Score: ", style="font-weight: bold; font-size: 1.1em;"),
-                                    Span(
-                                        f"{calculate_speed_score(pass_data.min_speed)}",
-                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_speed_score(pass_data.min_speed) * 12}, 100%, 50%);",
-                                    ),
-                                ),
-                                Div(
-                                    f"Min Speed: {pass_data.min_speed:.2f} pixels/sec",
-                                    style="font-size: 0.9em; margin-left: 10px;",
-                                ),
-                                style="margin-bottom: 10px;",
-                            ),
-                            Div(
-                                Div(
-                                    Span("Time Score: ", style="font-weight: bold; font-size: 1.1em;"),
-                                    Span(
-                                        f"{calculate_time_in_zone_score(pass_data.time_in_zone)}",
-                                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({calculate_time_in_zone_score(pass_data.time_in_zone) * 12}, 100%, 50%);",
-                                    ),
-                                ),
-                                Div(
-                                    f"Time in Zone: {pass_data.time_in_zone:.2f} seconds",
-                                    style="font-size: 0.9em; margin-left: 10px;",
-                                ),
-                                style="margin-bottom: 3px;",
-                            ),
-                            style="flex: 1;",
-                        ),
-                        style="display: flex; align-items: flex-start;",
-                    ),
-                    style="margin-bottom: 20px; background-color: var(--card-bg); padding: 15px; border-radius: 8px;",
-                )
-                for pass_data in recent_passes
-            ],
-            style="list-style-type: none; padding: 0; margin: 0;",
-        )
 
         return Div(
             passes_list,
@@ -487,7 +431,15 @@ async def get_worst_passes():
     try:
         worst_speed_passes = app.state.db.get_extreme_passes("min_speed", "DESC", 5)
         worst_time_passes = app.state.db.get_extreme_passes("time_in_zone", "ASC", 5)
-        return create_pass_list("Worst Passes", worst_speed_passes, worst_time_passes, "worstPasses")
+
+        # Get scores for all passes at once
+        all_passes = worst_speed_passes + worst_time_passes
+        scores = app.state.db.get_bulk_scores(
+            [{"min_speed": p.min_speed, "time_in_zone": p.time_in_zone} for p in all_passes]
+        )
+        scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
+
+        return create_pass_list("Worst Passes", worst_speed_passes, worst_time_passes, "worstPasses", scores_dict)
     except Exception as e:
         logger.error(f"Error in get_worst_passes: {str(e)}")
         return Div(P(f"Error: {str(e)}"), id="worstPasses")
@@ -498,47 +450,86 @@ async def get_best_passes():
     try:
         best_speed_passes = app.state.db.get_extreme_passes("min_speed", "ASC", 5)
         best_time_passes = app.state.db.get_extreme_passes("time_in_zone", "DESC", 5)
-        return create_pass_list("Best Passes", best_speed_passes, best_time_passes, "bestPasses")
+
+        # Get scores for all passes at once
+        all_passes = best_speed_passes + best_time_passes
+        scores = app.state.db.get_bulk_scores(
+            [{"min_speed": p.min_speed, "time_in_zone": p.time_in_zone} for p in all_passes]
+        )
+        scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
+
+        return create_pass_list("Best Passes", best_speed_passes, best_time_passes, "bestPasses", scores_dict)
     except Exception as e:
         logger.error(f"Error in get_best_passes: {str(e)}")
         return Div(P(f"Error: {str(e)}"), id="bestPasses")
 
 
-def create_pass_list(title, speed_passes, time_passes, div_id):
+def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
     return Div(
         H3(title),
         H4("Minimum Speed"),
-        Div(*[create_pass_item(pass_data, "speed") for pass_data in speed_passes]),
+        Div(
+            *[
+                create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)])
+                for pass_data in speed_passes
+            ],
+            style="display: flex; flex-direction: column; gap: 20px;",
+        ),
         H4("Time in Stop Zone"),
-        Div(*[create_pass_item(pass_data, "time") for pass_data in time_passes]),
+        Div(
+            *[
+                create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)])
+                for pass_data in time_passes
+            ],
+            style="display: flex; flex-direction: column; gap: 20px;",
+        ),
         id=div_id,
         cls="card",
     )
 
 
-def create_pass_item(pass_data, pass_type):
-    # Determine if it's a best or worst pass
-    is_best = (pass_type == "speed" and pass_data[5] < 10) or (pass_type == "time" and pass_data[3] > 3)
-
-    # Set border color based on whether it's a best or worst pass
-    border_color = "green" if is_best else "red"
-
+def create_pass_item(pass_data, scores):
     return Div(
         Div(
-            Img(src=pass_data[6], alt="Vehicle Image", style="width: 200px; height: auto;"),
-            style="display: inline-block; vertical-align: middle; margin-right: 10px;",
+            Img(
+                src=pass_data.image_path,
+                alt="Vehicle Image",
+                style="width: 200px; height: auto; border-radius: 5px;",
+            ),
+            style="flex: 0 0 200px; margin-right: 15px;",
         ),
         Div(
-            f"{pass_data[5]:.2f} pixels/sec" if pass_type == "speed" else f"{pass_data[3]:.2f} seconds",
-            style="display: inline-block; vertical-align: middle;",
+            Div(
+                Div(
+                    Span("Speed Score: ", style="font-weight: bold; font-size: 1.1em;"),
+                    Span(
+                        f"{scores['speed_score']}",
+                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({scores['speed_score'] * 12}, 100%, 50%);",
+                    ),
+                ),
+                Div(
+                    f"Min Speed: {pass_data.min_speed:.2f} pixels/sec",
+                    style="font-size: 0.9em; margin-left: 10px;",
+                ),
+                style="margin-bottom: 10px;",
+            ),
+            Div(
+                Div(
+                    Span("Time Score: ", style="font-weight: bold; font-size: 1.1em;"),
+                    Span(
+                        f"{scores['time_score']}",
+                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({scores['time_score'] * 12}, 100%, 50%);",
+                    ),
+                ),
+                Div(
+                    f"Time in Zone: {pass_data.time_in_zone:.2f} seconds",
+                    style="font-size: 0.9em; margin-left: 10px;",
+                ),
+                style="margin-bottom: 3px;",
+            ),
+            style="flex: 1;",
         ),
-        style=f"""
-            margin-bottom: 20px;
-            text-align: left;
-            border: 2px solid {border_color};
-            border-radius: 8px;
-            padding: 10px;
-        """,
+        style="display: flex; align-items: flex-start;",
     )
 
 
