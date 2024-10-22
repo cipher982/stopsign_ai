@@ -1,10 +1,7 @@
 # ruff: noqa: E501
 import logging
 import os
-from datetime import datetime
-from datetime import timedelta
 
-import pytz
 import uvicorn
 from fasthtml.common import H1
 from fasthtml.common import H2
@@ -19,6 +16,7 @@ from fasthtml.common import Footer
 from fasthtml.common import Head
 from fasthtml.common import Header
 from fasthtml.common import Html
+from fasthtml.common import HTMLResponse
 from fasthtml.common import Iframe
 from fasthtml.common import Img
 from fasthtml.common import Li
@@ -29,10 +27,12 @@ from fasthtml.common import P
 from fasthtml.common import Script
 from fasthtml.common import Span
 from fasthtml.common import StaticFiles
+from fasthtml.common import StreamingResponse
 from fasthtml.common import Style
 from fasthtml.common import Title
 from fasthtml.common import Ul
 from fasthtml.common import Video
+from minio import Minio
 
 from stopsign.config import Config
 from stopsign.database import Database
@@ -46,12 +46,27 @@ def get_env(key: str) -> str:
     return value
 
 
-DB_URL = get_env("POSTGRES_URL")
+DB_URL = get_env("DB_URL")
 GRAFANA_URL = get_env("GRAFANA_URL")
 ORIGINAL_WIDTH = 1920
 ORIGINAL_HEIGHT = 1080
 
 STREAM_URL = "/app/data/stream/stream.m3u8"
+
+# vehicle images connection
+MINIO_ENDPOINT = get_env("MINIO_ENDPOINT")
+MINIO_ACCESS_KEY = get_env("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = get_env("MINIO_SECRET_KEY")
+MINIO_BUCKET = get_env("MINIO_BUCKET")
+
+
+def get_minio_client():
+    return Minio(
+        MINIO_ENDPOINT,
+        access_key=MINIO_ACCESS_KEY,
+        secret_key=MINIO_SECRET_KEY,
+        secure=False,  # Set to True if using HTTPS
+    )
 
 
 def get_common_styles():
@@ -192,7 +207,17 @@ app = FastHTML(
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/app/data", StaticFiles(directory="/app/data"), name="data")
+
+
+@app.get("/vehicle-image/{object_name:path}")  # type: ignore
+def get_image(object_name: str):
+    try:
+        client = get_minio_client()
+        data = client.get_object(MINIO_BUCKET, object_name)
+        return StreamingResponse(data, media_type="image/jpeg")
+    except Exception as e:
+        logger.error(f"Error fetching image from Minio: {str(e)}")
+        return HTMLResponse("Image not found", status_code=404)
 
 
 @app.get("/favicon.ico")  # type: ignore
@@ -353,11 +378,7 @@ async def get_recent_vehicle_passes():
         if not hasattr(app.state, "db"):
             app.state.db = Database(db_url=DB_URL)
 
-        recent_passes = [
-            p
-            for p in app.state.db.get_recent_vehicle_passes(limit=50)
-            if p.image_path is not None and os.path.exists(str(p.image_path))
-        ]
+        recent_passes = app.state.db.get_recent_vehicle_passes(limit=50)
 
         # Get all scores at once
         scores = app.state.db.get_bulk_scores(
@@ -377,22 +398,6 @@ async def get_recent_vehicle_passes():
             ],
             style="list-style-type: none; padding: 0; margin: 0;",
         )
-
-        local_tz = pytz.timezone("America/Chicago")
-
-        def format_timestamp(timestamp_str):
-            utc_time = datetime.fromisoformat(timestamp_str).replace(tzinfo=pytz.UTC)
-            chicago_time = utc_time.astimezone(local_tz)
-            now = datetime.now(local_tz)
-
-            if chicago_time.date() == now.date():
-                return chicago_time.strftime("%-I:%M:%S %p")
-            elif chicago_time.date() == now.date() - timedelta(days=1):
-                return f"Yesterday {chicago_time.strftime('%-I:%M %p')}"
-            elif chicago_time.year == now.year:
-                return chicago_time.strftime("%b %-d, %-I:%M %p")
-            else:
-                return chicago_time.strftime("%b %-d, %Y, %-I:%M %p")
 
         return Div(
             passes_list,
@@ -494,10 +499,13 @@ def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
 
 
 def create_pass_item(pass_data, scores):
+    object_name = pass_data.image_path.split("/")[-1]
+    image_url = f"/vehicle-image/{object_name}"
+
     return Div(
         Div(
             Img(
-                src=pass_data.image_path,
+                src=image_url,
                 alt="Vehicle Image",
                 style="width: 200px; height: auto; border-radius: 5px;",
             ),

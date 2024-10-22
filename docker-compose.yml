@@ -13,8 +13,6 @@ services:
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
       YOLO_MODEL_NAME: ${YOLO_MODEL_NAME}
       DB_URL: ${DB_URL}
-    volumes:
-      - storage-dir:/app/data
     networks:
       - default
       - monitoring
@@ -84,8 +82,3 @@ networks:
 
 volumes:
   storage-dir:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /gemini/data
