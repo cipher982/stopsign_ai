@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
     ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -29,7 +30,10 @@ RUN uv pip install debugpy
 # Copy stuff
 COPY config.yaml /app/config.yaml
 COPY stopsign /app/stopsign
-COPY /gemini/models/ /app/models/
+
+# Download YOLO model
+RUN mkdir -p /app/models && \
+    curl -L https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt -o /app/models/yolo11x.pt
 
 # Add the current directory to PYTHONPATH
 ENV PYTHONPATH="${PYTHONPATH}:/app"
