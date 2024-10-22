@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.processor
+      args:
+        MODEL_DIR: ${MODEL_DIR}
     env_file:
       - .env
     environment:
