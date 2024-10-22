@@ -1,0 +1,19 @@
+**/models/
+**/__pycache__/
+**/scratch/
+.git/
+.env
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.log
+.vscode/
+.idea/
+# Keep only what you need
+!stopsign/
+!config.yaml
+!trackers/
+!static/
+!pyproject.toml
+!uv.lock

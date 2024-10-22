@@ -51,7 +51,8 @@ GRAFANA_URL = get_env("GRAFANA_URL")
 ORIGINAL_WIDTH = 1920
 ORIGINAL_HEIGHT = 1080
 
-STREAM_URL = "/app/data/stream/stream.m3u8"
+STREAM_FS_PATH = "/app/data/stream/stream.m3u8"  # filesystem path
+STREAM_URL = "/stream/stream.m3u8"  # URL path
 
 # vehicle images connection
 MINIO_ENDPOINT = get_env("MINIO_ENDPOINT")
@@ -207,6 +208,7 @@ app = FastHTML(
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/stream", StaticFiles(directory="/app/data/stream"), name="stream")
 
 
 @app.get("/vehicle-image/{object_name:path}")  # type: ignore
@@ -597,20 +599,20 @@ def about():
 
 @app.get("/check-stream")  # type: ignore
 async def check_stream():
-    if os.path.exists(STREAM_URL):
-        logger.info(f"Stream file exists: {STREAM_URL}")
-        with open(STREAM_URL, "r") as f:
+    if os.path.exists(STREAM_FS_PATH):
+        logger.info(f"Stream file exists: {STREAM_FS_PATH}")
+        with open(STREAM_FS_PATH, "r") as f:
             content = f.read()
         logger.debug(f"Stream file content:\n{content}")
         return {"status": "exists", "content": content}
     else:
-        logger.warning(f"Stream file does not exist: {STREAM_URL}")
-        stream_dir = os.path.dirname(STREAM_URL)
+        logger.warning(f"Stream file does not exist: {STREAM_FS_PATH}")
+        stream_dir = os.path.dirname(STREAM_FS_PATH)
         if os.path.exists(stream_dir):
             logger.warning(f"Files in stream directory: {os.listdir(stream_dir)}")
         else:
             logger.warning(f"Stream directory does not exist: {stream_dir}")
-        return {"status": f"HLS file not found at {STREAM_URL}"}
+        return {"status": f"HLS file not found at {STREAM_FS_PATH}"}
 
 
 @app.get("/load-video")  # type: ignore
