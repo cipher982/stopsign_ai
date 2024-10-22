@@ -29,7 +29,7 @@ Tracking stop sign behavior with a camera and AI
   - Uses YOLO AI model for vehicle detection.
   - Tracks detected vehicles and analyzes their stop sign behavior.
   - Annotates frames and pushes to new Redis queue.
-  - Stores metadata and images in SQLite.
+  - Store data in Postgres, and images in self-hosted S3-style file store (MinIO).
 
 ### 3. FFmpeg Streaming (`ffmpeg_service.py`)
 - **Function:** Converts processed frames into an HLS video stream for web display.
