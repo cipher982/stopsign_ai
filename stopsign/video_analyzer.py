@@ -47,12 +47,8 @@ PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
 REDIS_URL = get_env("REDIS_URL")
 RAW_FRAME_KEY = get_env("RAW_FRAME_KEY")
 PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
-DB_NAME = get_env("DB_NAME")
 DB_URL = get_env("POSTGRES_URL")
-YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME")
-
-YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
-DB_PATH = os.path.join("/app/data", DB_NAME)
+YOLO_MODEL_PATH = os.path.join("/app/models", get_env("YOLO_MODEL_NAME"))
 
 
 class VideoAnalyzer:

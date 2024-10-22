@@ -29,6 +29,7 @@ RUN uv pip install debugpy
 # Copy stuff
 COPY config.yaml /app/config.yaml
 COPY stopsign /app/stopsign
+COPY models /app/models
 
 # Add the current directory to PYTHONPATH
 ENV PYTHONPATH="${PYTHONPATH}:/app"
