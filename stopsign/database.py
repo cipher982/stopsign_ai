@@ -1,4 +1,6 @@
+import functools
 import logging
+import time
 from datetime import datetime
 
 from sqlalchemy import JSON
@@ -20,6 +22,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 Base = declarative_base()
+
+
+def log_execution_time(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        elapsed = time.time() - start_time
+        logger.debug(f"{func.__name__} completed in {elapsed:.2f} seconds")
+        return result
+
+    return wrapper
 
 
 class CarStateHistory(Base):
@@ -54,12 +68,19 @@ class VehiclePass(Base):
 
 class Database:
     def __init__(self, db_url: str):
-        self.engine = create_engine(db_url)
+        self.engine = create_engine(
+            db_url,
+            pool_size=20,  # Increased pool size
+            max_overflow=0,  # No overflow
+            pool_timeout=30,  # Timeout for getting a connection
+            pool_recycle=1800,  # Recycle connections after 30 minutes
+        )
         self.Session = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
         logger.info(f"Database connection established at {db_url}")
         self.log_database_summary()
 
+    @log_execution_time
     def log_database_summary(self):
         with self.Session() as session:
             total_passes = session.query(VehiclePass).count()
@@ -67,6 +88,7 @@ class Database:
             summary += f"Total vehicle passes: {total_passes:,}\n"
             logger.info(summary)
 
+    @log_execution_time
     def save_car_state(self, car):
         with self.Session() as session:
             car_state = CarStateHistory(
@@ -86,6 +108,7 @@ class Database:
             session.add(car_state)
             session.commit()
 
+    @log_execution_time
     def add_vehicle_pass(
         self, vehicle_id: int, time_in_zone: float, stop_duration: float, min_speed: float, image_path: str
     ):
@@ -100,6 +123,7 @@ class Database:
             session.add(vehicle_pass)
             session.commit()
 
+    @log_execution_time
     def get_min_speed_percentile(self, min_speed: float, hours: int = 24) -> float:
         with self.Session() as session:
             total_count = (
@@ -119,6 +143,7 @@ class Database:
 
             return (count * 100.0 / total_count) if total_count > 0 else 0
 
+    @log_execution_time
     def get_time_in_zone_percentile(self, time_in_zone: float, hours: int = 24) -> float:
         with self.Session() as session:
             total_count = (
@@ -138,6 +163,7 @@ class Database:
 
             return (count * 100.0 / total_count) if total_count > 0 else 0
 
+    @log_execution_time
     def get_extreme_passes(self, criteria: str, order: str, limit: int = 10):
         valid_criteria = ["min_speed", "time_in_zone", "stop_duration"]
         valid_orders = ["asc", "desc"]
@@ -150,20 +176,70 @@ class Database:
             order_by = getattr(getattr(VehiclePass, criteria), order.lower())()
             return query.order_by(order_by).limit(limit).all()
 
+    @log_execution_time
     def get_total_passes_last_24h(self):
         with self.Session() as session:
             return (
                 session.query(VehiclePass).filter(VehiclePass.timestamp >= func.now() - func.interval("1 day")).count()
             )
 
+    @log_execution_time
+    def get_bulk_scores(self, passes: list[dict]) -> list[dict]:
+        """Calculate scores for multiple passes based on 24h historical data"""
+        with self.Session() as session:
+            # Get all passes from last 24h for comparison
+            historical = session.execute(
+                text("""
+                SELECT min_speed, time_in_zone 
+                FROM vehicle_passes 
+                WHERE timestamp >= NOW() - INTERVAL '24 hours'
+                """)
+            ).fetchall()
+
+            if not historical:
+                return [
+                    {"min_speed": p["min_speed"], "time_in_zone": p["time_in_zone"], "speed_score": 0, "time_score": 0}
+                    for p in passes
+                ]
+
+            # Convert to sorted lists for percentile calcs
+            hist_speeds = sorted(row[0] for row in historical)
+            hist_times = sorted(row[1] for row in historical)
+            total = len(historical)
+
+            # Calculate scores for each pass
+            results = []
+            for p in passes:
+                # Find position in sorted lists
+                speed_pos = sum(1 for x in hist_speeds if x <= p["min_speed"])
+                time_pos = sum(1 for x in hist_times if x <= p["time_in_zone"])
+
+                # Calculate percentiles and convert to scores
+                speed_score = round((1 - (speed_pos / total)) * 10)
+                time_score = round((time_pos / total) * 10)
+
+                results.append(
+                    {
+                        "min_speed": p["min_speed"],
+                        "time_in_zone": p["time_in_zone"],
+                        "speed_score": speed_score,
+                        "time_score": time_score,
+                    }
+                )
+
+            return results
+
+    @log_execution_time
     def get_daily_statistics(self, date):
         # Assuming you have a DailyStatistics model
         # You would need to create this model and its corresponding table
         pass
 
+    @log_execution_time
     def get_recent_vehicle_passes(self, limit=10):
         with self.Session() as session:
-            return session.query(VehiclePass).order_by(VehiclePass.timestamp.desc()).limit(limit).all()
+            result = session.query(VehiclePass).order_by(VehiclePass.timestamp.desc()).limit(limit).all()
+        return result
 
     def close(self):
         self.engine.dispose()
