@@ -352,7 +352,12 @@ async def get_recent_vehicle_passes():
     try:
         if not hasattr(app.state, "db"):
             app.state.db = Database(db_url=DB_URL)
-        recent_passes = app.state.db.get_recent_vehicle_passes(limit=50)
+
+        recent_passes = [
+            p
+            for p in app.state.db.get_recent_vehicle_passes(limit=50)
+            if p.image_path is not None and os.path.exists(str(p.image_path))
+        ]
 
         # Get all scores at once
         scores = app.state.db.get_bulk_scores(
