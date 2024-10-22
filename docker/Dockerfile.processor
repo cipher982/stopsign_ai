@@ -1,0 +1,30 @@
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+
+# Avoid interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONPATH="${PYTHONPATH}:/app"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    ffmpeg \
+    gcc \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install uv
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync && uv pip install debugpy
+
+RUN mkdir -p /app/models && \
+    curl -L https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt -o /app/models/yolo11x.pt
+
+# Copy application code last (changes most frequently)
+COPY config.yaml ./
+COPY stopsign ./stopsign/
+
+CMD ["uv", "run", "python", "-m", "stopsign.video_analyzer"]

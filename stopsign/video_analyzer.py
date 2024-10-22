@@ -6,6 +6,7 @@ import os
 import queue
 import threading
 import time
+from datetime import datetime
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -14,6 +15,7 @@ from typing import Tuple
 import cv2
 import numpy as np
 import psutil
+import pytz
 import redis
 from prometheus_client import Counter
 from prometheus_client import Gauge
@@ -437,7 +439,10 @@ class VideoAnalyzer:
         cv2.putText(frame, f"Frame: {self.frame_count}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         # Add timestamp in top-right corner
-        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        tz = pytz.timezone("America/Chicago")
+        utc_dt = datetime.fromtimestamp(time.time(), pytz.UTC)
+        local_dt = utc_dt.astimezone(tz)
+        current_time = local_dt.strftime("%Y-%m-%d %H:%M:%S")
         text_size, _ = cv2.getTextSize(current_time, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
         text_x = frame.shape[1] - text_size[0] - 10
         cv2.putText(frame, current_time, (text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
