@@ -31,8 +31,8 @@ COPY config.yaml /app/config.yaml
 COPY stopsign /app/stopsign
 
 RUN mkdir -p /app/models
-COPY ${MODEL_DIR:-.} /app/models/ || echo "Warning: MODEL_DIR not found or empty"
-RUN ls -l /app/models
+COPY ${MODEL_DIR:-.} /app/models/ 2>/dev/null || echo "No models found in MODEL_DIR"
+RUN ls -la /app/models
 
 # Add the current directory to PYTHONPATH
 ENV PYTHONPATH="${PYTHONPATH}:/app"
