@@ -176,7 +176,7 @@ def get_common_header(title):
         Nav(
             A("Home", href="/"),
             A("Records", href="/records"),
-            A("Statistics", href="/statistics"),
+            # A("Statistics", href="/statistics"),
             A("About", href="/about"),
             A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
             style="margin-left: 20px;",
