@@ -666,6 +666,19 @@ def calculate_speed_score(min_speed):
     return round((100 - percentile) / 10)
 
 
+@app.get("/health")  # type: ignore
+async def health():
+    try:
+        if not hasattr(app.state, "db"):
+            app.state.db = Database(db_url=DB_URL)
+        # Test database connection by getting total passes in last 24h
+        app.state.db.get_total_passes_last_24h()
+        return {"status": "healthy"}
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return {"status": "unhealthy", "error": str(e)}, 500
+
+
 def main(config: Config):
     try:
         app.state.db = Database(db_url=DB_URL)
