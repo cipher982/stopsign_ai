@@ -33,6 +33,7 @@ from fasthtml.common import Title
 from fasthtml.common import Ul
 from fasthtml.common import Video
 from minio import Minio
+from sqlalchemy import text
 
 from stopsign.config import Config
 from stopsign.database import Database
@@ -671,8 +672,9 @@ async def health():
     try:
         if not hasattr(app.state, "db"):
             app.state.db = Database(db_url=DB_URL)
-        # Test database connection by getting total passes in last 24h
-        app.state.db.get_total_passes_last_24h()
+        # Just check if we can query the database at all
+        with app.state.db.Session() as session:
+            session.execute(text("SELECT 1")).scalar()
         return {"status": "healthy"}
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
