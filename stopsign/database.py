@@ -180,7 +180,9 @@ class Database:
     def get_total_passes_last_24h(self):
         with self.Session() as session:
             return (
-                session.query(VehiclePass).filter(VehiclePass.timestamp >= func.now() - func.interval("1 day")).count()
+                session.query(VehiclePass)
+                .filter(VehiclePass.timestamp >= func.now() - text("INTERVAL '24 hours'"))
+                .count()
             )
 
     @log_execution_time
