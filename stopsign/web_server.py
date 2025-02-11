@@ -477,6 +477,16 @@ async def get_best_passes():
         return Div(P(f"Error: {str(e)}"), id="bestPasses")
 
 
+def get_minio_object_name(minio_path: str) -> str | None:
+    """Extract object name from MinIO path, return None if invalid."""
+    if not minio_path or not isinstance(minio_path, str):
+        return None
+    if not minio_path.startswith("minio://"):
+        return None
+    parts = minio_path.split("/", 3)
+    return parts[3] if len(parts) >= 4 else None
+
+
 def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
     return Div(
         H3(title),
@@ -502,7 +512,8 @@ def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
 
 
 def create_pass_item(pass_data, scores):
-    object_name = pass_data.image_path.split("/")[-1]
+    # Extract just the filename from minio://bucket/filename
+    object_name = pass_data.image_path.split("/", 3)[-1]
     image_url = f"/vehicle-image/{object_name}"
 
     return Div(
