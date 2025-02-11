@@ -2,6 +2,7 @@ import functools
 import logging
 import time
 from datetime import datetime
+from typing import List
 
 from sqlalchemy import JSON
 from sqlalchemy import BigInteger
@@ -164,17 +165,26 @@ class Database:
             return (count * 100.0 / total_count) if total_count > 0 else 0
 
     @log_execution_time
-    def get_extreme_passes(self, criteria: str, order: str, limit: int = 10):
-        valid_criteria = ["min_speed", "time_in_zone", "stop_duration"]
+    def get_extreme_passes(self, field: str, order: str, limit: int) -> List[VehiclePass]:
+        valid_fields = ["min_speed", "time_in_zone", "stop_duration"]
         valid_orders = ["asc", "desc"]
 
-        if criteria not in valid_criteria or order.lower() not in valid_orders:
-            raise ValueError("Invalid criteria or order")
+        if field not in valid_fields:
+            raise ValueError(f"Invalid field. Must be one of: {valid_fields}")
+        if order.lower() not in valid_orders:
+            raise ValueError(f"Invalid order. Must be one of: {valid_orders}")
 
         with self.Session() as session:
-            query = session.query(VehiclePass)
-            order_by = getattr(getattr(VehiclePass, criteria), order.lower())()
-            return query.order_by(order_by).limit(limit).all()
+            result = (
+                session.query(VehiclePass)
+                .filter(VehiclePass.image_path.isnot(None))  # Not null
+                .filter(VehiclePass.image_path != "")  # Not empty string
+                .filter(VehiclePass.image_path.like("minio://%"))  # Proper minio prefix
+                .order_by(text(f"{field} {order}"))
+                .limit(limit)
+                .all()
+            )
+            return result
 
     @log_execution_time
     def get_total_passes_last_24h(self):
