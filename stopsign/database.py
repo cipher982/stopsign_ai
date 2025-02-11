@@ -165,7 +165,7 @@ class Database:
             return (count * 100.0 / total_count) if total_count > 0 else 0
 
     @log_execution_time
-    def get_extreme_passes(self, field: str, order: str, limit: int) -> List[VehiclePass]:
+    def get_extreme_passes(self, field: str, order: str, limit: int, hours: int) -> List[VehiclePass]:
         valid_fields = ["min_speed", "time_in_zone", "stop_duration"]
         valid_orders = ["asc", "desc"]
 
@@ -180,6 +180,7 @@ class Database:
                 .filter(VehiclePass.image_path.isnot(None))  # Not null
                 .filter(VehiclePass.image_path != "")  # Not empty string
                 .filter(VehiclePass.image_path.like("minio://%"))  # Proper minio prefix
+                .filter(VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"))
                 .order_by(text(f"{field} {order}"))
                 .limit(limit)
                 .all()
