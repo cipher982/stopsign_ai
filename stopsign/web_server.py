@@ -686,11 +686,14 @@ async def health():
         if not hasattr(app.state, "db"):
             app.state.db = Database(db_url=DB_URL)
         with app.state.db.Session() as session:
-            session.execute(text("SELECT 1 /* health check */")).scalar(timeout=5)
-        return {"status": "healthy"}
+            session.execute(text("SELECT 1 /* health check */"), execution_options={"timeout": 5}).scalar()
+            return HTMLResponse(status_code=200, content="Healthy: Database connection verified")
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {"status": "unhealthy"}, 500
+        return HTMLResponse(
+            status_code=503,  # Service Unavailable
+            content=f"Unhealthy: Database check failed - {str(e)}",
+        )
 
 
 def main(config: Config):
