@@ -2,6 +2,17 @@
 Tracking stop sign behavior with a camera and AI
 
 🌐 **[Live Demo: crestwoodstopsign.com](https://crestwoodstopsign.com)**
+[![Status](https://img.shields.io/uptimerobot/status/m797914657-f517a98377b6b7a2e883d57a)](https://stats.uptimerobot.com/m797914657-f517a98377b6b7a2e883d57a)
+[![Uptime](https://img.shields.io/uptimerobot/ratio/30/m797914657-f517a98377b6b7a2e883d57a)](https://stats.uptimerobot.com/m797914657-f517a98377b6b7a2e883d57a)
+
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
+[![Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![UV](https://img.shields.io/badge/package%20manager-uv-4A4A4A.svg)](https://github.com/astral-sh/uv)
+[![YOLOv11-XL](https://img.shields.io/badge/AI-YOLOv11--XL-green.svg)](https://github.com/ultralytics/ultralytics)
+[![FastHTML](https://img.shields.io/badge/frontend-FastHTML-orange.svg)](https://github.com/davidrose/fasthtml)
+[![Redis](https://img.shields.io/badge/cache-Redis-red.svg)](https://redis.io/)
+[![PostgreSQL](https://img.shields.io/badge/database-PostgreSQL-blue.svg)](https://www.postgresql.org/)
+[![MinIO](https://img.shields.io/badge/storage-MinIO-00C6FF.svg)](https://min.io/)
 
 ## Objective:
 
