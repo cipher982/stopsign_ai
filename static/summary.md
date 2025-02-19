@@ -1,74 +1,34 @@
-# stopsign_ai
-Tracking stop sign behavior with an IP camera and AI
+Stop Sign Nanny – Real-Time Stop Behavior Monitoring
 
-### Objective:
-- Monitor a street intersection with an IP camera streaming video feed via RTSP to a server.
-- Analyze the feed in real-time using AI to detect vehicles and evaluate their stop sign behavior.
-- Store processed images and metadata for each vehicle pass.
-- Display recent vehicle passes and statistics on a web interface.
-- Allow user interaction to adjust the stop zone and view analytics.
+Objective:
+• Monitor a busy intersection using an IP camera streaming via RTSP.
+• Analyze the video stream in real time to detect, track, and assess vehicle stop behavior.
+• Record processed images and metadata for vehicles that fail to stop properly.
+• Serve a live video feed (via an HLS stream) alongside interactive records and dashboards.
 
-### System Components and Flow
+System Components & Flow:
+1. RTSP Stream Capture:
+   – A dedicated service connects to an IP camera through RTSP, encodes frames (JPEG), and pushes them into a Redis-backed frame buffer.
+   – This service is containerized (see Dockerfile in rtsp_to_redis) and exposes health and Prometheus metrics.
 
-**IP Camera:**
-- Function: Capture and stream video feed.
-- Protocol: RTSP (Real-Time Streaming Protocol).
+2. Video Analysis Pipeline:
+   – Frames are retrieved from Redis and processed by a fully containerized analyzer.
+   – YOLO models (ranging from YOLOv8 to YOLOv11 variants available in the repo) are used for real‐time vehicle detection.
+   – The pipeline integrates tracking (using both the ByteTrack configuration and an internal Kalman filter implementation) to follow vehicles across frames.
+   – A configurable “stop zone” is overlaid on the frame. When vehicles pass through, their speed, dwell time, and overall behavior are measured. Raw image clips are captured and later stored in a MinIO S3-compatible bucket while metadata goes into PostgreSQL.
+   – Detailed metrics at every stage (object detection, tracking, and Redis operations) are exported to Prometheus for real-time monitoring.
 
-**Backend Server:**
-- Function: Process the video feed, detect vehicles, and analyze stop behavior.
-- Components:
-  - Stream Processor: Handles video processing, object detection, and vehicle tracking.
-  - Web Server: Serves the web interface and handles API requests.
-- Technologies: Python, OpenCV, YOLO, Redis, SQLite, FastAPI
+3. FFmpeg Streaming Service:
+   – A separate container uses FFmpeg (with GPU acceleration via h264_nvenc) to convert processed frames into an HLS video stream.
+   – This service continuously monitors the processed frame Redis queue, writes frames via FFmpeg into a streaming directory, and keeps the stream updated for web viewers.
 
-**AI Model:**
-- Function: Detect vehicles in video frames.
-- Model: YOLOv8
-- Libraries: Ultralytics YOLO, OpenCV
+4. Web Server and Dashboard:
+   – Built on FastHTML, the web server serves the live HLS stream (with automatic client-side handling via HLS.js) and provides pages to view recent vehicle passes.
+   – Detailed records (including speed and time scores derived from historical data) are presented interactively.
+   – There’s also integration with Grafana for displaying comprehensive system statistics and performance metrics.
+   – The About page (updated here) now reflects the expanded functionality and containerized architecture.
 
-**Storage System:**
-- Function: Store processed frames, vehicle images, and metadata.
-- Technologies: Redis for frame buffering, SQLite for persistent storage
-
-**Frontend:**
-- Function: Display live video feed, recent vehicle passes, and statistics.
-- Technologies: FastHTML, WebSocket for real-time updates
-
-### Workflow
-
-**Video Processing:**
-- The Stream Processor receives video frames from the RTSP stream.
-- Frames are processed using YOLO for vehicle detection.
-- Detected vehicles are tracked across frames to analyze their behavior in the stop zone.
-
-**Stop Behavior Analysis:**
-- A configurable stop zone is defined in the video frame.
-- Vehicle speed and position are monitored as they approach and pass through the stop zone.
-- Each vehicle pass is scored based on stopping behavior, duration, and position.
-
-**Data Storage:**
-- Processed frames are temporarily stored in Redis for efficient retrieval.
-- Vehicle pass data, including scores and cropped images, are stored in SQLite.
-
-**Web Interface:**
-- Displays live video feed with overlaid detection and tracking information.
-- Shows a list of recent vehicle passes with images and scores.
-- Provides an interface to adjust the stop zone.
-- Includes a statistics page with embedded Grafana dashboard.
-
-**Monitoring and Analytics:**
-- Prometheus metrics are collected for system performance and vehicle statistics.
-- Grafana dashboard visualizes long-term trends and real-time data.
-
-### Setup and Deployment
-
-The project is containerized using Docker for easy deployment:
-
-- `Dockerfile.processor`: Builds the container for the Stream Processor.
-- `Dockerfile.web`: Builds the container for the Web Server.
-
-Use Docker Compose to orchestrate the full system deployment, including Redis and other necessary services.
-
-### Future Enhancements
-- speed up with TensorRT
-- ???
+5. Deployment and Monitoring:
+   – The entire system is orchestrated with Docker Compose. Three dedicated Dockerfiles are available: one for video processing, one for the FFmpeg-based streaming service, and one for the web server.
+   – Redis is used as the central frame buffer, while PostgreSQL (accessed via SQLAlchemy) stores vehicle pass histories.
+   – System health and performance—including CPU, memory, and temperature metrics—is continuously tracked and exposed to Prometheus.
