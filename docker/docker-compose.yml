@@ -24,6 +24,11 @@ services:
             - driver: nvidia
               device_ids: ['0']
               capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:${PROMETHEUS_PORT}/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   ffmpeg_service:
     build:
@@ -51,6 +56,11 @@ services:
               capabilities:
                 - gpu
                 - video
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:${PROMETHEUS_PORT}/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   web_server:
     build:
