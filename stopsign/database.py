@@ -74,7 +74,8 @@ class Database:
             pool_size=20,  # Increased pool size
             max_overflow=0,  # No overflow
             pool_timeout=30,  # Timeout for getting a connection
-            pool_recycle=1800,  # Recycle connections after 30 minutes
+            pool_recycle=300,  # Recycle connections after 5 minutes
+            pool_pre_ping=True,  # Test connections before use
         )
         self.Session = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
