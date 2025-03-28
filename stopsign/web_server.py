@@ -63,11 +63,13 @@ MINIO_BUCKET = get_env("MINIO_BUCKET")
 
 
 def get_minio_client():
+    logger.debug(f"Creating Minio client with endpoint: {MINIO_ENDPOINT}, secure: True")
     return Minio(
         MINIO_ENDPOINT,
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
         secure=True,  # Set to True if using HTTPS
+        cert_check=False,  # Temporarily disable certificate verification for troubleshooting
     )
 
 
@@ -219,7 +221,7 @@ def get_image(object_name: str):
         data = client.get_object(MINIO_BUCKET, object_name)
         return StreamingResponse(data, media_type="image/jpeg")
     except Exception as e:
-        logger.error(f"Error fetching image from Minio: {str(e)}")
+        logger.error(f"Error fetching image from Minio: {str(e)}", exc_info=True)
         return HTMLResponse("Image not found", status_code=404)
 
 
