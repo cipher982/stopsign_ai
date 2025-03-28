@@ -426,7 +426,7 @@ def save_vehicle_image(
         MINIO_ENDPOINT,
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
-        secure=False,  # Set to True if using HTTPS
+        secure=True,  # Set to True if using HTTPS
     )
 
     # Generate a random UUID for the filename
