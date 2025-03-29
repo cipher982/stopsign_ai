@@ -444,7 +444,7 @@ def records():
 @app.get("/api/worst-passes")  # type: ignore
 async def get_worst_passes():
     try:
-        hours = 24  # Explicit time window
+        hours = 168  # Increased time window to 7 days
         worst_speed_passes = app.state.db.get_extreme_passes("min_speed", "DESC", 5, hours)
         worst_time_passes = app.state.db.get_extreme_passes("time_in_zone", "ASC", 5, hours)
 
@@ -455,7 +455,9 @@ async def get_worst_passes():
         )
         scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
 
-        return create_pass_list("Worst Passes (24h)", worst_speed_passes, worst_time_passes, "worstPasses", scores_dict)
+        return create_pass_list(
+            "Worst Passes (7 Days)", worst_speed_passes, worst_time_passes, "worstPasses", scores_dict
+        )
     except Exception as e:
         logger.error(f"Error in get_worst_passes: {str(e)}")
         return Div(P(f"Error: {str(e)}"), id="worstPasses")
@@ -464,7 +466,7 @@ async def get_worst_passes():
 @app.get("/api/best-passes")  # type: ignore
 async def get_best_passes():
     try:
-        hours = 24  # Explicit time window
+        hours = 168  # Increased time window to 7 days
         best_speed_passes = app.state.db.get_extreme_passes("min_speed", "ASC", 5, hours)
         best_time_passes = app.state.db.get_extreme_passes("time_in_zone", "DESC", 5, hours)
 
@@ -475,7 +477,7 @@ async def get_best_passes():
         )
         scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
 
-        return create_pass_list("Best Passes (24h)", best_speed_passes, best_time_passes, "bestPasses", scores_dict)
+        return create_pass_list("Best Passes (7 Days)", best_speed_passes, best_time_passes, "bestPasses", scores_dict)
     except Exception as e:
         logger.error(f"Error in get_best_passes: {str(e)}")
         return Div(P(f"Error: {str(e)}"), id="bestPasses")
