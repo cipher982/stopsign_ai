@@ -252,7 +252,15 @@ class Database:
     @log_execution_time
     def get_recent_vehicle_passes(self, limit=10):
         with self.Session() as session:
-            result = session.query(VehiclePass).order_by(VehiclePass.timestamp.desc()).limit(limit).all()
+            result = (
+                session.query(VehiclePass)
+                .filter(VehiclePass.image_path.isnot(None))
+                .filter(VehiclePass.image_path != "")
+                .filter(VehiclePass.image_path.like("minio://%"))
+                .order_by(VehiclePass.timestamp.desc())
+                .limit(limit)
+                .all()
+            )
         return result
 
     def close(self):

@@ -216,6 +216,11 @@ app.mount("/stream", StaticFiles(directory="/app/data/stream"), name="stream")
 
 @app.get("/vehicle-image/{object_name:path}")  # type: ignore
 def get_image(object_name: str):
+    # Validate object_name before trying to fetch
+    if not object_name or not isinstance(object_name, str) or object_name.strip() == "":
+        logger.warning(f"Invalid object_name requested: {object_name}")
+        return HTMLResponse("Invalid image request", status_code=400)
+
     try:
         client = get_minio_client()
         data = client.get_object(MINIO_BUCKET, object_name)
@@ -518,9 +523,13 @@ def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
 
 
 def create_pass_item(pass_data, scores):
-    # Extract just the filename from minio://bucket/filename
-    object_name = pass_data.image_path.split("/", 3)[-1]
-    image_url = f"/vehicle-image/{object_name}"
+    # Extract just the filename from minio://bucket/filename, with validation
+    image_url = "/static/placeholder.jpg"  # Default fallback image
+    if pass_data.image_path and isinstance(pass_data.image_path, str) and pass_data.image_path.startswith("minio://"):
+        parts = pass_data.image_path.split("/", 3)
+        if len(parts) >= 4 and parts[3]:
+            object_name = parts[3]
+            image_url = f"/vehicle-image/{object_name}"
 
     return Div(
         Div(
