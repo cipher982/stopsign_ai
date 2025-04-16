@@ -1,6 +1,7 @@
 # ruff: noqa: E501
 import logging
 import os
+import time
 
 import uvicorn
 from fasthtml.common import H1
@@ -693,20 +694,58 @@ def calculate_speed_score(min_speed):
     return round((100 - percentile) / 10)
 
 
+class DBHealthTracker:
+    def __init__(self):
+        self.last_failure_time = None
+        self.failure_count = 0
+        self.max_failure_duration = 300  # 5 minutes in seconds
+
+    def record_failure(self):
+        current_time = time.time()
+        if self.last_failure_time is None:
+            self.last_failure_time = current_time
+        self.failure_count += 1
+
+    def record_success(self):
+        self.last_failure_time = None
+        self.failure_count = 0
+
+    def is_failure_persistent(self) -> bool:
+        if self.last_failure_time is None:
+            return False
+        return (time.time() - self.last_failure_time) > self.max_failure_duration
+
+
+# Initialize the health tracker
+db_health_tracker = DBHealthTracker()
+
+
 @app.get("/health")  # type: ignore
 async def health():
     try:
         if not hasattr(app.state, "db"):
             app.state.db = Database(db_url=DB_URL)
+
         with app.state.db.Session() as session:
             session.execute(text("SELECT 1 /* health check */"), execution_options={"timeout": 5}).scalar()
+            db_health_tracker.record_success()
             return HTMLResponse(status_code=200, content="Healthy: Database connection verified")
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return HTMLResponse(
-            status_code=503,  # Service Unavailable
-            content=f"Unhealthy: Database check failed - {str(e)}",
-        )
+        db_health_tracker.record_failure()
+
+        # Only return unhealthy if failures have persisted
+        if db_health_tracker.is_failure_persistent():
+            return HTMLResponse(
+                status_code=503,  # Service Unavailable
+                content=f"Unhealthy: Database connection issues for over 5 minutes - {str(e)}",
+            )
+        else:
+            # Still return healthy if this is a temporary blip
+            return HTMLResponse(
+                status_code=200,
+                content="Healthy: Tolerating temporary database connectivity issue",
+            )
 
 
 def main(config: Config):
