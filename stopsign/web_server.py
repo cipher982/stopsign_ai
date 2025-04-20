@@ -70,7 +70,7 @@ def get_minio_client():
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
         secure=True,  # Set to True if using HTTPS
-        cert_check=False,  # Temporarily disable certificate verification for troubleshooting
+        # cert_check=True is default, so we can remove the argument
     )
 
 

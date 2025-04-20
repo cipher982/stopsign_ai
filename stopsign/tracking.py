@@ -427,7 +427,6 @@ def save_vehicle_image(
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
         secure=True,  # Set to True if using HTTPS
-        cert_check=False,  # Temporarily disable certificate verification for troubleshooting
     )
 
     # Generate a random UUID for the filename
