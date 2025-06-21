@@ -496,30 +496,7 @@ def home():
                     });
                 }
                 
-                // Secret power user mode activation (Ctrl+Shift+A)
-                document.addEventListener('keydown', function(event) {
-                    if (event.ctrlKey && event.shiftKey && event.key === 'A') {
-                        event.preventDefault();
-                        const panel = document.getElementById('adjustmentPanel');
-                        if (panel) {
-                            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-                        }
-                    }
-                    
-                    // Debug mode (Ctrl+Shift+D)
-                    if (event.ctrlKey && event.shiftKey && event.key === 'D') {
-                        event.preventDefault();
-                        console.log('=== DEBUGGING COORDINATE SYSTEM ===');
-                        debugCoordinateTransform();
-                    }
-                    
-                    // Show current coordinate info (Ctrl+Shift+I)
-                    if (event.ctrlKey && event.shiftKey && event.key === 'I') {
-                        event.preventDefault();
-                        console.log('=== CURRENT COORDINATE INFO ===');
-                        console.log(coordinateInfo);
-                    }
-                });
+                // Simple setup - no keyboard shortcuts needed
             """),
             Style("""
                 .content-wrapper {
@@ -841,6 +818,207 @@ async def debug_coordinates(request):
     except Exception as e:
         logger.error(f"Error in debug coordinates: {str(e)}")
         return {"error": str(e)}
+
+
+@app.get("/debug")  # type: ignore
+def debug_page():
+    """Simple debug page for stop line adjustment - access via /debug URL"""
+    return Html(
+        Head(
+            Title("Stop Sign Debug"),
+            Script(src="https://unpkg.com/htmx.org@1.9.4"),
+            Script("""
+                let adjustmentMode = false;
+                let clickedPoints = [];
+                
+                function toggleAdjustmentMode() {
+                    adjustmentMode = !adjustmentMode;
+                    clickedPoints = [];
+                    
+                    const video = document.getElementById('videoPlayer');
+                    const button = document.getElementById('adjustmentModeBtn');
+                    const status = document.getElementById('status');
+                    
+                    if (adjustmentMode) {
+                        video.style.cursor = 'crosshair';
+                        video.style.outline = '3px solid #ff0000';
+                        button.innerText = 'Cancel Adjustment';
+                        button.style.backgroundColor = '#ff4444';
+                        status.innerText = 'ADJUSTMENT MODE: Click two points on the video to set the stop line';
+                    } else {
+                        video.style.cursor = 'default';
+                        video.style.outline = 'none';
+                        button.innerText = 'Adjust Stop Line';
+                        button.style.backgroundColor = '#4CAF50';
+                        status.innerText = '';
+                        clearClickMarkers();
+                    }
+                }
+                
+                function handleVideoClick(event) {
+                    if (!adjustmentMode) return;
+                    
+                    const video = event.target;
+                    const rect = video.getBoundingClientRect();
+                    
+                    const x = event.clientX - rect.left;
+                    const y = event.clientY - rect.top;
+                    
+                    clickedPoints.push({x: x, y: y});
+                    addClickMarker(event.clientX, event.clientY, clickedPoints.length);
+                    
+                    const status = document.getElementById('status');
+                    
+                    if (clickedPoints.length === 1) {
+                        status.innerText = 'Good! Now click the second point for the stop line.';
+                    } else if (clickedPoints.length === 2) {
+                        updateStopZoneFromClicks();
+                    }
+                }
+                
+                function updateStopZoneFromClicks() {
+                    const video = document.getElementById('videoPlayer');
+                    
+                    const data = {
+                        display_points: clickedPoints,
+                        video_element_size: {
+                            width: video.clientWidth,
+                            height: video.clientHeight
+                        }
+                    };
+                    
+                    fetch('/api/update-stop-zone-from-display', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(data),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        const status = document.getElementById('status');
+                        if (data.status === 'success') {
+                            status.innerText = 'Stop line updated successfully!';
+                            setTimeout(() => {
+                                toggleAdjustmentMode();
+                            }, 2000);
+                        } else {
+                            status.innerText = 'Error: ' + (data.error || 'Unknown error occurred');
+                        }
+                    })
+                    .catch((error) => {
+                        console.error('Error:', error);
+                        document.getElementById('status').innerText = 'Network error occurred.';
+                    });
+                }
+                
+                function addClickMarker(pageX, pageY, pointNumber) {
+                    const marker = document.createElement('div');
+                    marker.className = 'click-marker';
+                    marker.innerHTML = pointNumber;
+                    marker.style.position = 'absolute';
+                    marker.style.left = (pageX - 15) + 'px';
+                    marker.style.top = (pageY - 15) + 'px';
+                    marker.style.width = '30px';
+                    marker.style.height = '30px';
+                    marker.style.backgroundColor = '#ff0000';
+                    marker.style.color = 'white';
+                    marker.style.borderRadius = '50%';
+                    marker.style.display = 'flex';
+                    marker.style.alignItems = 'center';
+                    marker.style.justifyContent = 'center';
+                    marker.style.fontWeight = 'bold';
+                    marker.style.fontSize = '14px';
+                    marker.style.zIndex = '9999';
+                    marker.style.pointerEvents = 'none';
+                    document.body.appendChild(marker);
+                }
+                
+                function clearClickMarkers() {
+                    const markers = document.querySelectorAll('.click-marker');
+                    markers.forEach(marker => marker.remove());
+                }
+                
+                function debugCoordinates() {
+                    const video = document.getElementById('videoPlayer');
+                    if (!video) return;
+                    
+                    const data = {
+                        display_points: [{x: 100, y: 100}, {x: 500, y: 300}],
+                        video_element_size: {
+                            width: video.clientWidth,
+                            height: video.clientHeight
+                        }
+                    };
+                    
+                    fetch('/api/debug-coordinates', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(data),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById('debugOutput').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                    });
+                }
+                
+                function showCoordinateInfo() {
+                    fetch('/api/coordinate-info')
+                        .then(response => response.json())
+                        .then(data => {
+                            document.getElementById('coordOutput').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                        });
+                }
+                
+                document.addEventListener('DOMContentLoaded', function() {
+                    setTimeout(() => {
+                        const video = document.getElementById('videoPlayer');
+                        if (video) {
+                            video.addEventListener('click', handleVideoClick);
+                        }
+                    }, 1000);
+                });
+            """),
+            Style("""
+                body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: white; }
+                .container { max-width: 1200px; margin: 0 auto; }
+                .section { margin: 20px 0; padding: 20px; background: #2a2a2a; border-radius: 8px; }
+                button { padding: 10px 20px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+                .primary { background: #4CAF50; color: white; }
+                .secondary { background: #2196F3; color: white; }
+                .danger { background: #f44336; color: white; }
+                #status { padding: 10px; background: #333; border-radius: 5px; margin: 10px 0; min-height: 20px; }
+                pre { background: #333; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 12px; }
+                video { max-width: 100%; border: 2px solid #555; border-radius: 8px; }
+            """),
+        ),
+        Body(
+            Div(
+                H1("Stop Sign Debug Interface"),
+                Div(H2("Video Stream"), Div(hx_get="/load-video", hx_trigger="load"), cls="section"),
+                Div(
+                    H2("Stop Line Adjustment"),
+                    Button("Adjust Stop Line", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()", cls="primary"),
+                    P("Click the button above, then click two points on the video to set the new stop line position."),
+                    Div(id="status"),
+                    cls="section",
+                ),
+                Div(
+                    H2("Debug Tools"),
+                    Button("Show Coordinate Info", onclick="showCoordinateInfo()", cls="secondary"),
+                    Button("Debug Transformations", onclick="debugCoordinates()", cls="secondary"),
+                    H3("Coordinate System Info:"),
+                    Div(id="coordOutput"),
+                    H3("Debug Output:"),
+                    Div(id="debugOutput"),
+                    cls="section",
+                ),
+                cls="container",
+            )
+        ),
+    )
 
 
 @app.get("/api/recent-vehicle-passes")  # type: ignore
