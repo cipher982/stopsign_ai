@@ -634,7 +634,10 @@ async def update_stop_zone(request):
         "stop_box_tolerance": stop_box_tolerance,
         "min_stop_duration": min_stop_duration,
     }
-    app.state.video_analyzer.reload_stop_zone_config(new_config)
+
+    # Update config file directly - video analyzer will pick up changes
+    config = Config("./config.yaml")
+    config.update_stop_zone(new_config)
 
     return {"status": "success"}
 
@@ -643,10 +646,14 @@ async def update_stop_zone(request):
 async def get_coordinate_info():
     """Get current coordinate system information for coordinate transformations."""
     try:
-        coord_info = app.state.video_analyzer.get_coordinate_info()
-        if coord_info is None:
-            return {"error": "Coordinate information not available yet"}
-        return coord_info
+        # Read config directly since we're in separate containers
+        config = Config("./config.yaml")
+
+        # Return basic coordinate info from config
+        return {
+            "current_stop_line": {"coordinates": list(config.stop_line), "coordinate_system": "processing_coordinates"},
+            "message": "Full coordinate system tracking requires video analyzer integration",
+        }
     except Exception as e:
         logger.error(f"Error getting coordinate info: {str(e)}")
         return {"error": str(e)}
@@ -662,10 +669,15 @@ async def update_stop_zone_from_display(request):
         display_points = data["display_points"]  # [{"x": px, "y": py}, {"x": px, "y": py}]
         video_element_size = data["video_element_size"]  # {"width": px, "height": px}
 
-        # Get coordinate system info
-        coord_info = app.state.video_analyzer.get_coordinate_info()
-        if coord_info is None:
-            return {"error": "Coordinate system not ready"}
+        # For now, we'll use basic coordinate assumptions since containers are separate
+        # This is a simplified version - full coordinate tracking needs container integration
+        config = Config("./config.yaml")
+        coord_info = {
+            "current_stop_line": {"coordinates": list(config.stop_line)},
+            "raw_resolution": {"width": 1920, "height": 1080},
+            "stream_resolution": {"width": 1440, "height": 810},  # Approximate after 0.75 scaling
+            "transform_parameters": {"scale_factor": 0.75},
+        }
 
         # Import coordinate transformation (needs to be available)
         from stopsign.coordinate_transform import CoordinateSystemInfo
@@ -722,7 +734,9 @@ async def update_stop_zone_from_display(request):
             "min_stop_duration": 2.0,
         }
 
-        app.state.video_analyzer.reload_stop_zone_config(new_config)
+        # Update config file directly - video analyzer reads from file
+        config = Config("./config.yaml")
+        config.update_stop_zone(new_config)
 
         return {
             "status": "success",
@@ -745,9 +759,12 @@ async def debug_coordinates(request):
         display_points = data.get("display_points", [])
         video_element_size = data.get("video_element_size", {})
 
-        coord_info = app.state.video_analyzer.get_coordinate_info()
-        if coord_info is None:
-            return {"error": "Coordinate system not ready"}
+        # Simple coordinate info from config file
+        config = Config("./config.yaml")
+        coord_info = {
+            "current_stop_line": {"coordinates": list(config.stop_line)},
+            "message": "Using basic coordinate system for debugging",
+        }
 
         from stopsign.coordinate_transform import CoordinateSystemInfo
         from stopsign.coordinate_transform import CoordinateTransform
