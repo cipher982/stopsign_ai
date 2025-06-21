@@ -862,18 +862,27 @@ def debug_page():
                     const video = event.target;
                     const rect = video.getBoundingClientRect();
                     
+                    // Get click coordinates relative to video element
                     const x = event.clientX - rect.left;
                     const y = event.clientY - rect.top;
                     
                     clickedPoints.push({x: x, y: y});
-                    addClickMarker(event.clientX, event.clientY, clickedPoints.length);
+                    
+                    // Position marker relative to video, not page
+                    addClickMarker(rect.left + x, rect.top + y, clickedPoints.length);
                     
                     const status = document.getElementById('status');
                     
                     if (clickedPoints.length === 1) {
-                        status.innerText = 'Good! Now click the second point for the stop line.';
+                        status.innerText = 'POINT 1 SET ✓ - Now click the second point for the stop line.';
+                        status.style.backgroundColor = '#4CAF50';
                     } else if (clickedPoints.length === 2) {
-                        updateStopZoneFromClicks();
+                        status.innerText = 'BOTH POINTS SET ✓ - Updating stop line automatically...';
+                        status.style.backgroundColor = '#2196F3';
+                        // Add a small delay so user can see the feedback
+                        setTimeout(() => {
+                            updateStopZoneFromClicks();
+                        }, 500);
                     }
                 }
                 
@@ -899,18 +908,36 @@ def debug_page():
                     .then(data => {
                         const status = document.getElementById('status');
                         if (data.status === 'success') {
-                            status.innerText = 'Stop line updated successfully!';
+                            status.innerText = '✅ SUCCESS! Stop line updated and tracking restarted.';
+                            status.style.backgroundColor = '#2e7d32';
+                            
+                            // Show coordinate details
+                            console.log('Coordinate transformation details:', data);
+                            
                             setTimeout(() => {
+                                status.innerText = 'Ready for next adjustment.';
+                                status.style.backgroundColor = '#333';
                                 toggleAdjustmentMode();
-                            }, 2000);
+                            }, 3000);
                         } else {
-                            status.innerText = 'Error: ' + (data.error || 'Unknown error occurred');
+                            status.innerText = '❌ ERROR: ' + (data.error || 'Unknown error occurred');
+                            status.style.backgroundColor = '#d32f2f';
                         }
                     })
                     .catch((error) => {
                         console.error('Error:', error);
-                        document.getElementById('status').innerText = 'Network error occurred.';
+                        const status = document.getElementById('status');
+                        status.innerText = '❌ NETWORK ERROR: Could not update stop line.';
+                        status.style.backgroundColor = '#d32f2f';
                     });
+                }
+                
+                function resetPoints() {
+                    clickedPoints = [];
+                    clearClickMarkers();
+                    const status = document.getElementById('status');
+                    status.innerText = 'Points cleared. Click two new points on the video.';
+                    status.style.backgroundColor = '#333';
                 }
                 
                 function addClickMarker(pageX, pageY, pointNumber) {
@@ -969,7 +996,14 @@ def debug_page():
                     fetch('/api/coordinate-info')
                         .then(response => response.json())
                         .then(data => {
-                            document.getElementById('coordOutput').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                            if (data.error) {
+                                document.getElementById('coordOutput').innerHTML = '<div style="color: #ff6b6b; padding: 10px; background: #2a1f1f; border-radius: 5px;">Error: ' + data.error + '<br><br>This usually means the video analyzer is not running yet. Try starting the video processing service first.</div>';
+                            } else {
+                                document.getElementById('coordOutput').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                            }
+                        })
+                        .catch(error => {
+                            document.getElementById('coordOutput').innerHTML = '<div style="color: #ff6b6b;">Network error: ' + error.message + '</div>';
                         });
                 }
                 
@@ -1002,7 +1036,8 @@ def debug_page():
                 Div(
                     H2("Stop Line Adjustment"),
                     Button("Adjust Stop Line", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()", cls="primary"),
-                    P("Click the button above, then click two points on the video to set the new stop line position."),
+                    Button("Reset Points", onclick="resetPoints()", cls="secondary", style="margin-left: 10px;"),
+                    P("1. Click 'Adjust Stop Line' 2. Click two points on video 3. It updates automatically"),
                     Div(id="status"),
                     cls="section",
                 ),
