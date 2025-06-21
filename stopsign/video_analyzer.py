@@ -571,7 +571,6 @@ class VideoAnalyzer:
             # Calculate processed resolution after crop/scale
             crop_width = int(width * (1.0 - 2 * self.config.crop_side))
             crop_height = int(height * (1.0 - self.config.crop_top))
-            cropped_resolution = Resolution(crop_width, crop_height)
 
             scaled_width = int(crop_width * self.config.scale)
             scaled_height = int(crop_height * self.config.scale)
