@@ -26,6 +26,7 @@ from redis import exceptions as redis_exceptions
 from ultralytics import YOLO
 
 from stopsign.config import Config
+from stopsign.coordinate_transform import Resolution
 from stopsign.database import Database
 from stopsign.tracking import Car
 from stopsign.tracking import CarTracker
@@ -71,6 +72,11 @@ class VideoAnalyzer:
         self.stats_update_interval = 300  # Update stats every 5 minutes
         self.stats_queue = queue.Queue()
         self.frame_dimensions = self.get_frame_dimensions()
+
+        # Initialize coordinate system tracking
+        self.current_stream_resolution = None
+        self.coordinate_transformer = None
+        self._update_coordinate_system()
 
         # Initialize FPS counters for each stage
         self.incoming_fps_count = 0
@@ -198,11 +204,33 @@ class VideoAnalyzer:
         self.exception_counter.labels(type=exception_type, method=method).inc()
 
     def initialize_model(self):
-        logger.info(f"Attempting to load model from: {YOLO_MODEL_PATH}")
-        logger.info(f"Contents of /app/models: {os.system('ls -la /app/models')}")
-        model = YOLO(YOLO_MODEL_PATH, task="detect")
-        model.to("cuda")
-        logger.info(f"Model loaded successfully: {YOLO_MODEL_PATH}")
+        """Load YOLO on the best available device.
+
+        Priority:
+        1. YOLO_DEVICE env var ("cpu" / "cuda" / "cuda:0", etc.)
+        2. Auto-detect CUDA, otherwise fall back to CPU.
+        This lets the same codebase run on a GPU server and on a
+        CUDA-less laptop without edits.
+        """
+
+        logger.info("Loading YOLO model from %s", YOLO_MODEL_PATH)
+
+        # Resolve device --------------------------------------------------
+        forced = os.getenv("YOLO_DEVICE")
+        if forced:
+            device = forced
+            logger.info("YOLO_DEVICE override detected: %s", device)
+        else:
+            try:
+                import torch
+
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            except Exception:
+                device = "cpu"
+
+        # Instantiate model ----------------------------------------------
+        model = YOLO(YOLO_MODEL_PATH, task="detect").to(device)
+        logger.info("Model ready on device: %s", device)
         return model
 
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
@@ -533,6 +561,65 @@ class VideoAnalyzer:
         self.current_memory_usage.set(process.memory_info().rss)
         self.current_cpu_usage.set(process.cpu_percent())
         self.update_temp_metrics()
+
+    def _update_coordinate_system(self):
+        """Update coordinate system based on current processed frame dimensions."""
+        if hasattr(self, "frame_dimensions") and self.frame_dimensions:
+            width, height = self.frame_dimensions
+            raw_resolution = Resolution(width, height)
+
+            # Calculate processed resolution after crop/scale
+            crop_width = int(width * (1.0 - 2 * self.config.crop_side))
+            crop_height = int(height * (1.0 - self.config.crop_top))
+            cropped_resolution = Resolution(crop_width, crop_height)
+
+            scaled_width = int(crop_width * self.config.scale)
+            scaled_height = int(crop_height * self.config.scale)
+            scaled_resolution = Resolution(scaled_width, scaled_height)
+
+            # Stream resolution starts as scaled, may be updated by FFmpeg service
+            self.current_stream_resolution = scaled_resolution
+
+            logger.info(f"Coordinate system updated: {raw_resolution} → {scaled_resolution}")
+
+    def get_coordinate_info(self) -> Optional[Dict]:
+        """Get current coordinate system information for API consumption."""
+        if not hasattr(self, "frame_dimensions") or not self.frame_dimensions:
+            return None
+
+        width, height = self.frame_dimensions
+
+        # Calculate all coordinate system dimensions
+        raw_resolution = Resolution(width, height)
+
+        crop_width = int(width * (1.0 - 2 * self.config.crop_side))
+        crop_height = int(height * (1.0 - self.config.crop_top))
+        cropped_resolution = Resolution(crop_width, crop_height)
+
+        scaled_width = int(crop_width * self.config.scale)
+        scaled_height = int(crop_height * self.config.scale)
+        scaled_resolution = Resolution(scaled_width, scaled_height)
+
+        # Current stream resolution (may differ from scaled if FFmpeg resizes)
+        stream_resolution = self.current_stream_resolution or scaled_resolution
+
+        return {
+            "raw_resolution": {"width": raw_resolution.width, "height": raw_resolution.height},
+            "cropped_resolution": {"width": cropped_resolution.width, "height": cropped_resolution.height},
+            "scaled_resolution": {"width": scaled_resolution.width, "height": scaled_resolution.height},
+            "stream_resolution": {"width": stream_resolution.width, "height": stream_resolution.height},
+            "transform_parameters": {
+                "crop_top": self.config.crop_top,
+                "crop_side": self.config.crop_side,
+                "scale_factor": self.config.scale,
+            },
+            "current_stop_line": {"coordinates": list(self.config.stop_line), "coordinate_system": "scaled_resolution"},
+        }
+
+    def update_stream_resolution(self, width: int, height: int):
+        """Update the actual stream resolution (called from FFmpeg service)."""
+        self.current_stream_resolution = Resolution(width, height)
+        logger.info(f"Stream resolution updated to: {width}x{height}")
 
     def run(self):
         while True:
