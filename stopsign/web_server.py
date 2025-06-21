@@ -10,6 +10,8 @@ from fasthtml.common import H3
 from fasthtml.common import H4
 from fasthtml.common import A
 from fasthtml.common import Body
+from fasthtml.common import Button
+from fasthtml.common import Details
 from fasthtml.common import Div
 from fasthtml.common import FastHTML
 from fasthtml.common import FileResponse
@@ -20,6 +22,8 @@ from fasthtml.common import Html
 from fasthtml.common import HTMLResponse
 from fasthtml.common import Iframe
 from fasthtml.common import Img
+from fasthtml.common import Input
+from fasthtml.common import Label
 from fasthtml.common import Li
 from fasthtml.common import Link
 from fasthtml.common import Main
@@ -30,6 +34,7 @@ from fasthtml.common import Span
 from fasthtml.common import StaticFiles
 from fasthtml.common import StreamingResponse
 from fasthtml.common import Style
+from fasthtml.common import Summary
 from fasthtml.common import Title
 from fasthtml.common import Ul
 from fasthtml.common import Video
