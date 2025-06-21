@@ -827,6 +827,7 @@ def debug_page():
         Head(
             Title("Stop Sign Debug"),
             Script(src="https://unpkg.com/htmx.org@1.9.4"),
+            Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest"),
             Script("""
                 let adjustmentMode = false;
                 let clickedPoints = [];
