@@ -169,3 +169,4 @@ tmp_stream_buffer/
 scratch/
 data/
 stream/
+*.DS_Store

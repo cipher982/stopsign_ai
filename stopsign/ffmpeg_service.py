@@ -38,6 +38,15 @@ STREAM_DIR = "/app/data/stream"
 FRAME_RATE = "15"
 RESOLUTION = "1920x1080"
 
+# ---------------------------------------------------------------------------
+# Run-time configurable encoding parameters.
+#   • FFMPEG_ENCODER  – h264_nvenc (GPU) | libx264 (CPU) | …
+#   • FFMPEG_PRESET   – p4 for NVENC, veryfast for libx264, etc.
+# ---------------------------------------------------------------------------
+
+ENCODER = os.getenv("FFMPEG_ENCODER", "libx264")
+PRESET = os.getenv("FFMPEG_PRESET", "veryfast")
+
 # FFmpeg Configuration
 HLS_PLAYLIST = os.path.join(STREAM_DIR, "stream.m3u8")
 
@@ -77,9 +86,9 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         "-i",
         "-",
         "-c:v",
-        "h264_nvenc",
+        ENCODER,
         "-preset",
-        "p4",
+        PRESET,
         "-b:v",
         "2M",
         "-maxrate",
@@ -119,7 +128,12 @@ def get_frame_shape(r: redis.Redis) -> tuple[int, int] | None:
 
 def start_ffmpeg_process(frame_shape):
     """Starts the FFmpeg subprocess with the correct frame shape."""
-    logger.info(f"Starting FFmpeg process with frame shape: {frame_shape}")
+    logger.info(
+        "Starting FFmpeg process with frame shape: %s - encoder: %s / preset: %s",
+        frame_shape,
+        ENCODER,
+        PRESET,
+    )
     ffmpeg_cmd = create_ffmpeg_cmd(frame_shape)
     process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
     return process

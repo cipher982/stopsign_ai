@@ -244,6 +244,11 @@ def home():
             Script(src="https://unpkg.com/htmx.org@1.9.4"),
             Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest"),
             Script("""
+                // Stop zone adjustment state
+                let adjustmentMode = false;
+                let clickedPoints = [];
+                let coordinateInfo = null;
+                
                 function updateStopZone() {
                     const x1 = document.getElementById('x1').value;
                     const y1 = document.getElementById('y1').value;
@@ -272,6 +277,142 @@ def home():
                         document.getElementById("status").innerText = 'Failed to update stop zone.';
                     });
                 }
+                
+                // Load coordinate system information
+                function loadCoordinateInfo() {
+                    fetch('/api/coordinate-info')
+                        .then(response => response.json())
+                        .then(data => {
+                            coordinateInfo = data;
+                            console.log('Coordinate info loaded:', data);
+                        })
+                        .catch(error => {
+                            console.error('Error loading coordinate info:', error);
+                        });
+                }
+                
+                // Toggle click-to-set adjustment mode
+                function toggleAdjustmentMode() {
+                    adjustmentMode = !adjustmentMode;
+                    clickedPoints = [];
+                    
+                    const video = document.getElementById('videoPlayer');
+                    const button = document.getElementById('adjustmentModeBtn');
+                    const status = document.getElementById('status');
+                    
+                    if (adjustmentMode) {
+                        video.style.cursor = 'crosshair';
+                        video.style.outline = '3px solid #ff0000';
+                        button.innerText = 'Cancel Adjustment';
+                        button.style.backgroundColor = '#ff4444';
+                        status.innerText = 'ADJUSTMENT MODE: Click two points on the video to set the stop line';
+                        loadCoordinateInfo();
+                    } else {
+                        video.style.cursor = 'default';
+                        video.style.outline = 'none';
+                        button.innerText = 'Adjust Stop Line';
+                        button.style.backgroundColor = '#4CAF50';
+                        status.innerText = '';
+                        clearClickMarkers();
+                    }
+                }
+                
+                // Handle video clicks for stop line adjustment
+                function handleVideoClick(event) {
+                    if (!adjustmentMode) return;
+                    
+                    const video = event.target;
+                    const rect = video.getBoundingClientRect();
+                    
+                    // Get click coordinates relative to video element
+                    const x = event.clientX - rect.left;
+                    const y = event.clientY - rect.top;
+                    
+                    // Add click point
+                    clickedPoints.push({x: x, y: y});
+                    
+                    // Add visual marker
+                    addClickMarker(event.clientX, event.clientY, clickedPoints.length);
+                    
+                    const status = document.getElementById('status');
+                    
+                    if (clickedPoints.length === 1) {
+                        status.innerText = 'Good! Now click the second point for the stop line.';
+                    } else if (clickedPoints.length === 2) {
+                        // Send both points to update the stop zone
+                        updateStopZoneFromClicks();
+                    }
+                }
+                
+                // Update stop zone using clicked coordinates
+                function updateStopZoneFromClicks() {
+                    const video = document.getElementById('videoPlayer');
+                    
+                    const data = {
+                        display_points: clickedPoints,
+                        video_element_size: {
+                            width: video.clientWidth,
+                            height: video.clientHeight
+                        }
+                    };
+                    
+                    fetch('/api/update-stop-zone-from-display', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(data),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        const status = document.getElementById('status');
+                        if (data.status === 'success') {
+                            status.innerText = 'Stop line updated successfully! Coordinates transformed from display to processing system.';
+                            console.log('Coordinate transformation details:', data);
+                            
+                            // Exit adjustment mode
+                            setTimeout(() => {
+                                toggleAdjustmentMode();
+                            }, 2000);
+                        } else {
+                            status.innerText = 'Error: ' + (data.error || 'Unknown error occurred');
+                            console.error('Update error:', data);
+                        }
+                    })
+                    .catch((error) => {
+                        console.error('Error:', error);
+                        document.getElementById('status').innerText = 'Network error occurred.';
+                    });
+                }
+                
+                // Add visual click markers
+                function addClickMarker(pageX, pageY, pointNumber) {
+                    const marker = document.createElement('div');
+                    marker.className = 'click-marker';
+                    marker.innerHTML = pointNumber;
+                    marker.style.position = 'absolute';
+                    marker.style.left = (pageX - 15) + 'px';
+                    marker.style.top = (pageY - 15) + 'px';
+                    marker.style.width = '30px';
+                    marker.style.height = '30px';
+                    marker.style.backgroundColor = '#ff0000';
+                    marker.style.color = 'white';
+                    marker.style.borderRadius = '50%';
+                    marker.style.display = 'flex';
+                    marker.style.alignItems = 'center';
+                    marker.style.justifyContent = 'center';
+                    marker.style.fontWeight = 'bold';
+                    marker.style.fontSize = '14px';
+                    marker.style.zIndex = '9999';
+                    marker.style.pointerEvents = 'none';
+                    document.body.appendChild(marker);
+                }
+                
+                // Clear all click markers
+                function clearClickMarkers() {
+                    const markers = document.querySelectorAll('.click-marker');
+                    markers.forEach(marker => marker.remove());
+                }
 
                 function fetchRecentPasses() {
                     fetch('/api/recent-vehicle-passes')
@@ -293,6 +434,86 @@ def home():
                 document.addEventListener('DOMContentLoaded', function() {
                     fetchRecentPasses();
                     setInterval(fetchRecentPasses, 30000);
+                    
+                    // Initialize video event listeners
+                    setTimeout(() => {
+                        const video = document.getElementById('videoPlayer');
+                        if (video) {
+                            video.addEventListener('click', handleVideoClick);
+                            console.log('Video click handler attached');
+                        }
+                        loadCoordinateInfo();
+                    }, 1000);
+                });
+                
+                // Debug mode for coordinate testing (Ctrl+Shift+D)
+                function debugCoordinateTransform(testPoints) {
+                    const video = document.getElementById('videoPlayer');
+                    if (!video) {
+                        console.error('Video element not found');
+                        return;
+                    }
+                    
+                    const data = {
+                        display_points: testPoints || [
+                            {x: 100, y: 100},
+                            {x: 500, y: 300}
+                        ],
+                        video_element_size: {
+                            width: video.clientWidth,
+                            height: video.clientHeight
+                        }
+                    };
+                    
+                    fetch('/api/debug-coordinates', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(data),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('=== COORDINATE TRANSFORMATION DEBUG ===');
+                        console.log('Coordinate System Info:', data.coordinate_system_info);
+                        console.log('Transformation Chain:', data.transformation_debug);
+                        console.log('Point Transformations:', data.point_transformations);
+                        console.log('Current Stop Line (Display Coords):', data.current_stop_line_display);
+                        
+                        // Show roundtrip errors
+                        data.point_transformations.forEach(pt => {
+                            const error = Math.sqrt(pt.roundtrip_error.x ** 2 + pt.roundtrip_error.y ** 2);
+                            console.log(`Point ${pt.point_index + 1} roundtrip error: ${error.toFixed(2)}px`);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Debug error:', error);
+                    });
+                }
+                
+                // Secret power user mode activation (Ctrl+Shift+A)
+                document.addEventListener('keydown', function(event) {
+                    if (event.ctrlKey && event.shiftKey && event.key === 'A') {
+                        event.preventDefault();
+                        const panel = document.getElementById('adjustmentPanel');
+                        if (panel) {
+                            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                        }
+                    }
+                    
+                    // Debug mode (Ctrl+Shift+D)
+                    if (event.ctrlKey && event.shiftKey && event.key === 'D') {
+                        event.preventDefault();
+                        console.log('=== DEBUGGING COORDINATE SYSTEM ===');
+                        debugCoordinateTransform();
+                    }
+                    
+                    // Show current coordinate info (Ctrl+Shift+I)
+                    if (event.ctrlKey && event.shiftKey && event.key === 'I') {
+                        event.preventDefault();
+                        console.log('=== CURRENT COORDINATE INFO ===');
+                        console.log(coordinateInfo);
+                    }
                 });
             """),
             Style("""
@@ -350,6 +571,59 @@ def home():
                     ),
                     cls="video-container",
                 ),
+                # Stop line adjustment panel (hidden by default, activated by Ctrl+Shift+A)
+                Div(
+                    H3("Stop Line Adjustment", style="margin-bottom: 15px; color: var(--accent-color);"),
+                    # Click-to-set interface
+                    Div(
+                        Button(
+                            "Adjust Stop Line",
+                            id="adjustmentModeBtn",
+                            onclick="toggleAdjustmentMode()",
+                            style="padding: 10px 20px; margin: 10px 0; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;",
+                        ),
+                        P(
+                            "Click the button above, then click two points on the video to set the new stop line position.",
+                            style="margin: 10px 0; font-size: 14px; color: var(--text-color);",
+                        ),
+                        style="margin-bottom: 20px;",
+                    ),
+                    # Manual coordinate input (legacy interface)
+                    Details(
+                        Summary(
+                            "Manual Coordinate Input", style="cursor: pointer; font-weight: bold; margin-bottom: 10px;"
+                        ),
+                        Div(
+                            Div(
+                                Label("Point 1 - X:", style="display: inline-block; width: 80px;"),
+                                Input(type="number", id="x1", value="550", style="width: 80px; margin: 5px;"),
+                                Label("Y:", style="margin-left: 10px;"),
+                                Input(type="number", id="y1", value="500", style="width: 80px; margin: 5px;"),
+                                style="margin-bottom: 10px;",
+                            ),
+                            Div(
+                                Label("Point 2 - X:", style="display: inline-block; width: 80px;"),
+                                Input(type="number", id="x2", value="400", style="width: 80px; margin: 5px;"),
+                                Label("Y:", style="margin-left: 10px;"),
+                                Input(type="number", id="y2", value="550", style="width: 80px; margin: 5px;"),
+                                style="margin-bottom: 15px;",
+                            ),
+                            Button(
+                                "Update Stop Zone",
+                                onclick="updateStopZone()",
+                                style="padding: 8px 16px; background-color: var(--accent-color); color: white; border: none; border-radius: 4px; cursor: pointer;",
+                            ),
+                            style="padding: 10px; background-color: var(--card-bg); border-radius: 5px;",
+                        ),
+                    ),
+                    # Status display
+                    Div(
+                        id="status",
+                        style="margin-top: 15px; padding: 10px; border-radius: 5px; background-color: var(--card-bg); min-height: 20px; font-weight: bold;",
+                    ),
+                    id="adjustmentPanel",
+                    style="display: none; margin: 20px 0; padding: 20px; background-color: var(--bg-secondary); border-radius: 10px; border: 2px solid var(--accent-color);",
+                ),
                 Div(
                     H2("Recent Vehicle Passes"),
                     Div(
@@ -381,6 +655,187 @@ async def update_stop_zone(request):
     app.state.video_analyzer.reload_stop_zone_config(new_config)
 
     return {"status": "success"}
+
+
+@app.get("/api/coordinate-info")  # type: ignore
+async def get_coordinate_info():
+    """Get current coordinate system information for coordinate transformations."""
+    try:
+        coord_info = app.state.video_analyzer.get_coordinate_info()
+        if coord_info is None:
+            return {"error": "Coordinate information not available yet"}
+        return coord_info
+    except Exception as e:
+        logger.error(f"Error getting coordinate info: {str(e)}")
+        return {"error": str(e)}
+
+
+@app.post("/api/update-stop-zone-from-display")  # type: ignore
+async def update_stop_zone_from_display(request):
+    """Update stop zone using display coordinates (from click-to-set UI)."""
+    try:
+        data = await request.json()
+
+        # Get display coordinates and video element dimensions
+        display_points = data["display_points"]  # [{"x": px, "y": py}, {"x": px, "y": py}]
+        video_element_size = data["video_element_size"]  # {"width": px, "height": px}
+
+        # Get coordinate system info
+        coord_info = app.state.video_analyzer.get_coordinate_info()
+        if coord_info is None:
+            return {"error": "Coordinate system not ready"}
+
+        # Import coordinate transformation (needs to be available)
+        from stopsign.coordinate_transform import CoordinateSystemInfo
+        from stopsign.coordinate_transform import CoordinateTransform
+        from stopsign.coordinate_transform import Resolution
+
+        # Create coordinate system info
+        display_resolution = Resolution(video_element_size["width"], video_element_size["height"])
+        stream_resolution = Resolution(
+            coord_info["stream_resolution"]["width"], coord_info["stream_resolution"]["height"]
+        )
+        raw_resolution = Resolution(coord_info["raw_resolution"]["width"], coord_info["raw_resolution"]["height"])
+        cropped_resolution = Resolution(
+            coord_info["cropped_resolution"]["width"], coord_info["cropped_resolution"]["height"]
+        )
+        scaled_resolution = Resolution(
+            coord_info["scaled_resolution"]["width"], coord_info["scaled_resolution"]["height"]
+        )
+
+        coord_system_info = CoordinateSystemInfo(
+            raw_resolution=raw_resolution,
+            cropped_resolution=cropped_resolution,
+            scaled_resolution=scaled_resolution,
+            stream_resolution=stream_resolution,
+            display_resolution=display_resolution,
+            crop_top=coord_info["transform_parameters"]["crop_top"],
+            crop_side=coord_info["transform_parameters"]["crop_side"],
+            scale_factor=coord_info["transform_parameters"]["scale_factor"],
+        )
+
+        # Create transformer
+        transformer = CoordinateTransform(coord_system_info)
+
+        # Transform display coordinates to processing coordinates
+        processing_points = []
+        for dp in display_points:
+            proc_x, proc_y = transformer.display_to_processing(dp["x"], dp["y"])
+            processing_points.append({"x": proc_x, "y": proc_y})
+
+        # Validate coordinates
+        for i, pp in enumerate(processing_points):
+            if not transformer.validate_coordinates(pp["x"], pp["y"], "processing"):
+                return {"error": f"Point {i+1} coordinates out of bounds: ({pp['x']:.1f}, {pp['y']:.1f})"}
+
+        # Update stop zone with processing coordinates
+        stop_line = (
+            (processing_points[0]["x"], processing_points[0]["y"]),
+            (processing_points[1]["x"], processing_points[1]["y"]),
+        )
+
+        new_config = {
+            "stop_line": stop_line,
+            "stop_box_tolerance": 10,  # Keep existing tolerance
+            "min_stop_duration": 2.0,
+        }
+
+        app.state.video_analyzer.reload_stop_zone_config(new_config)
+
+        return {
+            "status": "success",
+            "display_coordinates": display_points,
+            "processing_coordinates": processing_points,
+            "transformation_info": transformer.get_debug_info(),
+        }
+
+    except Exception as e:
+        logger.error(f"Error updating stop zone from display: {str(e)}")
+        return {"error": str(e)}
+
+
+@app.post("/api/debug-coordinates")  # type: ignore
+async def debug_coordinates(request):
+    """Debug endpoint for testing coordinate transformations."""
+    try:
+        data = await request.json()
+
+        display_points = data.get("display_points", [])
+        video_element_size = data.get("video_element_size", {})
+
+        coord_info = app.state.video_analyzer.get_coordinate_info()
+        if coord_info is None:
+            return {"error": "Coordinate system not ready"}
+
+        from stopsign.coordinate_transform import CoordinateSystemInfo
+        from stopsign.coordinate_transform import CoordinateTransform
+        from stopsign.coordinate_transform import Resolution
+
+        # Create coordinate system
+        display_resolution = Resolution(video_element_size["width"], video_element_size["height"])
+        stream_resolution = Resolution(
+            coord_info["stream_resolution"]["width"], coord_info["stream_resolution"]["height"]
+        )
+        raw_resolution = Resolution(coord_info["raw_resolution"]["width"], coord_info["raw_resolution"]["height"])
+        cropped_resolution = Resolution(
+            coord_info["cropped_resolution"]["width"], coord_info["cropped_resolution"]["height"]
+        )
+        scaled_resolution = Resolution(
+            coord_info["scaled_resolution"]["width"], coord_info["scaled_resolution"]["height"]
+        )
+
+        coord_system_info = CoordinateSystemInfo(
+            raw_resolution=raw_resolution,
+            cropped_resolution=cropped_resolution,
+            scaled_resolution=scaled_resolution,
+            stream_resolution=stream_resolution,
+            display_resolution=display_resolution,
+            crop_top=coord_info["transform_parameters"]["crop_top"],
+            crop_side=coord_info["transform_parameters"]["crop_side"],
+            scale_factor=coord_info["transform_parameters"]["scale_factor"],
+        )
+
+        transformer = CoordinateTransform(coord_system_info)
+
+        # Transform all provided points
+        transformations = []
+        for i, dp in enumerate(display_points):
+            proc_x, proc_y = transformer.display_to_processing(dp["x"], dp["y"])
+            back_x, back_y = transformer.processing_to_display(proc_x, proc_y)
+
+            transformations.append(
+                {
+                    "point_index": i,
+                    "display_input": {"x": dp["x"], "y": dp["y"]},
+                    "processing_output": {"x": proc_x, "y": proc_y},
+                    "display_roundtrip": {"x": back_x, "y": back_y},
+                    "roundtrip_error": {"x": abs(dp["x"] - back_x), "y": abs(dp["y"] - back_y)},
+                    "bounds_check": {
+                        "display_valid": transformer.validate_coordinates(dp["x"], dp["y"], "display"),
+                        "processing_valid": transformer.validate_coordinates(proc_x, proc_y, "processing"),
+                    },
+                }
+            )
+
+        return {
+            "coordinate_system_info": coord_info,
+            "transformation_debug": transformer.get_debug_info(),
+            "point_transformations": transformations,
+            "current_stop_line_display": [
+                transformer.processing_to_display(
+                    coord_info["current_stop_line"]["coordinates"][0][0],
+                    coord_info["current_stop_line"]["coordinates"][0][1],
+                ),
+                transformer.processing_to_display(
+                    coord_info["current_stop_line"]["coordinates"][1][0],
+                    coord_info["current_stop_line"]["coordinates"][1][1],
+                ),
+            ],
+        }
+
+    except Exception as e:
+        logger.error(f"Error in debug coordinates: {str(e)}")
+        return {"error": str(e)}
 
 
 @app.get("/api/recent-vehicle-passes")  # type: ignore
