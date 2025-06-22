@@ -63,6 +63,7 @@ class VideoAnalyzer:
         self.model = self.initialize_model()
         self.car_tracker = CarTracker(config, self.db)
         self.stop_detector = StopDetector(config, db)
+        self._stop_line_processing_coords = None  # Cache for converted coordinates
         self.frame_rate = 15
         self.frame_count = 0
         self.fps_frame_count = 0
@@ -77,6 +78,10 @@ class VideoAnalyzer:
         self.current_stream_resolution = None
         self.coordinate_transformer = None
         self._update_coordinate_system()
+
+        # Track raw frame dimensions (will be set on first frame)
+        self.raw_width = None
+        self.raw_height = None
 
         # Initialize FPS counters for each stage
         self.incoming_fps_count = 0
@@ -389,13 +394,22 @@ class VideoAnalyzer:
 
     def draw_stop_lines_on_raw_frame(self, frame: np.ndarray) -> np.ndarray:
         """
-        Draw stop lines on raw frame (1920x1080) before crop/scale operations.
+        Draw stop lines on raw frame before crop/scale operations.
         This allows direct mapping from browser coordinates to raw frame coordinates.
         """
         # Create a copy to avoid modifying the original frame
         frame_copy = frame.copy()
 
-        # Stop line coordinates are now in raw frame coordinate system (1920x1080)
+        # Update raw dimensions if not set
+        if self.raw_width is None or self.raw_height is None:
+            self.raw_height, self.raw_width = frame.shape[:2]
+            logger.info(f"Detected raw video dimensions: {self.raw_width}x{self.raw_height}")
+            # Now that we have dimensions, initialize the stop detector's stop zone
+            self.stop_detector.set_video_analyzer(self)
+            # Clear cache to force recalculation
+            self._stop_line_processing_coords = None
+
+        # Stop line coordinates are in raw frame coordinate system
         stop_line = self.config.stop_line  # [(x1, y1), (x2, y2)]
 
         if len(stop_line) >= 2:
@@ -412,8 +426,13 @@ class VideoAnalyzer:
 
     def raw_to_processing_coordinates(self, raw_x: float, raw_y: float) -> tuple[float, float]:
         """Convert raw frame coordinates to processing coordinates for stop detection."""
+        # Require dimensions to be set
+        if self.raw_width is None or self.raw_height is None:
+            raise ValueError("Video dimensions not yet detected. Cannot convert coordinates.")
+
+        raw_height, raw_width = self.raw_height, self.raw_width
+
         # Apply cropping transformation
-        raw_height, raw_width = 1080, 1920  # Raw frame dimensions
         crop_top_pixels = int(raw_height * self.config.crop_top)
         crop_side_pixels = int(raw_width * self.config.crop_side)
 
@@ -426,6 +445,36 @@ class VideoAnalyzer:
         processing_y = cropped_y * self.config.scale
 
         return processing_x, processing_y
+
+    def get_stop_line_processing_coords(self) -> tuple[tuple[float, float], tuple[float, float]]:
+        """Get stop line coordinates in processing coordinate system."""
+        if self.raw_width is None or self.raw_height is None:
+            raise ValueError("Video dimensions not yet detected. Cannot get stop line coordinates.")
+
+        # Convert if not cached or config changed
+        if self._stop_line_processing_coords is None:
+            coords = []
+            for point in self.config.stop_line:
+                if isinstance(point, (list, tuple)) and len(point) == 2:
+                    raw_x, raw_y = point
+                    proc_x, proc_y = self.raw_to_processing_coordinates(raw_x, raw_y)
+                    coords.append((proc_x, proc_y))
+                else:
+                    raise ValueError(f"Invalid stop line point: {point}")
+
+            if len(coords) != 2:
+                raise ValueError(f"Stop line must have exactly 2 points, got {len(coords)}")
+
+            self._stop_line_processing_coords = tuple(coords)
+
+        return self._stop_line_processing_coords
+
+    def on_config_updated(self):
+        """Called when config is updated to clear caches."""
+        self._stop_line_processing_coords = None
+        # Recreate stop zone if dimensions are available
+        if self.raw_width is not None and self.raw_height is not None:
+            self.stop_detector.set_video_analyzer(self)
 
     def crop_scale_frame(self, frame: np.ndarray) -> np.ndarray:
         height, width = frame.shape[:2]
@@ -473,16 +522,17 @@ class VideoAnalyzer:
         car_in_stop_zone = any(car.state.in_stop_zone for car in cars.values() if not car.state.is_parked)
 
         # draw stop zone
-        color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)
-        stop_box_corners = np.array(stop_detector.stop_zone, dtype=np.int32)
-        cv2.fillPoly(overlay, [stop_box_corners], color)
-        alpha = 0.3
-        frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+        if stop_detector.stop_zone is not None:
+            color = (0, 255, 0) if car_in_stop_zone else (255, 255, 255)
+            stop_box_corners = np.array(stop_detector.stop_zone, dtype=np.int32)
+            cv2.fillPoly(overlay, [stop_box_corners], color)
+            alpha = 0.3
+            frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
 
-        # draw stop zone midline
-        top_mid = (stop_box_corners[0] + stop_box_corners[1]) // 2
-        bottom_mid = (stop_box_corners[2] + stop_box_corners[3]) // 2
-        cv2.line(frame, tuple(top_mid), tuple(bottom_mid), (0, 0, 255), 2)
+            # draw stop zone midline
+            top_mid = (stop_box_corners[0] + stop_box_corners[1]) // 2
+            bottom_mid = (stop_box_corners[2] + stop_box_corners[3]) // 2
+            cv2.line(frame, tuple(top_mid), tuple(bottom_mid), (0, 0, 255), 2)
 
         for box in boxes:
             if box.id is None:
@@ -557,6 +607,10 @@ class VideoAnalyzer:
                 }
                 for car in self.car_tracker.get_cars().values()
             ],
+            "raw_video_dimensions": {
+                "width": self.raw_width,
+                "height": self.raw_height,
+            },
         }
 
     def store_frame_data(self, frame: np.ndarray, metadata: Dict):

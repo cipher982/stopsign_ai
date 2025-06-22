@@ -3,6 +3,7 @@ import logging
 import os
 import time
 
+import redis
 import uvicorn
 from fasthtml.common import H1
 from fasthtml.common import H2
@@ -55,6 +56,7 @@ def get_env(key: str) -> str:
 
 DB_URL = get_env("DB_URL")
 GRAFANA_URL = get_env("GRAFANA_URL")
+REDIS_URL = get_env("REDIS_URL")
 ORIGINAL_WIDTH = 1920
 ORIGINAL_HEIGHT = 1080
 
@@ -397,22 +399,22 @@ def home():
                 // Add visual click markers
                 function addClickMarker(pageX, pageY, pointNumber) {
                     const video = document.getElementById('videoPlayer');
-                    let container = video.parentElement;
+                    const rect = video.getBoundingClientRect();
                     
-                    // Create container if it doesn't exist
-                    if (!container || !container.classList.contains('video-container')) {
-                        container = document.createElement('div');
-                        container.className = 'video-container';
-                        video.parentNode.insertBefore(container, video);
-                        container.appendChild(video);
+                    // Ensure video has a wrapper for positioning
+                    let wrapper = video.parentElement;
+                    if (!wrapper || !wrapper.classList.contains('video-wrapper')) {
+                        wrapper = document.createElement('div');
+                        wrapper.className = 'video-wrapper';
+                        wrapper.style.position = 'relative';
+                        wrapper.style.display = 'inline-block';
+                        video.parentNode.insertBefore(wrapper, video);
+                        wrapper.appendChild(video);
                     }
                     
-                    const rect = video.getBoundingClientRect();
-                    const containerRect = container.getBoundingClientRect();
-                    
-                    // Position relative to video within its container
-                    const relativeX = pageX - containerRect.left;
-                    const relativeY = pageY - containerRect.top;
+                    // Calculate position relative to video element
+                    const relativeX = pageX - rect.left;
+                    const relativeY = pageY - rect.top;
                     
                     const marker = document.createElement('div');
                     marker.className = 'click-marker';
@@ -432,7 +434,7 @@ def home():
                     marker.style.fontSize = '14px';
                     marker.style.zIndex = '9999';
                     marker.style.pointerEvents = 'none';
-                    container.appendChild(marker);
+                    wrapper.appendChild(marker);
                 }
                 
                 // Clear all click markers
@@ -675,8 +677,37 @@ async def get_coordinate_info():
         # Read config directly since we're in separate containers
         config = Config("./config.yaml")
 
+        # Get actual video dimensions from Redis metadata
+        redis_client = redis.from_url(REDIS_URL)
+
+        try:
+            # Check if there's any frame metadata available
+            metadata_keys = redis_client.keys("frame_metadata:*")
+            if not metadata_keys:
+                return {"error": "No video metadata available. Video analyzer may not be running."}
+
+            # Get the most recent metadata
+            latest_metadata = redis_client.get(metadata_keys[-1])
+            if not latest_metadata:
+                return {"error": "Could not read video metadata."}
+
+            import json
+
+            metadata = json.loads(latest_metadata)
+            if "raw_video_dimensions" not in metadata:
+                return {"error": "Video dimensions not available in metadata."}
+
+            raw_width = metadata["raw_video_dimensions"]["width"]
+            raw_height = metadata["raw_video_dimensions"]["height"]
+
+            if not raw_width or not raw_height:
+                return {"error": "Invalid video dimensions in metadata."}
+
+        except Exception as e:
+            logger.error(f"Failed to get video dimensions from metadata: {e}")
+            return {"error": f"Failed to get video dimensions: {str(e)}"}
+
         # Calculate coordinate system information
-        raw_width, raw_height = 1440, 810  # Actual video resolution
         crop_side_pixels = int(raw_width * config.crop_side)
         crop_top_pixels = int(raw_height * config.crop_top)
         cropped_width = raw_width - (2 * crop_side_pixels)
@@ -725,10 +756,38 @@ async def update_stop_zone_from_display(request):
 
         config = Config("./config.yaml")
 
-        # Use actual video coordinates dynamically
-        # This eliminates coordinate transformation complexity entirely
-        raw_width = actual_video_size["width"]
-        raw_height = actual_video_size["height"]
+        # Get actual video dimensions - no fallbacks allowed
+        if actual_video_size and actual_video_size.get("width") and actual_video_size.get("height"):
+            raw_width = actual_video_size["width"]
+            raw_height = actual_video_size["height"]
+        else:
+            # Must get from Redis metadata - no fallbacks
+            redis_client = redis.from_url(REDIS_URL)
+
+            try:
+                metadata_keys = redis_client.keys("frame_metadata:*")
+                if not metadata_keys:
+                    return {"error": "No video metadata available. Video analyzer must be running first."}
+
+                latest_metadata = redis_client.get(metadata_keys[-1])
+                if not latest_metadata:
+                    return {"error": "Could not read video metadata."}
+
+                import json
+
+                metadata = json.loads(latest_metadata)
+                if "raw_video_dimensions" not in metadata:
+                    return {"error": "Video dimensions not available in metadata."}
+
+                raw_width = metadata["raw_video_dimensions"]["width"]
+                raw_height = metadata["raw_video_dimensions"]["height"]
+
+                if not raw_width or not raw_height:
+                    return {"error": "Invalid video dimensions in metadata."}
+
+            except Exception as e:
+                logger.error(f"Failed to get video dimensions: {e}")
+                return {"error": f"Failed to get video dimensions: {str(e)}"}
 
         # Scale browser coordinates directly to actual video coordinates
         # The video analyzer will draw stop lines on frames BEFORE crop/scale
@@ -809,8 +868,33 @@ async def debug_coordinates(request):
 
         config = Config("./config.yaml")
 
-        # Option 2: Simple raw coordinate transformation
-        raw_width, raw_height = 1440, 810
+        # Get actual dimensions from Redis - no fallbacks
+        redis_client = redis.from_url(REDIS_URL)
+
+        try:
+            metadata_keys = redis_client.keys("frame_metadata:*")
+            if not metadata_keys:
+                return {"error": "No video metadata available. Video analyzer must be running."}
+
+            latest_metadata = redis_client.get(metadata_keys[-1])
+            if not latest_metadata:
+                return {"error": "Could not read video metadata."}
+
+            import json
+
+            metadata = json.loads(latest_metadata)
+            if "raw_video_dimensions" not in metadata:
+                return {"error": "Video dimensions not available in metadata."}
+
+            raw_width = metadata["raw_video_dimensions"]["width"]
+            raw_height = metadata["raw_video_dimensions"]["height"]
+
+            if not raw_width or not raw_height:
+                return {"error": "Invalid video dimensions in metadata."}
+
+        except Exception as e:
+            logger.error(f"Failed to get video dimensions: {e}")
+            return {"error": f"Failed to get video dimensions: {str(e)}"}
 
         if video_element_size:
             scale_x = raw_width / video_element_size["width"]
@@ -903,9 +987,9 @@ def debug_page():
                     const video = event.target;
                     const rect = video.getBoundingClientRect();
                     
-                    // Simple coordinate mapping with manual Y offset correction
+                    // Get click coordinates relative to video element
                     const x = event.clientX - rect.left;
-                    const y = (event.clientY - rect.top) + 100; // Manual fix: +100px to compensate for upward offset
+                    const y = event.clientY - rect.top;
                     
                     console.log('Click debug:', {
                         browserClick: { x, y },
@@ -997,22 +1081,22 @@ def debug_page():
                 
                 function addClickMarker(pageX, pageY, pointNumber) {
                     const video = document.getElementById('videoPlayer');
-                    let container = video.parentElement;
+                    const rect = video.getBoundingClientRect();
                     
-                    // Create container if it doesn't exist
-                    if (!container || !container.classList.contains('video-container')) {
-                        container = document.createElement('div');
-                        container.className = 'video-container';
-                        video.parentNode.insertBefore(container, video);
-                        container.appendChild(video);
+                    // Ensure video has a wrapper for positioning
+                    let wrapper = video.parentElement;
+                    if (!wrapper || !wrapper.classList.contains('video-wrapper')) {
+                        wrapper = document.createElement('div');
+                        wrapper.className = 'video-wrapper';
+                        wrapper.style.position = 'relative';
+                        wrapper.style.display = 'inline-block';
+                        video.parentNode.insertBefore(wrapper, video);
+                        wrapper.appendChild(video);
                     }
                     
-                    const rect = video.getBoundingClientRect();
-                    const containerRect = container.getBoundingClientRect();
-                    
-                    // Position relative to video within its container
-                    const relativeX = pageX - containerRect.left;
-                    const relativeY = pageY - containerRect.top;
+                    // Calculate position relative to video element
+                    const relativeX = pageX - rect.left;
+                    const relativeY = pageY - rect.top;
                     
                     const marker = document.createElement('div');
                     marker.className = 'click-marker';
@@ -1032,7 +1116,7 @@ def debug_page():
                     marker.style.fontSize = '14px';
                     marker.style.zIndex = '9999';
                     marker.style.pointerEvents = 'none';
-                    container.appendChild(marker);
+                    wrapper.appendChild(marker);
                 }
                 
                 function clearClickMarkers() {
@@ -1099,7 +1183,9 @@ def debug_page():
                 .danger { background: #f44336; color: white; }
                 #status { padding: 10px; background: #333; border-radius: 5px; margin: 10px 0; min-height: 20px; }
                 pre { background: #333; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 12px; }
-                video { max-width: 100%; border: 2px solid #555; border-radius: 8px; }
+                video { max-width: 100%; border: 2px solid #555; border-radius: 8px; display: block; }
+                .video-wrapper { position: relative; display: inline-block; }
+                .click-marker { position: absolute; pointer-events: none; }
             """),
         ),
         Body(
@@ -1434,6 +1520,16 @@ def load_video():
             }}
             video.addEventListener('error', function(e) {{
                 console.error('Video error:', e);
+            }});
+            
+            // Log video dimensions when metadata is loaded
+            video.addEventListener('loadedmetadata', function() {{
+                console.log('Video dimensions:', {{
+                    videoWidth: video.videoWidth,
+                    videoHeight: video.videoHeight,
+                    displayWidth: video.clientWidth,
+                    displayHeight: video.clientHeight
+                }});
             }});
         """),
     )
