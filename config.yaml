@@ -6,8 +6,12 @@ video_processing:
 
 stopsign_detection:
 
-  stop_line: [[440, 806], [624, 756]]
-  stop_box_tolerance: [50, 50]
+  stop_line: 
+  - - 589.0909090909091
+    - 548.4308141838352
+  - - 396.57754010695186
+    - 619.0330328843106
+  stop_box_tolerance: [10, 10]
   pre_stop_zone: [1000, 1100]
   image_capture_zone: [800, 900]
   max_movement_speed: 20  # pixels / second
@@ -17,6 +21,7 @@ stopsign_detection:
   in_zone_frame_threshold: 2
   out_zone_frame_threshold: 2
   stop_speed_threshold: 20
+  min_stop_time: 2.0
 
 tracking:
   use_kalman_filter: true
