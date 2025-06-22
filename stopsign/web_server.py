@@ -723,18 +723,26 @@ async def update_stop_zone_from_display(request):
         # Persist the new stop-line coordinates to the YAML config so that the
         # video-analyzer container can pick them up automatically.
         # Now using raw coordinates instead of processing coordinates
+
+        if len(raw_points) < 2:
+            return {"error": "Need exactly 2 points"}
+
         stop_line = (
             (raw_points[0]["x"], raw_points[0]["y"]),
             (raw_points[1]["x"], raw_points[1]["y"]),
         )
 
-        config.update_stop_zone(
-            {
-                "stop_line": stop_line,
-                "stop_box_tolerance": 10,
-                "min_stop_duration": 2.0,
-            }
-        )
+        try:
+            config.update_stop_zone(
+                {
+                    "stop_line": stop_line,
+                    "stop_box_tolerance": 10,
+                    "min_stop_duration": 2.0,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error in update_stop_zone: {str(e)}")
+            return {"error": f"Config update failed: {str(e)}"}
 
         # Respond with details that might be useful to the frontend for
         # confirmation or debugging.
@@ -866,7 +874,6 @@ def debug_page():
                     const x = event.clientX - rect.left;
                     const y = (event.clientY - rect.top) + 200; // Manual fix: +200px to compensate for upward offset
                     
-                    console.log('Simple click:', { x, y, rectWidth: rect.width, rectHeight: rect.height });
                     
                     clickedPoints.push({x: x, y: y});
                     
@@ -1343,7 +1350,7 @@ def load_video():
             console.log('Attempting to load video');
             if (Hls.isSupported()) {{
                 console.log('HLS is supported');
-                var hls = new Hls({{debug: true}});
+                var hls = new Hls({{debug: false}});
                 hls.loadSource('{STREAM_URL}');
                 hls.attachMedia(video);
                 hls.on(Hls.Events.MANIFEST_PARSED, function() {{

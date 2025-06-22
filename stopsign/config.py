@@ -66,16 +66,25 @@ class Config:
         crop_side_pixels = int(raw_width * self.crop_side)
 
         processing_coords = []
-        for raw_x, raw_y in self.stop_line:
-            # Apply cropping transformation
-            cropped_x = raw_x - crop_side_pixels
-            cropped_y = raw_y - crop_top_pixels
 
-            # Apply scaling
-            processing_x = cropped_x * self.scale
-            processing_y = cropped_y * self.scale
+        try:
+            for item in self.stop_line:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    raw_x, raw_y = item
+                else:
+                    continue
 
-            processing_coords.append((processing_x, processing_y))
+                # Apply cropping transformation
+                cropped_x = raw_x - crop_side_pixels
+                cropped_y = raw_y - crop_top_pixels
+
+                # Apply scaling
+                processing_x = cropped_x * self.scale
+                processing_y = cropped_y * self.scale
+
+                processing_coords.append((processing_x, processing_y))
+        except Exception:
+            return ((0, 0), (100, 100))  # Fallback coordinates
 
         return tuple(processing_coords)
 
