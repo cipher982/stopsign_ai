@@ -68,11 +68,7 @@ class Config:
         processing_coords = []
 
         try:
-            print(
-                f"DEBUG: stop_line_processing_coords - self.stop_line: {self.stop_line}, type: {type(self.stop_line)}"
-            )
             for i, item in enumerate(self.stop_line):
-                print(f"DEBUG: Processing item {i}: {item}, type: {type(item)}")
                 if isinstance(item, (list, tuple)) and len(item) == 2:
                     raw_x, raw_y = item
                 else:
@@ -108,19 +104,19 @@ class Config:
         with open(self.config_path, "r") as file:
             config = yaml.safe_load(file)
 
-        print(f"DEBUG: save_to_yaml - self.stop_line: {self.stop_line}, type: {type(self.stop_line)}")
-
         # Update only the changed values (convert tuples to lists for YAML)
         try:
-            print("DEBUG: Converting stop_line tuples to lists...")
             stop_line_lists = [list(point) for point in self.stop_line]
-            print(f"DEBUG: Converted to: {stop_line_lists}")
             config["stopsign_detection"]["stop_line"] = stop_line_lists
-        except Exception as e:
-            print(f"DEBUG: Error converting stop_line: {e}")
+        except Exception:
             raise
 
-        config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
+        # Handle stop_box_tolerance - it might be an int instead of a list/tuple
+        if isinstance(self.stop_box_tolerance, (list, tuple)):
+            config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
+        else:
+            # It's probably an int, convert to list format
+            config["stopsign_detection"]["stop_box_tolerance"] = [self.stop_box_tolerance, self.stop_box_tolerance]
         config["stopsign_detection"]["min_stop_time"] = self.min_stop_time
 
         with open(self.config_path, "w") as file:
