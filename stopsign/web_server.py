@@ -872,8 +872,15 @@ def debug_page():
                     
                     // Simple coordinate mapping with manual Y offset correction
                     const x = event.clientX - rect.left;
-                    const y = (event.clientY - rect.top) + 200; // Manual fix: +200px to compensate for upward offset
+                    const y = (event.clientY - rect.top) + 100; // Manual fix: +100px to compensate for upward offset
                     
+                    console.log('Click debug:', {
+                        browserClick: { x, y },
+                        videoElement: { width: rect.width, height: rect.height },
+                        actualVideo: { width: video.videoWidth, height: video.videoHeight },
+                        scaleFactors: { x: 1920/rect.width, y: 1080/rect.height },
+                        rawCoords: { x: x * (1920/rect.width), y: y * (1080/rect.height) }
+                    });
                     
                     clickedPoints.push({x: x, y: y});
                     
