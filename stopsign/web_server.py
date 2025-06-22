@@ -358,6 +358,10 @@ def home():
                         video_element_size: {
                             width: video.clientWidth,
                             height: video.clientHeight
+                        },
+                        actual_video_size: {
+                            width: video.videoWidth,
+                            height: video.videoHeight
                         }
                     };
                     
@@ -650,7 +654,7 @@ async def get_coordinate_info():
         config = Config("./config.yaml")
 
         # Calculate coordinate system information
-        raw_width, raw_height = 1920, 1080  # Default RTSP resolution
+        raw_width, raw_height = 1440, 810  # Actual video resolution
         crop_side_pixels = int(raw_width * config.crop_side)
         crop_top_pixels = int(raw_height * config.crop_top)
         cropped_width = raw_width - (2 * crop_side_pixels)
@@ -691,6 +695,7 @@ async def update_stop_zone_from_display(request):
 
         display_points = data["display_points"]  # [{"x": px, "y": py}, {"x": px, "y": py}]
         video_element_size = data["video_element_size"]  # {"width": px, "height": px}
+        actual_video_size = data.get("actual_video_size", {"width": 1440, "height": 810})  # Fallback
 
         # For now we assume a 1-to-1 mapping between display and processing
         # coordinates; this avoids unused-variable and undefined-name warnings
@@ -698,12 +703,13 @@ async def update_stop_zone_from_display(request):
 
         config = Config("./config.yaml")
 
-        # Use raw frame coordinates (1920x1080) directly
+        # Use actual video coordinates dynamically
         # This eliminates coordinate transformation complexity entirely
-        raw_width, raw_height = 1920, 1080  # Raw RTSP resolution
+        raw_width = actual_video_size["width"]
+        raw_height = actual_video_size["height"]
 
-        # Scale browser coordinates directly to raw frame coordinates
-        # The video analyzer will draw stop lines on raw frames BEFORE crop/scale
+        # Scale browser coordinates directly to actual video coordinates
+        # The video analyzer will draw stop lines on frames BEFORE crop/scale
         scale_x = raw_width / video_element_size["width"]
         scale_y = raw_height / video_element_size["height"]
 
@@ -777,7 +783,7 @@ async def debug_coordinates(request):
         config = Config("./config.yaml")
 
         # Option 2: Simple raw coordinate transformation
-        raw_width, raw_height = 1920, 1080
+        raw_width, raw_height = 1440, 810
 
         if video_element_size:
             scale_x = raw_width / video_element_size["width"]
@@ -878,8 +884,8 @@ def debug_page():
                         browserClick: { x, y },
                         videoElement: { width: rect.width, height: rect.height },
                         actualVideo: { width: video.videoWidth, height: video.videoHeight },
-                        scaleFactors: { x: 1920/rect.width, y: 1080/rect.height },
-                        rawCoords: { x: x * (1920/rect.width), y: y * (1080/rect.height) }
+                        scaleFactors: { x: 1440/rect.width, y: 810/rect.height },
+                        rawCoords: { x: x * (1440/rect.width), y: y * (810/rect.height) }
                     });
                     
                     clickedPoints.push({x: x, y: y});
@@ -909,6 +915,10 @@ def debug_page():
                         video_element_size: {
                             width: video.clientWidth,
                             height: video.clientHeight
+                        },
+                        actual_video_size: {
+                            width: video.videoWidth,
+                            height: video.videoHeight
                         }
                     };
                     
