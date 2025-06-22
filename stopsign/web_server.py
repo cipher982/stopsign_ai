@@ -649,10 +649,28 @@ async def get_coordinate_info():
         # Read config directly since we're in separate containers
         config = Config("./config.yaml")
 
-        # Return basic coordinate info from config
+        # Calculate coordinate system information
+        raw_width, raw_height = 1920, 1080  # Default RTSP resolution
+        crop_side_pixels = int(raw_width * config.crop_side)
+        crop_top_pixels = int(raw_height * config.crop_top)
+        cropped_width = raw_width - (2 * crop_side_pixels)
+        cropped_height = raw_height - crop_top_pixels
+        processing_width = int(cropped_width * config.scale)
+        processing_height = int(cropped_height * config.scale)
+
         return {
             "current_stop_line": {"coordinates": list(config.stop_line), "coordinate_system": "processing_coordinates"},
-            "message": "Full coordinate system tracking requires video analyzer integration",
+            "coordinate_system_info": {
+                "raw_resolution": f"{raw_width}x{raw_height}",
+                "cropped_resolution": f"{cropped_width}x{cropped_height}",
+                "processing_resolution": f"{processing_width}x{processing_height}",
+                "config_values": {
+                    "scale": config.scale,
+                    "crop_top": config.crop_top,
+                    "crop_side": config.crop_side,
+                },
+                "transformation_chain": f"{raw_width}x{raw_height} → crop → {cropped_width}x{cropped_height} → scale({config.scale}) → {processing_width}x{processing_height}",
+            },
         }
     except Exception as e:
         logger.error(f"Error getting coordinate info: {str(e)}")
@@ -681,11 +699,18 @@ async def update_stop_zone_from_display(request):
         config = Config("./config.yaml")
 
         # Scale browser coordinates to processing coordinates
-        # Your processing resolution is approximately 1440x810 (1920*0.75 x 1080*0.75)
-        # Browser video element size is in video_element_size
+        # Calculate exact processing resolution based on config values
+        raw_width, raw_height = 1920, 1080  # Default RTSP resolution
 
-        processing_width = 1440  # Approximate processing width after 0.75 scaling
-        processing_height = 810  # Approximate processing height after 0.75 scaling
+        # Apply cropping (crop values are proportions 0.0-1.0)
+        crop_side_pixels = int(raw_width * config.crop_side)
+        crop_top_pixels = int(raw_height * config.crop_top)
+        cropped_width = raw_width - (2 * crop_side_pixels)
+        cropped_height = raw_height - crop_top_pixels
+
+        # Apply scaling to get exact processing resolution
+        processing_width = int(cropped_width * config.scale)
+        processing_height = int(cropped_height * config.scale)
 
         scale_x = processing_width / video_element_size["width"]
         scale_y = processing_height / video_element_size["height"]
@@ -694,6 +719,13 @@ async def update_stop_zone_from_display(request):
         for p in display_points:
             proc_x = p["x"] * scale_x
             proc_y = p["y"] * scale_y
+
+            # Validate coordinates are within processing bounds
+            if proc_x < 0 or proc_x > processing_width or proc_y < 0 or proc_y > processing_height:
+                logger.warning(
+                    f"Coordinate ({proc_x:.1f}, {proc_y:.1f}) is outside processing bounds ({processing_width}x{processing_height})"
+                )
+
             processing_points.append({"x": proc_x, "y": proc_y})
 
         # Persist the new stop-line coordinates to the YAML config so that the
@@ -719,9 +751,17 @@ async def update_stop_zone_from_display(request):
             "processing_coordinates": processing_points,
             "video_element_size": video_element_size,
             "scaling_info": {
+                "raw_resolution": f"{raw_width}x{raw_height}",
+                "cropped_resolution": f"{cropped_width}x{cropped_height}",
                 "processing_resolution": f"{processing_width}x{processing_height}",
-                "scale_factors": f"x={scale_x:.2f}, y={scale_y:.2f}",
+                "scale_factors": f"x={scale_x:.3f}, y={scale_y:.3f}",
                 "browser_video_size": f"{video_element_size['width']}x{video_element_size['height']}",
+                "config_values": {
+                    "scale": config.scale,
+                    "crop_top": config.crop_top,
+                    "crop_side": config.crop_side,
+                },
+                "transformation_chain": f"{raw_width}x{raw_height} → crop → {cropped_width}x{cropped_height} → scale({config.scale}) → {processing_width}x{processing_height}",
             },
         }
 
