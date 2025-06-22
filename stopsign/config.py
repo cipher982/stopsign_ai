@@ -54,6 +54,31 @@ class Config:
         self.fps = config["stream_settings"]["fps"]
         self.vehicle_classes = config["stream_settings"]["vehicle_classes"]
 
+    @property
+    def stop_line_processing_coords(self):
+        """
+        Get stop line coordinates in processing coordinate system.
+        The stop_line is now stored in raw coordinates, but StopDetector needs processing coords.
+        """
+        # Convert raw coordinates to processing coordinates
+        raw_height, raw_width = 1080, 1920
+        crop_top_pixels = int(raw_height * self.crop_top)
+        crop_side_pixels = int(raw_width * self.crop_side)
+
+        processing_coords = []
+        for raw_x, raw_y in self.stop_line:
+            # Apply cropping transformation
+            cropped_x = raw_x - crop_side_pixels
+            cropped_y = raw_y - crop_top_pixels
+
+            # Apply scaling
+            processing_x = cropped_x * self.scale
+            processing_y = cropped_y * self.scale
+
+            processing_coords.append((processing_x, processing_y))
+
+        return tuple(processing_coords)
+
     def update_stop_zone(self, new_config):
         self.stop_line = new_config["stop_line"]
         self.stop_box_tolerance = new_config["stop_box_tolerance"]

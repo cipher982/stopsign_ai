@@ -328,7 +328,11 @@ class VideoAnalyzer:
         self.avg_brightness.set(float(avg_brightness))
         self.contrast.set(float(contrast))
 
-        frame = self.crop_scale_frame(frame)
+        # Draw stop lines on raw frame BEFORE crop/scale
+        # This allows direct mapping from browser coordinates to raw frame coordinates
+        frame_with_stop_lines = self.draw_stop_lines_on_raw_frame(frame)
+
+        frame = self.crop_scale_frame(frame_with_stop_lines)
 
         # Object Detection
         object_detection_start = time.time()
@@ -382,6 +386,46 @@ class VideoAnalyzer:
         self.frame_processing_time.observe(time.time() - start_time)
 
         return annotated_frame, metadata
+
+    def draw_stop_lines_on_raw_frame(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Draw stop lines on raw frame (1920x1080) before crop/scale operations.
+        This allows direct mapping from browser coordinates to raw frame coordinates.
+        """
+        # Create a copy to avoid modifying the original frame
+        frame_copy = frame.copy()
+
+        # Stop line coordinates are now in raw frame coordinate system (1920x1080)
+        stop_line = self.config.stop_line  # [(x1, y1), (x2, y2)]
+
+        if len(stop_line) >= 2:
+            # Draw stop line in red
+            pt1 = (int(stop_line[0][0]), int(stop_line[0][1]))
+            pt2 = (int(stop_line[1][0]), int(stop_line[1][1]))
+            cv2.line(frame_copy, pt1, pt2, (0, 0, 255), 3)  # Red line, thickness 3
+
+            # Draw end points as circles for visibility
+            cv2.circle(frame_copy, pt1, 8, (0, 0, 255), -1)  # Red filled circle
+            cv2.circle(frame_copy, pt2, 8, (0, 0, 255), -1)  # Red filled circle
+
+        return frame_copy
+
+    def raw_to_processing_coordinates(self, raw_x: float, raw_y: float) -> tuple[float, float]:
+        """Convert raw frame coordinates to processing coordinates for stop detection."""
+        # Apply cropping transformation
+        raw_height, raw_width = 1080, 1920  # Raw frame dimensions
+        crop_top_pixels = int(raw_height * self.config.crop_top)
+        crop_side_pixels = int(raw_width * self.config.crop_side)
+
+        # Adjust for cropping
+        cropped_x = raw_x - crop_side_pixels
+        cropped_y = raw_y - crop_top_pixels
+
+        # Apply scaling
+        processing_x = cropped_x * self.config.scale
+        processing_y = cropped_y * self.config.scale
+
+        return processing_x, processing_y
 
     def crop_scale_frame(self, frame: np.ndarray) -> np.ndarray:
         height, width = frame.shape[:2]

@@ -698,41 +698,34 @@ async def update_stop_zone_from_display(request):
 
         config = Config("./config.yaml")
 
-        # Scale browser coordinates to processing coordinates
-        # Calculate exact processing resolution based on config values
-        raw_width, raw_height = 1920, 1080  # Default RTSP resolution
+        # Use raw frame coordinates (1920x1080) directly
+        # This eliminates coordinate transformation complexity entirely
+        raw_width, raw_height = 1920, 1080  # Raw RTSP resolution
 
-        # Apply cropping (crop values are proportions 0.0-1.0)
-        crop_side_pixels = int(raw_width * config.crop_side)
-        crop_top_pixels = int(raw_height * config.crop_top)
-        cropped_width = raw_width - (2 * crop_side_pixels)
-        cropped_height = raw_height - crop_top_pixels
+        # Scale browser coordinates directly to raw frame coordinates
+        # The video analyzer will draw stop lines on raw frames BEFORE crop/scale
+        scale_x = raw_width / video_element_size["width"]
+        scale_y = raw_height / video_element_size["height"]
 
-        # Apply scaling to get exact processing resolution
-        processing_width = int(cropped_width * config.scale)
-        processing_height = int(cropped_height * config.scale)
-
-        scale_x = processing_width / video_element_size["width"]
-        scale_y = processing_height / video_element_size["height"]
-
-        processing_points = []
+        raw_points = []
         for p in display_points:
-            proc_x = p["x"] * scale_x
-            proc_y = p["y"] * scale_y
+            raw_x = p["x"] * scale_x
+            raw_y = p["y"] * scale_y
 
-            # Validate coordinates are within processing bounds
-            if proc_x < 0 or proc_x > processing_width or proc_y < 0 or proc_y > processing_height:
+            # Validate coordinates are within raw frame bounds
+            if raw_x < 0 or raw_x > raw_width or raw_y < 0 or raw_y > raw_height:
                 logger.warning(
-                    f"Coordinate ({proc_x:.1f}, {proc_y:.1f}) is outside processing bounds ({processing_width}x{processing_height})"
+                    f"Coordinate ({raw_x:.1f}, {raw_y:.1f}) is outside raw frame bounds ({raw_width}x{raw_height})"
                 )
 
-            processing_points.append({"x": proc_x, "y": proc_y})
+            raw_points.append({"x": raw_x, "y": raw_y})
 
         # Persist the new stop-line coordinates to the YAML config so that the
         # video-analyzer container can pick them up automatically.
+        # Now using raw coordinates instead of processing coordinates
         stop_line = (
-            (processing_points[0]["x"], processing_points[0]["y"]),
-            (processing_points[1]["x"], processing_points[1]["y"]),
+            (raw_points[0]["x"], raw_points[0]["y"]),
+            (raw_points[1]["x"], raw_points[1]["y"]),
         )
 
         config.update_stop_zone(
@@ -748,20 +741,14 @@ async def update_stop_zone_from_display(request):
         return {
             "status": "success",
             "display_coordinates": display_points,
-            "processing_coordinates": processing_points,
+            "raw_coordinates": raw_points,
             "video_element_size": video_element_size,
             "scaling_info": {
+                "coordinate_system": "raw_frame_coordinates",
                 "raw_resolution": f"{raw_width}x{raw_height}",
-                "cropped_resolution": f"{cropped_width}x{cropped_height}",
-                "processing_resolution": f"{processing_width}x{processing_height}",
                 "scale_factors": f"x={scale_x:.3f}, y={scale_y:.3f}",
                 "browser_video_size": f"{video_element_size['width']}x{video_element_size['height']}",
-                "config_values": {
-                    "scale": config.scale,
-                    "crop_top": config.crop_top,
-                    "crop_side": config.crop_side,
-                },
-                "transformation_chain": f"{raw_width}x{raw_height} → crop → {cropped_width}x{cropped_height} → scale({config.scale}) → {processing_width}x{processing_height}",
+                "note": "Using raw frame coordinates (Option 2) - stop lines drawn before crop/scale",
             },
         }
 
