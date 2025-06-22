@@ -659,7 +659,7 @@ async def get_coordinate_info():
         processing_height = int(cropped_height * config.scale)
 
         return {
-            "current_stop_line": {"coordinates": list(config.stop_line), "coordinate_system": "processing_coordinates"},
+            "current_stop_line": {"coordinates": list(config.stop_line), "coordinate_system": "raw_coordinates"},
             "coordinate_system_info": {
                 "raw_resolution": f"{raw_width}x{raw_height}",
                 "cropped_resolution": f"{cropped_width}x{cropped_height}",
@@ -759,84 +759,57 @@ async def update_stop_zone_from_display(request):
 
 @app.post("/api/debug-coordinates")  # type: ignore
 async def debug_coordinates(request):
-    """Debug endpoint for testing coordinate transformations."""
+    """Debug endpoint for testing coordinate transformations with Option 2 (raw coordinates)."""
     try:
         data = await request.json()
 
         display_points = data.get("display_points", [])
         video_element_size = data.get("video_element_size", {})
 
-        # Simple coordinate info from config file
         config = Config("./config.yaml")
-        coord_info = {
-            "current_stop_line": {"coordinates": list(config.stop_line)},
-            "message": "Using basic coordinate system for debugging",
-        }
 
-        from stopsign.coordinate_transform import CoordinateSystemInfo
-        from stopsign.coordinate_transform import CoordinateTransform
-        from stopsign.coordinate_transform import Resolution
+        # Option 2: Simple raw coordinate transformation
+        raw_width, raw_height = 1920, 1080
 
-        # Create coordinate system
-        display_resolution = Resolution(video_element_size["width"], video_element_size["height"])
-        stream_resolution = Resolution(
-            coord_info["stream_resolution"]["width"], coord_info["stream_resolution"]["height"]
-        )
-        raw_resolution = Resolution(coord_info["raw_resolution"]["width"], coord_info["raw_resolution"]["height"])
-        cropped_resolution = Resolution(
-            coord_info["cropped_resolution"]["width"], coord_info["cropped_resolution"]["height"]
-        )
-        scaled_resolution = Resolution(
-            coord_info["scaled_resolution"]["width"], coord_info["scaled_resolution"]["height"]
-        )
+        if video_element_size:
+            scale_x = raw_width / video_element_size["width"]
+            scale_y = raw_height / video_element_size["height"]
+        else:
+            scale_x = scale_y = 1.0
 
-        coord_system_info = CoordinateSystemInfo(
-            raw_resolution=raw_resolution,
-            cropped_resolution=cropped_resolution,
-            scaled_resolution=scaled_resolution,
-            stream_resolution=stream_resolution,
-            display_resolution=display_resolution,
-            crop_top=coord_info["transform_parameters"]["crop_top"],
-            crop_side=coord_info["transform_parameters"]["crop_side"],
-            scale_factor=coord_info["transform_parameters"]["scale_factor"],
-        )
-
-        transformer = CoordinateTransform(coord_system_info)
-
-        # Transform all provided points
+        # Transform all provided points to raw coordinates
         transformations = []
         for i, dp in enumerate(display_points):
-            proc_x, proc_y = transformer.display_to_processing(dp["x"], dp["y"])
-            back_x, back_y = transformer.processing_to_display(proc_x, proc_y)
+            raw_x = dp["x"] * scale_x
+            raw_y = dp["y"] * scale_y
+
+            # Simple roundtrip test
+            back_x = raw_x / scale_x
+            back_y = raw_y / scale_y
 
             transformations.append(
                 {
                     "point_index": i,
                     "display_input": {"x": dp["x"], "y": dp["y"]},
-                    "processing_output": {"x": proc_x, "y": proc_y},
+                    "raw_output": {"x": raw_x, "y": raw_y},
                     "display_roundtrip": {"x": back_x, "y": back_y},
                     "roundtrip_error": {"x": abs(dp["x"] - back_x), "y": abs(dp["y"] - back_y)},
                     "bounds_check": {
-                        "display_valid": transformer.validate_coordinates(dp["x"], dp["y"], "display"),
-                        "processing_valid": transformer.validate_coordinates(proc_x, proc_y, "processing"),
+                        "display_valid": True,  # Simplified
+                        "raw_valid": 0 <= raw_x <= raw_width and 0 <= raw_y <= raw_height,
                     },
                 }
             )
 
         return {
-            "coordinate_system_info": coord_info,
-            "transformation_debug": transformer.get_debug_info(),
+            "coordinate_system": "raw_frame_coordinates",
+            "current_stop_line": {"coordinates": list(config.stop_line), "coordinate_system": "raw_coordinates"},
+            "scaling_info": {
+                "raw_resolution": f"{raw_width}x{raw_height}",
+                "scale_factors": f"x={scale_x:.3f}, y={scale_y:.3f}",
+                "browser_video_size": f"{video_element_size.get('width', 'unknown')}x{video_element_size.get('height', 'unknown')}",
+            },
             "point_transformations": transformations,
-            "current_stop_line_display": [
-                transformer.processing_to_display(
-                    coord_info["current_stop_line"]["coordinates"][0][0],
-                    coord_info["current_stop_line"]["coordinates"][0][1],
-                ),
-                transformer.processing_to_display(
-                    coord_info["current_stop_line"]["coordinates"][1][0],
-                    coord_info["current_stop_line"]["coordinates"][1][1],
-                ),
-            ],
         }
 
     except Exception as e:
