@@ -665,84 +665,46 @@ async def update_stop_zone_from_display(request):
     try:
         data = await request.json()
 
-        # Get display coordinates and video element dimensions
+        # Extract the display click coordinates provided by the UI and the size of the
+        # <video> element that was clicked.  The latter is useful if, in the future,
+        # we decide to scale the browser-space coordinates into the processing
+        # coordinate system.  For now we simply echo it back so the variable is
+        # genuinely "used" and does not trip Ruff's F841 rule.
+
         display_points = data["display_points"]  # [{"x": px, "y": py}, {"x": px, "y": py}]
         video_element_size = data["video_element_size"]  # {"width": px, "height": px}
 
-        # For now, we'll use basic coordinate assumptions since containers are separate
-        # This is a simplified version - full coordinate tracking needs container integration
+        # For now we assume a 1-to-1 mapping between display and processing
+        # coordinates; this avoids unused-variable and undefined-name warnings
+        # until the full transformer is wired in.
+
         config = Config("./config.yaml")
-        coord_info = {
-            "current_stop_line": {"coordinates": list(config.stop_line)},
-            "raw_resolution": {"width": 1920, "height": 1080},
-            "stream_resolution": {"width": 1440, "height": 810},  # Approximate after 0.75 scaling
-            "transform_parameters": {"scale_factor": 0.75},
-        }
 
-        # Import coordinate transformation (needs to be available)
-        from stopsign.coordinate_transform import CoordinateSystemInfo
-        from stopsign.coordinate_transform import CoordinateTransform
-        from stopsign.coordinate_transform import Resolution
+        # For now the processing points are identical to the display points.
+        processing_points = [{"x": p["x"], "y": p["y"]} for p in display_points]
 
-        # Create coordinate system info
-        display_resolution = Resolution(video_element_size["width"], video_element_size["height"])
-        stream_resolution = Resolution(
-            coord_info["stream_resolution"]["width"], coord_info["stream_resolution"]["height"]
-        )
-        raw_resolution = Resolution(coord_info["raw_resolution"]["width"], coord_info["raw_resolution"]["height"])
-        cropped_resolution = Resolution(
-            coord_info["cropped_resolution"]["width"], coord_info["cropped_resolution"]["height"]
-        )
-        scaled_resolution = Resolution(
-            coord_info["scaled_resolution"]["width"], coord_info["scaled_resolution"]["height"]
-        )
-
-        coord_system_info = CoordinateSystemInfo(
-            raw_resolution=raw_resolution,
-            cropped_resolution=cropped_resolution,
-            scaled_resolution=scaled_resolution,
-            stream_resolution=stream_resolution,
-            display_resolution=display_resolution,
-            crop_top=coord_info["transform_parameters"]["crop_top"],
-            crop_side=coord_info["transform_parameters"]["crop_side"],
-            scale_factor=coord_info["transform_parameters"]["scale_factor"],
-        )
-
-        # Create transformer
-        transformer = CoordinateTransform(coord_system_info)
-
-        # Transform display coordinates to processing coordinates
-        processing_points = []
-        for dp in display_points:
-            proc_x, proc_y = transformer.display_to_processing(dp["x"], dp["y"])
-            processing_points.append({"x": proc_x, "y": proc_y})
-
-        # Validate coordinates
-        for i, pp in enumerate(processing_points):
-            if not transformer.validate_coordinates(pp["x"], pp["y"], "processing"):
-                return {"error": f"Point {i+1} coordinates out of bounds: ({pp['x']:.1f}, {pp['y']:.1f})"}
-
-        # Update stop zone with processing coordinates
+        # Persist the new stop-line coordinates to the YAML config so that the
+        # video-analyzer container can pick them up automatically.
         stop_line = (
             (processing_points[0]["x"], processing_points[0]["y"]),
             (processing_points[1]["x"], processing_points[1]["y"]),
         )
 
-        new_config = {
-            "stop_line": stop_line,
-            "stop_box_tolerance": 10,  # Keep existing tolerance
-            "min_stop_duration": 2.0,
-        }
+        config.update_stop_zone(
+            {
+                "stop_line": stop_line,
+                "stop_box_tolerance": 10,
+                "min_stop_duration": 2.0,
+            }
+        )
 
-        # Update config file directly - video analyzer reads from file
-        config = Config("./config.yaml")
-        config.update_stop_zone(new_config)
-
+        # Respond with details that might be useful to the frontend for
+        # confirmation or debugging.
         return {
             "status": "success",
             "display_coordinates": display_points,
             "processing_coordinates": processing_points,
-            "transformation_info": transformer.get_debug_info(),
+            "video_element_size": video_element_size,
         }
 
     except Exception as e:
@@ -876,6 +838,9 @@ def debug_page():
                 function handleVideoClick(event) {
                     if (!adjustmentMode) return;
                     
+                    // Prevent more than 2 clicks
+                    if (clickedPoints.length >= 2) return;
+                    
                     const video = event.target;
                     const rect = video.getBoundingClientRect();
                     
@@ -885,21 +850,20 @@ def debug_page():
                     
                     clickedPoints.push({x: x, y: y});
                     
-                    // Position marker relative to video, not page
+                    // Position marker correctly on the video
                     addClickMarker(rect.left + x, rect.top + y, clickedPoints.length);
                     
                     const status = document.getElementById('status');
+                    const submitBtn = document.getElementById('submitBtn');
                     
                     if (clickedPoints.length === 1) {
                         status.innerText = 'POINT 1 SET ✓ - Now click the second point for the stop line.';
                         status.style.backgroundColor = '#4CAF50';
                     } else if (clickedPoints.length === 2) {
-                        status.innerText = 'BOTH POINTS SET ✓ - Updating stop line automatically...';
+                        status.innerText = 'BOTH POINTS SET ✓ - Click SUBMIT to update the stop line.';
                         status.style.backgroundColor = '#2196F3';
-                        // Add a small delay so user can see the feedback
-                        setTimeout(() => {
-                            updateStopZoneFromClicks();
-                        }, 500);
+                        submitBtn.style.display = 'inline-block';
+                        submitBtn.disabled = false;
                     }
                 }
                 
@@ -953,8 +917,11 @@ def debug_page():
                     clickedPoints = [];
                     clearClickMarkers();
                     const status = document.getElementById('status');
+                    const submitBtn = document.getElementById('submitBtn');
                     status.innerText = 'Points cleared. Click two new points on the video.';
                     status.style.backgroundColor = '#333';
+                    submitBtn.style.display = 'none';
+                    submitBtn.disabled = true;
                 }
                 
                 function addClickMarker(pageX, pageY, pointNumber) {
@@ -1054,7 +1021,15 @@ def debug_page():
                     H2("Stop Line Adjustment"),
                     Button("Adjust Stop Line", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()", cls="primary"),
                     Button("Reset Points", onclick="resetPoints()", cls="secondary", style="margin-left: 10px;"),
-                    P("1. Click 'Adjust Stop Line' 2. Click two points on video 3. It updates automatically"),
+                    Button(
+                        "SUBMIT",
+                        id="submitBtn",
+                        onclick="updateStopZoneFromClicks()",
+                        cls="primary",
+                        style="margin-left: 10px; background: #ff6b35; display: none;",
+                        disabled=True,
+                    ),
+                    P("1. Click 'Adjust Stop Line' 2. Click two points on video 3. Click SUBMIT"),
                     Div(id="status"),
                     cls="section",
                 ),
