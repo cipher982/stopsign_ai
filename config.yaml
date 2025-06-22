@@ -5,7 +5,8 @@ video_processing:
   frame_buffer_size: 500 # number of frames to buffer
 
 stopsign_detection:
-  stop_line: [[733, 667], [533, 733]]
+
+  stop_line: [[440, 806], [624, 756]]
   stop_box_tolerance: [50, 50]
   pre_stop_zone: [1000, 1100]
   image_capture_zone: [800, 900]
