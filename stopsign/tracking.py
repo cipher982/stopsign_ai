@@ -247,7 +247,8 @@ class StopDetector:
         self.stop_speed_threshold = config.stop_speed_threshold
 
     def _create_stop_zone(self) -> np.ndarray:
-        (x1, y1), (x2, y2) = self.config.stop_line
+        # Use processing coordinates for stop detection (converted from raw coordinates)
+        (x1, y1), (x2, y2) = self.config.stop_line_processing_coords
         stop_box_tolerance = self.config.stop_box_tolerance
 
         # Calculate tolerances
