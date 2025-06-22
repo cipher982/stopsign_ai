@@ -239,16 +239,25 @@ class StopDetector:
     def __init__(self, config: Config, db: Database):
         self.config = config
         self.db = db
-        self.stop_zone = self._create_stop_zone()
+        self.stop_zone = None  # Will be set when dimensions are known
         self.pre_stop_zone = self.config.pre_stop_zone
         self.image_capture_zone = self.config.image_capture_zone
         self.in_zone_frame_threshold = config.in_zone_frame_threshold
         self.out_zone_frame_threshold = config.out_zone_frame_threshold
         self.stop_speed_threshold = config.stop_speed_threshold
+        self._video_analyzer = None  # Will be set by video analyzer
+
+    def set_video_analyzer(self, video_analyzer):
+        """Set reference to video analyzer for coordinate conversion."""
+        self._video_analyzer = video_analyzer
+        self.stop_zone = self._create_stop_zone()
 
     def _create_stop_zone(self) -> np.ndarray:
-        # Use processing coordinates for stop detection (converted from raw coordinates)
-        (x1, y1), (x2, y2) = self.config.stop_line_processing_coords
+        # Get processing coordinates from video analyzer
+        if self._video_analyzer is None:
+            raise ValueError("Video analyzer not set. Call set_video_analyzer first.")
+
+        (x1, y1), (x2, y2) = self._video_analyzer.get_stop_line_processing_coords()
         stop_box_tolerance = self.config.stop_box_tolerance
 
         # Calculate tolerances
@@ -317,6 +326,10 @@ class StopDetector:
             car.state.stop_position = (0.0, 0.0)
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
+        # Skip if stop zone not initialized yet
+        if self.stop_zone is None:
+            return
+
         car_polygon = self._get_car_polygon(car.state.bbox)
         car_x = car.state.location[0]
 
