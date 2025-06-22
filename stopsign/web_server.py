@@ -739,6 +739,11 @@ async def update_stop_zone_from_display(request):
         )
 
         try:
+            # Debug what we're sending to config
+            logger.info(f"Sending to config - stop_line: {stop_line}, type: {type(stop_line)}")
+            for i, point in enumerate(stop_line):
+                logger.info(f"Point {i}: {point}, type: {type(point)}")
+
             config.update_stop_zone(
                 {
                     "stop_line": stop_line,
