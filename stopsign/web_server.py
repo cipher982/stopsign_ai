@@ -396,12 +396,30 @@ def home():
                 
                 // Add visual click markers
                 function addClickMarker(pageX, pageY, pointNumber) {
+                    const video = document.getElementById('videoPlayer');
+                    let container = video.parentElement;
+                    
+                    // Create container if it doesn't exist
+                    if (!container || !container.classList.contains('video-container')) {
+                        container = document.createElement('div');
+                        container.className = 'video-container';
+                        video.parentNode.insertBefore(container, video);
+                        container.appendChild(video);
+                    }
+                    
+                    const rect = video.getBoundingClientRect();
+                    const containerRect = container.getBoundingClientRect();
+                    
+                    // Position relative to video within its container
+                    const relativeX = pageX - containerRect.left;
+                    const relativeY = pageY - containerRect.top;
+                    
                     const marker = document.createElement('div');
                     marker.className = 'click-marker';
                     marker.innerHTML = pointNumber;
                     marker.style.position = 'absolute';
-                    marker.style.left = (pageX - 15) + 'px';
-                    marker.style.top = (pageY - 15) + 'px';
+                    marker.style.left = (relativeX - 15) + 'px';
+                    marker.style.top = (relativeY - 15) + 'px';
                     marker.style.width = '30px';
                     marker.style.height = '30px';
                     marker.style.backgroundColor = '#ff0000';
@@ -414,7 +432,7 @@ def home():
                     marker.style.fontSize = '14px';
                     marker.style.zIndex = '9999';
                     marker.style.pointerEvents = 'none';
-                    document.body.appendChild(marker);
+                    container.appendChild(marker);
                 }
                 
                 // Clear all click markers
@@ -523,6 +541,10 @@ def home():
                     height: auto;
                     border: 1px solid var(--accent-color);
                     border-radius: 8px;
+                }
+                .video-container {
+                    position: relative;
+                    display: inline-block;
                 }
                 #selectionCanvas {
                     position: absolute;
@@ -974,12 +996,30 @@ def debug_page():
                 }
                 
                 function addClickMarker(pageX, pageY, pointNumber) {
+                    const video = document.getElementById('videoPlayer');
+                    let container = video.parentElement;
+                    
+                    // Create container if it doesn't exist
+                    if (!container || !container.classList.contains('video-container')) {
+                        container = document.createElement('div');
+                        container.className = 'video-container';
+                        video.parentNode.insertBefore(container, video);
+                        container.appendChild(video);
+                    }
+                    
+                    const rect = video.getBoundingClientRect();
+                    const containerRect = container.getBoundingClientRect();
+                    
+                    // Position relative to video within its container
+                    const relativeX = pageX - containerRect.left;
+                    const relativeY = pageY - containerRect.top;
+                    
                     const marker = document.createElement('div');
                     marker.className = 'click-marker';
                     marker.innerHTML = pointNumber;
                     marker.style.position = 'absolute';
-                    marker.style.left = (pageX - 15) + 'px';
-                    marker.style.top = (pageY - 15) + 'px';
+                    marker.style.left = (relativeX - 15) + 'px';
+                    marker.style.top = (relativeY - 15) + 'px';
                     marker.style.width = '30px';
                     marker.style.height = '30px';
                     marker.style.backgroundColor = '#ff0000';
@@ -992,7 +1032,7 @@ def debug_page():
                     marker.style.fontSize = '14px';
                     marker.style.zIndex = '9999';
                     marker.style.pointerEvents = 'none';
-                    document.body.appendChild(marker);
+                    container.appendChild(marker);
                 }
                 
                 function clearClickMarkers() {
