@@ -680,8 +680,21 @@ async def update_stop_zone_from_display(request):
 
         config = Config("./config.yaml")
 
-        # For now the processing points are identical to the display points.
-        processing_points = [{"x": p["x"], "y": p["y"]} for p in display_points]
+        # Scale browser coordinates to processing coordinates
+        # Your processing resolution is approximately 1440x810 (1920*0.75 x 1080*0.75)
+        # Browser video element size is in video_element_size
+
+        processing_width = 1440  # Approximate processing width after 0.75 scaling
+        processing_height = 810  # Approximate processing height after 0.75 scaling
+
+        scale_x = processing_width / video_element_size["width"]
+        scale_y = processing_height / video_element_size["height"]
+
+        processing_points = []
+        for p in display_points:
+            proc_x = p["x"] * scale_x
+            proc_y = p["y"] * scale_y
+            processing_points.append({"x": proc_x, "y": proc_y})
 
         # Persist the new stop-line coordinates to the YAML config so that the
         # video-analyzer container can pick them up automatically.
@@ -705,6 +718,11 @@ async def update_stop_zone_from_display(request):
             "display_coordinates": display_points,
             "processing_coordinates": processing_points,
             "video_element_size": video_element_size,
+            "scaling_info": {
+                "processing_resolution": f"{processing_width}x{processing_height}",
+                "scale_factors": f"x={scale_x:.2f}, y={scale_y:.2f}",
+                "browser_video_size": f"{video_element_size['width']}x{video_element_size['height']}",
+            },
         }
 
     except Exception as e:
