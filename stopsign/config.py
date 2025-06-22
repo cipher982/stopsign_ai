@@ -68,7 +68,11 @@ class Config:
         processing_coords = []
 
         try:
-            for item in self.stop_line:
+            print(
+                f"DEBUG: stop_line_processing_coords - self.stop_line: {self.stop_line}, type: {type(self.stop_line)}"
+            )
+            for i, item in enumerate(self.stop_line):
+                print(f"DEBUG: Processing item {i}: {item}, type: {type(item)}")
                 if isinstance(item, (list, tuple)) and len(item) == 2:
                     raw_x, raw_y = item
                 else:
