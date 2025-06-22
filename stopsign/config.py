@@ -89,9 +89,9 @@ class Config:
         with open(self.config_path, "r") as file:
             config = yaml.safe_load(file)
 
-        # Update only the changed values
-        config["stopsign_detection"]["stop_line"] = self.stop_line
-        config["stopsign_detection"]["stop_box_tolerance"] = self.stop_box_tolerance
+        # Update only the changed values (convert tuples to lists for YAML)
+        config["stopsign_detection"]["stop_line"] = [list(point) for point in self.stop_line]
+        config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
         config["stopsign_detection"]["min_stop_time"] = self.min_stop_time
 
         with open(self.config_path, "w") as file:

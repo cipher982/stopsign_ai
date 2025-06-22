@@ -862,9 +862,9 @@ def debug_page():
                     const video = event.target;
                     const rect = video.getBoundingClientRect();
                     
-                    // Simple coordinate mapping - no aspect ratio complications
+                    // Simple coordinate mapping with manual Y offset correction
                     const x = event.clientX - rect.left;
-                    const y = event.clientY - rect.top;
+                    const y = (event.clientY - rect.top) + 200; // Manual fix: +200px to compensate for upward offset
                     
                     console.log('Simple click:', { x, y, rectWidth: rect.width, rectHeight: rect.height });
                     
