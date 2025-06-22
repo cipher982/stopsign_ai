@@ -862,65 +862,16 @@ def debug_page():
                     const video = event.target;
                     const rect = video.getBoundingClientRect();
                     
-                    // Get click coordinates relative to video element
-                    let x = event.clientX - rect.left;
-                    let y = event.clientY - rect.top;
+                    // Simple coordinate mapping - no aspect ratio complications
+                    const x = event.clientX - rect.left;
+                    const y = event.clientY - rect.top;
                     
-                    // Account for video aspect ratio and centering within the element
-                    // The video content might be centered within the video element
-                    const displayWidth = rect.width;
-                    const displayHeight = rect.height;
-                    const videoAspect = video.videoWidth / video.videoHeight;
-                    const displayAspect = displayWidth / displayHeight;
-                    
-                    let actualVideoWidth, actualVideoHeight, offsetX = 0, offsetY = 0;
-                    
-                    if (videoAspect > displayAspect) {
-                        // Video is wider - letterboxed (black bars top/bottom)
-                        actualVideoWidth = displayWidth;
-                        actualVideoHeight = displayWidth / videoAspect;
-                        offsetY = (displayHeight - actualVideoHeight) / 2;
-                    } else {
-                        // Video is taller - pillarboxed (black bars left/right)  
-                        actualVideoHeight = displayHeight;
-                        actualVideoWidth = displayHeight * videoAspect;
-                        offsetX = (displayWidth - actualVideoWidth) / 2;
-                    }
-                    
-                    // Adjust click coordinates to account for video centering
-                    x = x - offsetX;
-                    y = y - offsetY;
-                    
-                    // Ensure click is within actual video content area
-                    if (x < 0 || x > actualVideoWidth || y < 0 || y > actualVideoHeight) {
-                        console.log('Click outside video content area, ignoring');
-                        return;
-                    }
-                    
-                    // Debug logging
-                    console.log('Video click debug:', {
-                        clientX: event.clientX,
-                        clientY: event.clientY,
-                        rectLeft: rect.left,
-                        rectTop: rect.top,
-                        displayWidth: displayWidth,
-                        displayHeight: displayHeight,
-                        videoWidth: video.videoWidth,
-                        videoHeight: video.videoHeight,
-                        actualVideoWidth: actualVideoWidth,
-                        actualVideoHeight: actualVideoHeight,
-                        offsetX: offsetX,
-                        offsetY: offsetY,
-                        adjustedX: x,
-                        adjustedY: y,
-                        markerPageX: rect.left + x + offsetX,
-                        markerPageY: rect.top + y + offsetY
-                    });
+                    console.log('Simple click:', { x, y, rectWidth: rect.width, rectHeight: rect.height });
                     
                     clickedPoints.push({x: x, y: y});
                     
-                    // Position marker correctly on the video (pass page coordinates with offset)
-                    addClickMarker(rect.left + x + offsetX, rect.top + y + offsetY, clickedPoints.length);
+                    // Position marker at exact click location
+                    addClickMarker(rect.left + x, rect.top + y, clickedPoints.length);
                     
                     const status = document.getElementById('status');
                     const submitBtn = document.getElementById('submitBtn');
@@ -938,31 +889,12 @@ def debug_page():
                 
                 function updateStopZoneFromClicks() {
                     const video = document.getElementById('videoPlayer');
-                    const rect = video.getBoundingClientRect();
-                    
-                    // Calculate actual video content dimensions (same logic as click handler)
-                    const displayWidth = rect.width;
-                    const displayHeight = rect.height;
-                    const videoAspect = video.videoWidth / video.videoHeight;
-                    const displayAspect = displayWidth / displayHeight;
-                    
-                    let actualVideoWidth, actualVideoHeight;
-                    
-                    if (videoAspect > displayAspect) {
-                        // Video is wider - letterboxed
-                        actualVideoWidth = displayWidth;
-                        actualVideoHeight = displayWidth / videoAspect;
-                    } else {
-                        // Video is taller - pillarboxed
-                        actualVideoHeight = displayHeight;
-                        actualVideoWidth = displayHeight * videoAspect;
-                    }
                     
                     const data = {
                         display_points: clickedPoints,
                         video_element_size: {
-                            width: actualVideoWidth,
-                            height: actualVideoHeight
+                            width: video.clientWidth,
+                            height: video.clientHeight
                         }
                     };
                     
