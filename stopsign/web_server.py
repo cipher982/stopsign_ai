@@ -748,46 +748,49 @@ async def update_stop_zone_from_display(request):
 
         display_points = data["display_points"]  # [{"x": px, "y": py}, {"x": px, "y": py}]
         video_element_size = data["video_element_size"]  # {"width": px, "height": px}
-        actual_video_size = data.get("actual_video_size", {"width": 1440, "height": 810})  # Fallback
-
-        # For now we assume a 1-to-1 mapping between display and processing
-        # coordinates; this avoids unused-variable and undefined-name warnings
-        # until the full transformer is wired in.
+        # NOTE:
+        # -----
+        # The client sends `actual_video_size` (HTMLVideoElement.videoWidth/Height).
+        # Those dimensions correspond to the *processed* frame (after the
+        # crop/scale operations that the VideoAnalyzer performs) – currently
+        # 1440×810 for a 1920×1080 source with a 0.75 scale factor.
+        #
+        # For correct round-tripping we need the *raw* dimensions so that the
+        # stop-line coordinates we persist line-up with the pixels drawn by the
+        # analyzer *before* it crops/scales the frame.  Therefore we **ignore**
+        # the client-supplied value and instead look it up from the metadata
+        # that the analyzer publishes to Redis.
 
         config = Config("./config.yaml")
 
-        # Get actual video dimensions - no fallbacks allowed
-        if actual_video_size and actual_video_size.get("width") and actual_video_size.get("height"):
-            raw_width = actual_video_size["width"]
-            raw_height = actual_video_size["height"]
-        else:
-            # Must get from Redis metadata - no fallbacks
-            redis_client = redis.from_url(REDIS_URL)
+        # Must get raw dimensions from Redis metadata – this guarantees that we
+        # are using the same numbers as the analyzer.
+        redis_client = redis.from_url(REDIS_URL)
 
-            try:
-                metadata_keys = redis_client.keys("frame_metadata:*")
-                if not metadata_keys:
-                    return {"error": "No video metadata available. Video analyzer must be running first."}
+        try:
+            metadata_keys = redis_client.keys("frame_metadata:*")
+            if not metadata_keys:
+                return {"error": "No video metadata available. Video analyzer must be running first."}
 
-                latest_metadata = redis_client.get(metadata_keys[-1])
-                if not latest_metadata:
-                    return {"error": "Could not read video metadata."}
+            latest_metadata = redis_client.get(metadata_keys[-1])
+            if not latest_metadata:
+                return {"error": "Could not read video metadata."}
 
-                import json
+            import json
 
-                metadata = json.loads(latest_metadata)
-                if "raw_video_dimensions" not in metadata:
-                    return {"error": "Video dimensions not available in metadata."}
+            metadata = json.loads(latest_metadata)
+            if "raw_video_dimensions" not in metadata:
+                return {"error": "Video dimensions not available in metadata."}
 
-                raw_width = metadata["raw_video_dimensions"]["width"]
-                raw_height = metadata["raw_video_dimensions"]["height"]
+            raw_width = metadata["raw_video_dimensions"]["width"]
+            raw_height = metadata["raw_video_dimensions"]["height"]
 
-                if not raw_width or not raw_height:
-                    return {"error": "Invalid video dimensions in metadata."}
+            if not raw_width or not raw_height:
+                return {"error": "Invalid video dimensions in metadata."}
 
-            except Exception as e:
-                logger.error(f"Failed to get video dimensions: {e}")
-                return {"error": f"Failed to get video dimensions: {str(e)}"}
+        except Exception as e:
+            logger.error(f"Failed to get video dimensions: {e}")
+            return {"error": f"Failed to get video dimensions: {str(e)}"}
 
         # Scale browser coordinates directly to actual video coordinates
         # The video analyzer will draw stop lines on frames BEFORE crop/scale
