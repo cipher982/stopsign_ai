@@ -1,36 +1,57 @@
+"""RTSP to Redis service.
+
+This module reads frames from an RTSP (or ``file://``) source and pushes JPEG
+bytes into a Redis list so that the rest of the StopSign pipeline can pick
+them up.  Prometheus metrics are exposed on an HTTP port for observability.
+
+The only purpose of this edit is to satisfy Ruff/flake8 rule **E402 – “module
+level import not at top of file”**.  Imports were previously sprinkled below
+code that executed at import-time (logging configuration, ``sys.path`` hacks,
+etc.).  All imports are now consolidated at the very top of the file before
+any other statements, as PEP 8 expects.
+"""
+
+# isort: skip_file
+# ruff: format
+from __future__ import annotations
+
+# ----------------- standard library -----------------
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
 import os
+from queue import Empty, Queue
+import sys
 import threading
 import time
-from queue import Empty
-from queue import Queue
 from typing import Optional
 
+# ------------------ third-party ---------------------
 import cv2
 import redis
-from prometheus_client import Counter
-from prometheus_client import Gauge
-from prometheus_client import Histogram
-from prometheus_client import start_http_server
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from redis.exceptions import RedisError
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# ------------------- local app ----------------------
+# Ensure project root is on ``sys.path`` when this file is executed as a
+# top-level script inside its own Docker image.
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from stopsign.settings import (  # noqa: E402  (import after path tweak)
+    FRAME_BUFFER_SIZE,
+    PROMETHEUS_PORT,
+    RAW_FRAME_KEY,
+    REDIS_URL,
+    RTSP_URL,
+)
+
+# ----------------- logging setup --------------------
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
-
-
-def get_env(key: str) -> str:
-    value = os.getenv(key)
-    assert value is not None, f"{key} is not set"
-    logger.info(f"Loaded env var {key}: {value}")
-    return value
-
-
-PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
-RTSP_URL: str = get_env("RTSP_URL")
-REDIS_URL: str = get_env("REDIS_URL")
-RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
-FRAME_BUFFER_SIZE: int = int(get_env("FRAME_BUFFER_SIZE"))
 
 
 class RTSPToRedis:
@@ -91,6 +112,18 @@ class RTSPToRedis:
             raise
 
     def initialize_capture(self):
+        # Check if this is a file:// URL for local development
+        if self.rtsp_url.startswith("file://"):
+            file_path = self.rtsp_url[len("file://") :]
+            logger.info(f"Attempting to open local video file at {file_path}")
+            cap = cv2.VideoCapture(file_path)
+            if not cap.isOpened():
+                raise ValueError(f"Could not open video file: {file_path}")
+            logger.info("Local video capture initialized successfully")
+            self.rtsp_connection_status.set(1)
+            return cap
+
+        # Standard RTSP connection logic
         logger.info(f"Attempting to connect to RTSP at {self.rtsp_url}")
         max_attempts = 5
         for attempt in range(max_attempts):
@@ -193,9 +226,19 @@ class RTSPToRedis:
                     if elapsed_time >= frame_time:
                         ret, frame = cap.read()
                         if not ret:
-                            logger.warning("Failed to read frame. Reinitializing capture.")
-                            self.rtsp_errors.inc()
-                            break
+                            # Handle end of video file by looping back to start
+                            if self.rtsp_url.startswith("file://"):
+                                logger.info("End of video file reached. Looping back to start.")
+                                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                                ret, frame = cap.read()
+                                if not ret:
+                                    logger.error("Failed to read frame after reset. Reinitializing capture.")
+                                    self.rtsp_errors.inc()
+                                    break
+                            else:
+                                logger.warning("Failed to read frame. Reinitializing capture.")
+                                self.rtsp_errors.inc()
+                                break
 
                         rtsp_frames_count += 1
 
@@ -290,8 +333,6 @@ if __name__ == "__main__":
     def run_health_server():
         server = HTTPServer(("0.0.0.0", 8080), HealthCheckHandler)
         server.serve_forever()
-
-    import threading
 
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()

@@ -1,6 +1,5 @@
 import io
 import logging
-import os
 import uuid
 from dataclasses import dataclass
 from dataclasses import field
@@ -16,6 +15,10 @@ from minio import Minio
 from stopsign.config import Config
 from stopsign.database import Database
 from stopsign.kalman_filter import KalmanFilterWrapper
+from stopsign.settings import MINIO_ACCESS_KEY
+from stopsign.settings import MINIO_BUCKET
+from stopsign.settings import MINIO_ENDPOINT
+from stopsign.settings import MINIO_SECRET_KEY
 
 Point = Tuple[float, float]
 Line = Tuple[Point, Point]
@@ -23,18 +26,6 @@ Line = Tuple[Point, Point]
 # Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def get_env(key: str) -> str:
-    value = os.getenv(key)
-    assert value is not None, f"{key} is not set"
-    return value
-
-
-MINIO_ENDPOINT = get_env("MINIO_ENDPOINT")
-MINIO_ACCESS_KEY = get_env("MINIO_ACCESS_KEY")
-MINIO_SECRET_KEY = get_env("MINIO_SECRET_KEY")
-MINIO_BUCKET = get_env("MINIO_BUCKET")
 
 
 @dataclass

@@ -1,0 +1,154 @@
+# Local Development Docker Compose
+# Self-contained stack with all services and local storage
+
+services:
+  # Local Redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - ../../volumes/redis:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Local PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: stopsign
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:***REMOVED***"
+    volumes:
+      - ../../volumes/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO (S3-compatible storage)
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9002:9000"
+      - "9003:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - ../../volumes/minio:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # RTSP to Redis (with file:// support)
+  rtsp_to_redis:
+    build:
+      context: ../..
+      dockerfile: docker/local/Dockerfile.rtsp.local
+    environment:
+      - ENV=${ENV}
+      - REDIS_URL=${REDIS_URL}
+      - RTSP_URL=${RTSP_URL}
+      - RAW_FRAME_KEY=${RAW_FRAME_KEY}
+      - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE}
+      - PROMETHEUS_PORT=${PROMETHEUS_PORT}
+    depends_on:
+      - redis
+    volumes:
+      - ../../sample_data:/app/sample_data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Video Analyzer (CPU-only)
+  video_analyzer:
+    build:
+      context: ../..
+      dockerfile: docker/local/Dockerfile.processor.local
+    environment:
+      - ENV=${ENV}
+      - REDIS_URL=${REDIS_URL}
+      - DB_URL=${DB_URL}
+      - RAW_FRAME_KEY=${RAW_FRAME_KEY}
+      - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
+      - YOLO_MODEL_NAME=${YOLO_MODEL_NAME}
+      - YOLO_DEVICE=${YOLO_DEVICE}
+      - PROMETHEUS_PORT=${PROMETHEUS_PORT}
+      - RTSP_URL=${RTSP_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET}
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - ../../models:/app/models:ro
+    # No GPU deployment constraints for local development
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:${PROMETHEUS_PORT}/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # FFmpeg Service (CPU encoding)
+  ffmpeg_service:
+    build:
+      context: ../..
+      dockerfile: docker/local/Dockerfile.ffmpeg.local
+    environment:
+      - ENV=${ENV}
+      - REDIS_URL=${REDIS_URL}
+      - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
+      - FFMPEG_ENCODER=${FFMPEG_ENCODER}
+      - FFMPEG_PRESET=${FFMPEG_PRESET}
+    depends_on:
+      - video_analyzer
+    volumes:
+      - ../../volumes/hls:/app/data
+    # No GPU deployment constraints for local development
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Web Server
+  web_server:
+    build:
+      context: ../..
+      dockerfile: docker/local/Dockerfile.web.local
+    ports:
+      - "${WEB_SERVER_PORT}:8000"
+    environment:
+      - ENV=${ENV}
+      - DB_URL=${DB_URL}
+    depends_on:
+      - postgres
+      - video_analyzer
+    volumes:
+      - ../../volumes/hls:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--max-time", "20", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 20s
+      retries: 5
+      start_period: 60s
+
+# Simple local networking
+networks:
+  default:
+    driver: bridge

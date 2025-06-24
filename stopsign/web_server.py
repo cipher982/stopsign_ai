@@ -44,30 +44,22 @@ from sqlalchemy import text
 
 from stopsign.config import Config
 from stopsign.database import Database
+from stopsign.settings import DB_URL
+from stopsign.settings import MINIO_ACCESS_KEY
+from stopsign.settings import MINIO_BUCKET
+from stopsign.settings import MINIO_ENDPOINT
+from stopsign.settings import MINIO_SECRET_KEY
+from stopsign.settings import REDIS_URL
 
 logger = logging.getLogger(__name__)
 
-
-def get_env(key: str) -> str:
-    value = os.getenv(key)
-    assert value is not None, f"{key} is not set"
-    return value
-
-
-DB_URL = get_env("DB_URL")
-GRAFANA_URL = get_env("GRAFANA_URL")
-REDIS_URL = get_env("REDIS_URL")
+# Optional Grafana for local development
+GRAFANA_URL = os.getenv("GRAFANA_URL", "http://localhost:3000")
 ORIGINAL_WIDTH = 1920
 ORIGINAL_HEIGHT = 1080
 
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"  # filesystem path
 STREAM_URL = "/stream/stream.m3u8"  # URL path
-
-# vehicle images connection
-MINIO_ENDPOINT = get_env("MINIO_ENDPOINT")
-MINIO_ACCESS_KEY = get_env("MINIO_ACCESS_KEY")
-MINIO_SECRET_KEY = get_env("MINIO_SECRET_KEY")
-MINIO_BUCKET = get_env("MINIO_BUCKET")
 
 
 def get_minio_client():
