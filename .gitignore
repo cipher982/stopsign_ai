@@ -170,3 +170,13 @@ scratch/
 data/
 stream/
 *.DS_Store
+
+# Local development environment files
+.env.local
+.env.local.*
+volumes/
+
+# Sample data (except README)
+sample_data/*.mp4
+sample_data/*.avi
+sample_data/*.mov

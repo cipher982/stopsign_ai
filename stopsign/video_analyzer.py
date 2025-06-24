@@ -28,6 +28,13 @@ from ultralytics import YOLO
 from stopsign.config import Config
 from stopsign.coordinate_transform import Resolution
 from stopsign.database import Database
+from stopsign.settings import DB_URL
+from stopsign.settings import PROCESSED_FRAME_KEY
+from stopsign.settings import PROMETHEUS_PORT
+from stopsign.settings import RAW_FRAME_KEY
+from stopsign.settings import REDIS_URL
+from stopsign.settings import YOLO_DEVICE
+from stopsign.settings import YOLO_MODEL_NAME
 from stopsign.tracking import Car
 from stopsign.tracking import CarTracker
 from stopsign.tracking import StopDetector
@@ -36,22 +43,9 @@ from stopsign.tracking import StopDetector
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-
-def get_env(key: str) -> str:
-    value = os.getenv(key)
-    assert value is not None, f"{key} is not set"
-    logger.info(f"Loaded env var {key}: {value}")
-    return value
-
-
 MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
-PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
-REDIS_URL = get_env("REDIS_URL")
-RAW_FRAME_KEY = get_env("RAW_FRAME_KEY")
-PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
-DB_URL = get_env("DB_URL")
-YOLO_MODEL_PATH = os.path.join("/app/models", get_env("YOLO_MODEL_NAME"))
+YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
 
 
 class VideoAnalyzer:
@@ -221,17 +215,8 @@ class VideoAnalyzer:
         logger.info("Loading YOLO model from %s", YOLO_MODEL_PATH)
 
         # Resolve device --------------------------------------------------
-        forced = os.getenv("YOLO_DEVICE")
-        if forced:
-            device = forced
-            logger.info("YOLO_DEVICE override detected: %s", device)
-        else:
-            try:
-                import torch
-
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            except Exception:
-                device = "cpu"
+        device = YOLO_DEVICE
+        logger.info("Using YOLO device from settings: %s", device)
 
         # Instantiate model ----------------------------------------------
         model = YOLO(YOLO_MODEL_PATH, task="detect").to(device)

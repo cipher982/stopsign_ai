@@ -1,0 +1,35 @@
+# CPU-only RTSP Dockerfile for local development
+FROM python:3.12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Set working directory
+WORKDIR /app
+
+# Copy UV files and sync dependencies with increased timeout for slow networks
+COPY pyproject.toml uv.lock ./
+ENV UV_HTTP_TIMEOUT=300
+RUN for i in 1 2 3; do uv sync --frozen && break || sleep 10; done
+
+# Copy all application code (needed for stopsign module imports)
+COPY . .
+
+# Expose health check port
+EXPOSE 8080
+
+# Run the RTSP service with uv
+CMD ["uv", "run", "python", "rtsp_to_redis/rtsp_to_redis.py"]
