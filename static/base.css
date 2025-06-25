@@ -24,7 +24,7 @@ html {
 
 body {
   font-family: "MS Sans Serif", "Tahoma", system-ui, sans-serif;
-  font-size: 11px;
+  font-size: 14px;
   background-color: var(--win98-face);
   color: var(--win98-text);
 }
@@ -43,6 +43,7 @@ body {
   color: var(--win98-accent-text);
   font-weight: bold;
   margin-bottom: 3px;
+  font-size: 16px;
 }
 
 nav {
@@ -54,6 +55,7 @@ nav a {
     margin: 0 6px;
     color: var(--win98-text);
     text-decoration: none;
+    font-size: 14px;
 }
 
 nav a:hover {
@@ -65,9 +67,9 @@ h1, h2, h3, h4, h5, h6 {
     font-weight: bold;
 }
 
-h1 { font-size: 16px; }
-h2 { font-size: 14px; border-bottom: 2px solid var(--win98-shadow); padding-bottom: 2px; margin-bottom: 2px;}
-h3 { font-size: 12px; }
+h1 { font-size: 20px; }
+h2 { font-size: 18px; border-bottom: 2px solid var(--win98-shadow); padding-bottom: 2px; margin-bottom: 2px;}
+h3 { font-size: 16px; }
 
 
 button {
