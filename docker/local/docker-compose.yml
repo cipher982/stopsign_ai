@@ -146,6 +146,7 @@ services:
     volumes:
       - ../../volumes/hls:/app/data
       - ../../stopsign:/app/stopsign:rw  # Live code mounting
+      - ../../static:/app/static:ro # Mount static files
       - ../../config.yaml:/app/config.yaml:rw  # Live config mounting
     healthcheck:
       test: ["CMD", "curl", "-f", "--max-time", "20", "http://localhost:8000/health"]

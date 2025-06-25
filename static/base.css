@@ -1,0 +1,159 @@
+
+/* base.css */
+
+:root {
+  --win98-face: #C3C3C3;
+  --win98-shadow: #818181;
+  --win98-highlight: #FDFFFF;
+  --win98-accent: #000080;
+  --win98-accent-text: #FDFFFF;
+  --win98-text: #000000;
+  --taskman-bg: #000000;
+  --taskman-green: #00FF00;
+  --status-good: #008000;
+  --status-warn: #FFFF00;
+  --status-error: #FF0000;
+}
+
+html {
+  image-rendering: pixelated;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  -moz-osx-font-smoothing: unset;
+}
+
+body {
+  font-family: "MS Sans Serif", "Tahoma", system-ui, sans-serif;
+  font-size: 11px;
+  background-color: var(--win98-face);
+  color: var(--win98-text);
+}
+
+.window, .metric-card, article, section {
+  border: 2px solid;
+  border-color: var(--win98-highlight) var(--win98-shadow) var(--win98-shadow) var(--win98-highlight);
+  padding: 3px;
+  background-color: var(--win98-face);
+}
+
+.title-bar {
+  background: linear-gradient(to right, var(--win98-accent), #A6CAF0);
+  padding: 3px 5px;
+  color: var(--win98-accent-text);
+  font-weight: bold;
+  margin-bottom: 3px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: bold;
+}
+
+h1 { font-size: 16px; }
+h2 { font-size: 14px; border-bottom: 2px solid var(--win98-shadow); padding-bottom: 2px; margin-bottom: 2px;}
+h3 { font-size: 12px; }
+
+
+button {
+  border: 2px solid;
+  border-color: var(--win98-highlight) var(--win98-shadow) var(--win98-shadow) var(--win98-highlight);
+  background-color: var(--win98-face);
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+button:active {
+  border-color: var(--win98-shadow) var(--win98-highlight) var(--win98-highlight) var(--win98-shadow);
+  background: #A9A9A9;
+}
+
+.sunken {
+  border: 2px solid;
+  border-color: var(--win98-shadow) var(--win98-highlight) var(--win98-highlight) var(--win98-shadow);
+  padding: 2px;
+}
+
+.two-col {
+  display: table;
+  width: 100%;
+  border-spacing: 8px 0;
+}
+
+.three-col {
+    display: table;
+    width: 100%;
+    border-spacing: 8px 0;
+}
+
+.two-col > *, .three-col > * {
+    display: table-cell;
+    vertical-align: top;
+}
+
+.three-col > * {
+    width: 33.33%;
+}
+
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 1px solid;
+    border-color: var(--win98-highlight) var(--win98-shadow) var(--win98-shadow) var(--win98-highlight);
+}
+
+.status-indicator.good { background-color: var(--status-good); }
+.status-indicator.warn { background-color: var(--status-warn); }
+.status-indicator.error { background-color: var(--status-error); }
+
+.taskman-chart {
+    background-color: var(--taskman-bg);
+    border: 2px solid;
+    border-color: var(--win98-shadow) var(--win98-highlight) var(--win98-highlight) var(--win98-shadow);
+}
+
+/* Debug Page Specific Styles */
+.debug-card {
+    background: #f0f0f0;
+    border: 2px inset #c0c0c0;
+    padding: 6px;
+    margin: 3px;
+    display: inline-block;
+    vertical-align: top;
+}
+
+.zone-selector {
+    padding: 4px 12px;
+    border: 1px outset #c0c0c0;
+    background: #c0c0c0;
+    color: black;
+    cursor: pointer;
+    font-size: 13px;
+    margin: 2px;
+    min-width: 90px;
+}
+
+.zone-selector:active, .zone-selector.active {
+    border: 1px inset #c0c0c0;
+    background: #a0a0a0;
+}
+
+pre {
+    background: black;
+    color: #00ff00;
+    padding: 6px;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    border: 1px inset #c0c0c0;
+    height: 140px;
+    overflow-y: scroll;
+}
+
+#status {
+    background: black;
+    color: #00ff00;
+    padding: 4px;
+    font-size: 12px;
+    border: 1px inset #c0c0c0;
+    font-family: 'Courier New', monospace;
+    min-height: 20px;
+}
