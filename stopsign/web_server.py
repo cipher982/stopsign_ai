@@ -247,6 +247,7 @@ def home():
                 let adjustmentMode = false;
                 let clickedPoints = [];
                 let coordinateInfo = null;
+                let currentZoneType = 'stop-line';  // Default zone type
                 
                 function updateStopZone() {
                     const x1 = document.getElementById('x1').value;
@@ -303,14 +304,12 @@ def home():
                         video.style.cursor = 'crosshair';
                         video.style.outline = '3px solid #ff0000';
                         button.innerText = 'Cancel Adjustment';
-                        button.style.backgroundColor = '#ff4444';
                         status.innerText = 'ADJUSTMENT MODE: Click two points on the video to set the stop line';
                         loadCoordinateInfo();
                     } else {
                         video.style.cursor = 'default';
                         video.style.outline = 'none';
                         button.innerText = 'Adjust Stop Line';
-                        button.style.backgroundColor = '#4CAF50';
                         status.innerText = '';
                         clearClickMarkers();
                     }
@@ -416,7 +415,7 @@ def home():
                     marker.style.top = (relativeY - 15) + 'px';
                     marker.style.width = '30px';
                     marker.style.height = '30px';
-                    marker.style.backgroundColor = '#ff0000';
+                    marker.style.backgroundColor = color;
                     marker.style.color = 'white';
                     marker.style.borderRadius = '50%';
                     marker.style.display = 'flex';
@@ -937,6 +936,141 @@ async def debug_coordinates(request):
         return {"error": str(e)}
 
 
+@app.post("/api/toggle-debug-zones")  # type: ignore
+async def toggle_debug_zones(request):
+    """Toggle debug zones visibility via Redis flag."""
+    try:
+        data = await request.json()
+        enabled = data.get("enabled", False)
+
+        redis_client = redis.from_url(REDIS_URL)
+        redis_client.set("debug_zones_enabled", "1" if enabled else "0")
+
+        return {"status": "success", "debug_zones_enabled": enabled}
+    except Exception as e:
+        logger.error(f"Error toggling debug zones: {str(e)}")
+        return {"error": str(e)}
+
+
+@app.post("/api/update-zone-from-display")  # type: ignore
+async def update_zone_from_display(request):
+    """Update any zone type using display coordinates."""
+    try:
+        data = await request.json()
+        zone_type = data.get("zone_type", "stop-line")
+        display_points = data["display_points"]
+        video_element_size = data["video_element_size"]
+
+        config = Config("./config.yaml")
+
+        # Get raw dimensions from Redis metadata
+        redis_client = redis.from_url(REDIS_URL)
+
+        try:
+            metadata_keys = redis_client.keys("frame_metadata:*")
+            if not metadata_keys:
+                return {"error": "No video metadata available. Video analyzer must be running first."}
+
+            latest_metadata = redis_client.get(metadata_keys[-1])
+            if not latest_metadata:
+                return {"error": "Could not read video metadata."}
+
+            import json
+
+            metadata = json.loads(latest_metadata)
+            if "raw_video_dimensions" not in metadata:
+                return {"error": "Video dimensions not available in metadata."}
+
+            raw_width = metadata["raw_video_dimensions"]["width"]
+            raw_height = metadata["raw_video_dimensions"]["height"]
+
+            if not raw_width or not raw_height:
+                return {"error": "Invalid video dimensions in metadata."}
+
+        except Exception as e:
+            logger.error(f"Failed to get video dimensions: {e}")
+            return {"error": f"Failed to get video dimensions: {str(e)}"}
+
+        # Convert display coordinates to processing coordinates
+        scale_x = raw_width / video_element_size["width"]
+        scale_y = raw_height / video_element_size["height"]
+
+        # Handle different zone types
+        if zone_type == "stop-line":
+            # Stop line needs two points in raw coordinates
+            if len(display_points) != 2:
+                return {"error": "Stop line requires exactly 2 points"}
+
+            raw_points = []
+            for p in display_points:
+                raw_x = p["x"] * scale_x
+                raw_y = p["y"] * scale_y
+                raw_points.append((raw_x, raw_y))
+
+            stop_line = tuple(raw_points)
+            config.update_stop_zone(
+                {
+                    "stop_line": stop_line,
+                    "stop_box_tolerance": config.stop_box_tolerance,
+                    "min_stop_duration": 2.0,
+                }
+            )
+
+        elif zone_type in ["pre-stop", "capture"]:
+            # X-range zones need two points for X coordinates
+            if len(display_points) != 2:
+                return {"error": f"{zone_type} zone requires exactly 2 points"}
+
+            # Convert to processing coordinates (these zones work in processing space)
+            proc_x_coords = []
+            for p in display_points:
+                # Convert to raw coordinates first
+                raw_x = p["x"] * scale_x
+                raw_y = p["y"] * scale_y
+
+                # Then convert to processing coordinates using the same logic as video analyzer
+                crop_side_pixels = int(raw_width * config.crop_side)
+
+                cropped_x = raw_x - crop_side_pixels
+                processing_x = cropped_x * config.scale
+
+                proc_x_coords.append(processing_x)
+
+            # Ensure proper ordering (left to right)
+            x_range = tuple(sorted(proc_x_coords))
+
+            # Basic validation - ensure zones are reasonable
+            zone_width = abs(x_range[1] - x_range[0])
+            if zone_width < 10:
+                return {"error": f"Zone width ({zone_width:.1f}) is too small. Minimum width is 10 pixels."}
+            if zone_width > 500:
+                return {"error": f"Zone width ({zone_width:.1f}) is too large. Maximum width is 500 pixels."}
+
+            # Update the appropriate zone using the new method
+            if zone_type == "pre-stop":
+                config.update_zone("pre_stop", x_range)
+            elif zone_type == "capture":
+                config.update_zone("capture", x_range)
+
+        # Signal video analyzer to reload config
+        try:
+            redis_client.set("config_updated", "1")
+        except Exception as e:
+            logger.warning(f"Could not signal config update: {e}")
+
+        return {
+            "status": "success",
+            "zone_type": zone_type,
+            "display_coordinates": display_points,
+            "video_element_size": video_element_size,
+            "message": f"{zone_type} zone updated successfully",
+        }
+
+    except Exception as e:
+        logger.error(f"Error updating zone from display: {str(e)}")
+        return {"error": str(e)}
+
+
 @app.get("/debug")  # type: ignore
 def debug_page():
     """Simple debug page for stop line adjustment - access via /debug URL"""
@@ -948,6 +1082,83 @@ def debug_page():
             Script("""
                 let adjustmentMode = false;
                 let clickedPoints = [];
+                let currentZoneType = 'stop-line';  // Current zone being edited
+                let debugZonesVisible = false;
+                
+                // Zone configuration
+                const zoneConfig = {
+                    'stop-line': {
+                        name: 'Stop Line',
+                        color: '#c0c0c0',
+                        bgColor: '#c0c0c0',
+                        clicksRequired: 2,
+                        description: 'Click two points to define where vehicles must stop'
+                    },
+                    'pre-stop': {
+                        name: 'Pre-Stop Zone',
+                        color: '#c0c0c0',
+                        bgColor: '#c0c0c0',
+                        clicksRequired: 2,
+                        description: 'Click two points to set detection range for approaching vehicles'
+                    },
+                    'capture': {
+                        name: 'Image Capture Zone',
+                        color: '#c0c0c0',
+                        bgColor: '#c0c0c0',
+                        clicksRequired: 2,
+                        description: 'Click two points to set optimal photo capture range'
+                    }
+                };
+                
+                function selectZoneType(zoneType) {
+                    currentZoneType = zoneType;
+                    clickedPoints = [];
+                    clearClickMarkers();
+                    
+                    // Update zone selector buttons
+                    const buttons = document.querySelectorAll('.zone-selector');
+                    buttons.forEach(btn => {
+                        btn.classList.remove('active');
+                        btn.style.backgroundColor = '';
+                        btn.style.color = '';
+                    });
+                    
+                    const activeButton = document.getElementById('zone-' + zoneType);
+                    activeButton.classList.add('active');
+                    
+                    // Update instructions
+                    const instructions = document.getElementById('zone-instructions');
+                    instructions.innerText = zoneConfig[zoneType].description;
+                    
+                    // Update status
+                    const status = document.getElementById('status');
+                    status.innerText = `Ready to adjust ${zoneConfig[zoneType].name}`;
+                    
+                    // Reset adjustment mode button
+                    const adjustBtn = document.getElementById('adjustmentModeBtn');
+                    adjustBtn.innerText = `Adjust ${zoneConfig[zoneType].name}`;
+                }
+                
+                function toggleDebugZones() {
+                    debugZonesVisible = !debugZonesVisible;
+                    
+                    fetch('/api/toggle-debug-zones', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: debugZonesVisible })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        const button = document.getElementById('debugZonesBtn');
+                        button.innerText = debugZonesVisible ? 'Hide Debug Zones' : 'Show Debug Zones';
+                        
+                        const status = document.getElementById('status');
+                        status.innerText = debugZonesVisible ? 'Debug zones visible on video' : 'Debug zones hidden';
+                    })
+                    .catch(error => {
+                        console.error('Error toggling debug zones:', error);
+                    });
+                }
                 
                 function toggleAdjustmentMode() {
                     adjustmentMode = !adjustmentMode;
@@ -956,18 +1167,17 @@ def debug_page():
                     const video = document.getElementById('videoPlayer');
                     const button = document.getElementById('adjustmentModeBtn');
                     const status = document.getElementById('status');
+                    const config = zoneConfig[currentZoneType];
                     
                     if (adjustmentMode) {
                         video.style.cursor = 'crosshair';
-                        video.style.outline = '3px solid #ff0000';
+                        video.style.outline = `3px solid ${config.color}`;
                         button.innerText = 'Cancel Adjustment';
-                        button.style.backgroundColor = '#ff4444';
-                        status.innerText = 'ADJUSTMENT MODE: Click two points on the video to set the stop line';
+                        status.innerText = `ADJUSTMENT MODE: ${config.description}`;
                     } else {
                         video.style.cursor = 'default';
                         video.style.outline = 'none';
-                        button.innerText = 'Adjust Stop Line';
-                        button.style.backgroundColor = '#4CAF50';
+                        button.innerText = `Adjust ${config.name}`;
                         status.innerText = '';
                         clearClickMarkers();
                     }
@@ -976,8 +1186,10 @@ def debug_page():
                 function handleVideoClick(event) {
                     if (!adjustmentMode) return;
                     
-                    // Prevent more than 2 clicks
-                    if (clickedPoints.length >= 2) return;
+                    const config = zoneConfig[currentZoneType];
+                    
+                    // Prevent more clicks than required
+                    if (clickedPoints.length >= config.clicksRequired) return;
                     
                     const video = event.target;
                     const rect = video.getBoundingClientRect();
@@ -987,36 +1199,35 @@ def debug_page():
                     const y = event.clientY - rect.top;
                     
                     console.log('Click debug:', {
+                        zoneType: currentZoneType,
                         browserClick: { x, y },
                         videoElement: { width: rect.width, height: rect.height },
-                        actualVideo: { width: video.videoWidth, height: video.videoHeight },
-                        scaleFactors: { x: 1440/rect.width, y: 810/rect.height },
-                        rawCoords: { x: x * (1440/rect.width), y: y * (810/rect.height) }
+                        actualVideo: { width: video.videoWidth, height: video.videoHeight }
                     });
                     
                     clickedPoints.push({x: x, y: y});
                     
-                    // Position marker at exact click location
-                    addClickMarker(rect.left + x, rect.top + y, clickedPoints.length);
+                    // Position marker at exact click location with zone color
+                    addClickMarker(rect.left + x, rect.top + y, clickedPoints.length, config.color);
                     
                     const status = document.getElementById('status');
                     const submitBtn = document.getElementById('submitBtn');
                     
                     if (clickedPoints.length === 1) {
-                        status.innerText = 'POINT 1 SET ✓ - Now click the second point for the stop line.';
-                        status.style.backgroundColor = '#4CAF50';
-                    } else if (clickedPoints.length === 2) {
-                        status.innerText = 'BOTH POINTS SET ✓ - Click SUBMIT to update the stop line.';
-                        status.style.backgroundColor = '#2196F3';
+                        status.innerText = `POINT 1 SET ✓ - Now click the second point for ${config.name}.`;
+                    } else if (clickedPoints.length === config.clicksRequired) {
+                        status.innerText = `ALL POINTS SET ✓ - Click SUBMIT to update ${config.name}.`;
                         submitBtn.style.display = 'inline-block';
                         submitBtn.disabled = false;
                     }
                 }
                 
-                function updateStopZoneFromClicks() {
+                function updateZoneFromClicks() {
                     const video = document.getElementById('videoPlayer');
+                    const config = zoneConfig[currentZoneType];
                     
                     const data = {
+                        zone_type: currentZoneType,
                         display_points: clickedPoints,
                         video_element_size: {
                             width: video.clientWidth,
@@ -1028,7 +1239,11 @@ def debug_page():
                         }
                     };
                     
-                    fetch('/api/update-stop-zone-from-display', {
+                    const endpoint = currentZoneType === 'stop-line' ? 
+                        '/api/update-stop-zone-from-display' : 
+                        '/api/update-zone-from-display';
+                    
+                    fetch(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -1039,27 +1254,23 @@ def debug_page():
                     .then(data => {
                         const status = document.getElementById('status');
                         if (data.status === 'success') {
-                            status.innerText = '✅ SUCCESS! Stop line updated and tracking restarted.';
-                            status.style.backgroundColor = '#2e7d32';
+                            status.innerText = `✅ SUCCESS! ${config.name} updated successfully.`;
                             
                             // Show coordinate details
                             console.log('Coordinate transformation details:', data);
                             
                             setTimeout(() => {
                                 status.innerText = 'Ready for next adjustment.';
-                                status.style.backgroundColor = '#333';
                                 toggleAdjustmentMode();
                             }, 3000);
                         } else {
                             status.innerText = '❌ ERROR: ' + (data.error || 'Unknown error occurred');
-                            status.style.backgroundColor = '#d32f2f';
                         }
                     })
                     .catch((error) => {
                         console.error('Error:', error);
                         const status = document.getElementById('status');
                         status.innerText = '❌ NETWORK ERROR: Could not update stop line.';
-                        status.style.backgroundColor = '#d32f2f';
                     });
                 }
                 
@@ -1069,12 +1280,11 @@ def debug_page():
                     const status = document.getElementById('status');
                     const submitBtn = document.getElementById('submitBtn');
                     status.innerText = 'Points cleared. Click two new points on the video.';
-                    status.style.backgroundColor = '#333';
                     submitBtn.style.display = 'none';
                     submitBtn.disabled = true;
                 }
                 
-                function addClickMarker(pageX, pageY, pointNumber) {
+                function addClickMarker(pageX, pageY, pointNumber, color = '#ff0000') {
                     const video = document.getElementById('videoPlayer');
                     const rect = video.getBoundingClientRect();
                     
@@ -1101,7 +1311,7 @@ def debug_page():
                     marker.style.top = (relativeY - 15) + 'px';
                     marker.style.width = '30px';
                     marker.style.height = '30px';
-                    marker.style.backgroundColor = '#ff0000';
+                    marker.style.backgroundColor = color;
                     marker.style.color = 'white';
                     marker.style.borderRadius = '50%';
                     marker.style.display = 'flex';
@@ -1160,6 +1370,9 @@ def debug_page():
                 }
                 
                 document.addEventListener('DOMContentLoaded', function() {
+                    // Initialize the interface
+                    selectZoneType('stop-line'); // Set default zone
+                    
                     setTimeout(() => {
                         const video = document.getElementById('videoPlayer');
                         if (video) {
@@ -1169,49 +1382,235 @@ def debug_page():
                 });
             """),
             Style("""
-                body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: white; }
-                .container { max-width: 1200px; margin: 0 auto; }
-                .section { margin: 20px 0; padding: 20px; background: #2a2a2a; border-radius: 8px; }
-                button { padding: 10px 20px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
-                .primary { background: #4CAF50; color: white; }
-                .secondary { background: #2196F3; color: white; }
-                .danger { background: #f44336; color: white; }
-                #status { padding: 10px; background: #333; border-radius: 5px; margin: 10px 0; min-height: 20px; }
-                pre { background: #333; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 12px; }
-                video { max-width: 100%; border: 2px solid #555; border-radius: 8px; display: block; }
+                body { 
+                    font-family: 'MS Sans Serif', sans-serif; 
+                    margin: 0; 
+                    padding: 6px; 
+                    background: #c0c0c0;
+                    font-size: 13px;
+                    color: black; 
+                }
+                .container { max-width: none; margin: 0; }
+                
+                h1 { 
+                    text-align: center; 
+                    color: black; 
+                    font-size: 18px; 
+                    margin: 4px 0 6px 0; 
+                    font-weight: bold;
+                }
+                
+                h2, h3 { 
+                    font-size: 14px; 
+                    margin: 3px 0; 
+                    font-weight: bold;
+                    color: #000080;
+                }
+                
+                .debug-card { 
+                    background: #f0f0f0; 
+                    border: 2px inset #c0c0c0; 
+                    padding: 6px; 
+                    margin: 3px; 
+                    display: inline-block;
+                    vertical-align: top;
+                    width: calc(50% - 12px);
+                }
+                
+                .full-width { width: calc(100% - 12px); }
+                
+                .zone-selector { 
+                    padding: 4px 12px; 
+                    border: 1px outset #c0c0c0; 
+                    background: #c0c0c0;
+                    color: black;
+                    cursor: pointer; 
+                    font-size: 13px;
+                    margin: 2px;
+                    min-width: 90px;
+                }
+                
+                .zone-selector:active { 
+                    border: 1px inset #c0c0c0; 
+                }
+                
+                .zone-selector.active {
+                    border: 1px inset #c0c0c0;
+                    background: #a0a0a0;  /* Darker pressed look */
+                }
+                
+                .viz-btn, .action-btn { 
+                    padding: 4px 12px; 
+                    border: 1px outset #c0c0c0; 
+                    background: #c0c0c0;
+                    cursor: pointer; 
+                    font-size: 13px;
+                    margin: 2px;
+                }
+                
+                .viz-btn:active, .action-btn:active { 
+                    border: 1px inset #c0c0c0; 
+                }
+                
+                .action-btn.submit { 
+                    background: #008000; 
+                    color: white;
+                }
+                
+                video { 
+                    max-width: 100%; 
+                    border: 1px solid #808080; 
+                    display: block; 
+                }
+                
                 .video-wrapper { position: relative; display: inline-block; }
                 .click-marker { position: absolute; pointer-events: none; }
+                
+                pre { 
+                    background: black; 
+                    color: #00ff00; 
+                    padding: 6px; 
+                    font-size: 11px; 
+                    line-height: 1.2;
+                    font-family: 'Courier New', monospace;
+                    border: 1px inset #c0c0c0;
+                    height: 140px;
+                    overflow-y: scroll;
+                }
+                
+                .debug-tools { 
+                    background: #f0f0f0; 
+                    border: 2px inset #c0c0c0; 
+                    padding: 6px; 
+                    margin: 3px;
+                }
+                
+                .debug-tools button { 
+                    background: #c0c0c0; 
+                    border: 1px outset #c0c0c0; 
+                    padding: 3px 8px; 
+                    margin: 2px; 
+                    cursor: pointer;
+                    font-size: 12px;
+                }
+                
+                .debug-tools button:active { 
+                    border: 1px inset #c0c0c0; 
+                }
+                
+                p { 
+                    margin: 3px 0; 
+                    font-size: 12px; 
+                    line-height: 1.3;
+                }
+                
+                #status { 
+                    background: black; 
+                    color: #00ff00; 
+                    padding: 4px; 
+                    font-size: 12px; 
+                    border: 1px inset #c0c0c0;
+                    font-family: 'Courier New', monospace;
+                    min-height: 20px;
+                }
+                
+                .instructions-box {
+                    background: #ffffcc;
+                    border: 1px solid #808080;
+                    padding: 4px;
+                    font-size: 12px;
+                    margin: 3px 0;
+                }
             """),
         ),
         Body(
             Div(
                 H1("Stop Sign Debug Interface"),
-                Div(H2("Video Stream"), Div(hx_get="/load-video", hx_trigger="load"), cls="section"),
+                # Main layout: Video left, Controls right
                 Div(
-                    H2("Stop Line Adjustment"),
-                    Button("Adjust Stop Line", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()", cls="primary"),
-                    Button("Reset Points", onclick="resetPoints()", cls="secondary", style="margin-left: 10px;"),
-                    Button(
-                        "SUBMIT",
-                        id="submitBtn",
-                        onclick="updateStopZoneFromClicks()",
-                        cls="primary",
-                        style="margin-left: 10px; background: #ff6b35; display: none;",
-                        disabled=True,
+                    # Left side - Video
+                    Div(
+                        H2("Video Stream"),
+                        Div(hx_get="/load-video", hx_trigger="load"),
+                        cls="debug-card",
+                        style="width: 70%;",
                     ),
-                    P("1. Click 'Adjust Stop Line' 2. Click two points on video 3. Click SUBMIT"),
-                    Div(id="status"),
-                    cls="section",
+                    # Right side - All controls stacked vertically
+                    Div(
+                        # Zone Selection
+                        Div(
+                            H3("1. Select Zone"),
+                            Div(
+                                Button(
+                                    "Stop Line",
+                                    id="zone-stop-line",
+                                    onclick="selectZoneType('stop-line')",
+                                    cls="zone-selector active",
+                                ),
+                                Button(
+                                    "Pre-Stop",
+                                    id="zone-pre-stop",
+                                    onclick="selectZoneType('pre-stop')",
+                                    cls="zone-selector",
+                                ),
+                                Button(
+                                    "Capture",
+                                    id="zone-capture",
+                                    onclick="selectZoneType('capture')",
+                                    cls="zone-selector",
+                                ),
+                                style="border: 1px inset #c0c0c0; padding: 4px; margin: 2px 0; background: #e0e0e0;",
+                            ),
+                            P(id="zone-instructions", style="font-style: italic; margin: 2px 0; font-size: 11px;"),
+                            style="margin-bottom: 4px;",
+                        ),
+                        # Visualization
+                        Div(
+                            H3("2. Visualization"),
+                            Button("Show Zones", id="debugZonesBtn", onclick="toggleDebugZones()", cls="viz-btn"),
+                            style="margin-bottom: 4px;",
+                        ),
+                        # Actions
+                        Div(
+                            H3("3. Edit Zone"),
+                            Button(
+                                "Adjust", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()", cls="action-btn"
+                            ),
+                            Button("Reset", onclick="resetPoints()", cls="action-btn"),
+                            Button(
+                                "SUBMIT",
+                                id="submitBtn",
+                                onclick="updateZoneFromClicks()",
+                                cls="action-btn",
+                                style="display: none;",
+                                disabled=True,
+                            ),
+                            style="margin-bottom: 4px;",
+                        ),
+                        # Status
+                        Div(
+                            H3("4. Status"),
+                            Div(id="status", style="height: 40px;"),
+                            Div(
+                                P(
+                                    "Select zone → Show zones → Adjust → Click 2 points → Submit",
+                                    cls="instructions-box",
+                                ),
+                            ),
+                        ),
+                        cls="debug-card",
+                        style="width: 28%;",
+                    ),
+                    style="display: flex; gap: 6px; align-items: flex-start;",
                 ),
+                # Debug tools in compact form
                 Div(
-                    H2("Debug Tools"),
-                    Button("Show Coordinate Info", onclick="showCoordinateInfo()", cls="secondary"),
-                    Button("Debug Transformations", onclick="debugCoordinates()", cls="secondary"),
-                    H3("Coordinate System Info:"),
+                    H3("Debug Tools"),
+                    Button("Coord Info", onclick="showCoordinateInfo()"),
+                    Button("Debug Transforms", onclick="debugCoordinates()"),
                     Div(id="coordOutput"),
-                    H3("Debug Output:"),
                     Div(id="debugOutput"),
-                    cls="section",
+                    cls="debug-tools full-width",
                 ),
                 cls="container",
             )
@@ -1601,10 +2000,10 @@ def main(config: Config):
             "stopsign.web_server:app",
             host="0.0.0.0",
             port=8000,
-            reload=False,
+            reload=True,  # Enable auto-reload for live development
             log_level="warning",
-            # reload_dirs=["./stopsign"],  # Use a relative path
-            # reload_excludes=["./app/data/*"],  # Use a relative path
+            reload_dirs=["./stopsign"],  # Watch for changes in stopsign directory
+            reload_excludes=["./app/data/*"],  # Exclude data files from watching
         )
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")

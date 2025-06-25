@@ -12,9 +12,10 @@ from sqlalchemy import DateTime
 from sqlalchemy import Float
 from sqlalchemy import Integer
 from sqlalchemy import String
+from sqlalchemy import UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy import text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 
@@ -65,6 +66,24 @@ class VehiclePass(Base):
     stop_duration = Column(Float)
     min_speed = Column(Float)
     image_path = Column(String)
+
+
+class ConfigSetting(Base):
+    __tablename__ = "config_settings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    category = Column(String, nullable=False)  # "zones", "video_processing", "tracking", etc.
+    key = Column(String, nullable=False)  # "stop_line", "scale", "fps", etc.
+    value = Column(JSON, nullable=False)  # The actual config value
+    coordinate_system = Column(String)  # "raw", "processing", null for non-zones
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    updated_by = Column(String, default="system")
+    change_reason = Column(String)
+    is_active = Column(Boolean, default=True)
+
+    # Only one active setting per category/key combination
+    __table_args__ = (UniqueConstraint("category", "key", "is_active", name="_category_key_active_uc"),)
 
 
 class Database:
@@ -265,3 +284,66 @@ class Database:
 
     def close(self):
         self.engine.dispose()
+
+    @log_execution_time
+    def get_config_setting(self, category: str, key: str):
+        """Get a single active config setting."""
+        with self.Session() as session:
+            setting = session.query(ConfigSetting).filter_by(category=category, key=key, is_active=True).first()
+            return setting.value if setting else None
+
+    @log_execution_time
+    def get_config_category(self, category: str) -> dict:
+        """Get all active settings for a category."""
+        with self.Session() as session:
+            settings = session.query(ConfigSetting).filter_by(category=category, is_active=True).all()
+            return {setting.key: setting.value for setting in settings}
+
+    @log_execution_time
+    def update_config_setting(
+        self, category: str, key: str, value, coordinate_system=None, updated_by="system", change_reason="Config update"
+    ):
+        """Update a config setting, keeping history."""
+        with self.Session() as session:
+            # Deactivate old setting if it exists
+            old_setting = session.query(ConfigSetting).filter_by(category=category, key=key, is_active=True).first()
+
+            if old_setting:
+                old_setting.is_active = False
+                session.flush()  # Ensure constraint is satisfied before inserting new record
+
+            # Create new setting
+            new_setting = ConfigSetting(
+                category=category,
+                key=key,
+                value=value,
+                coordinate_system=coordinate_system,
+                updated_by=updated_by,
+                change_reason=change_reason,
+            )
+            session.add(new_setting)
+            session.commit()
+            logger.info(f"Updated config: {category}.{key} = {value}")
+
+    @log_execution_time
+    def get_config_history(self, category: str, key: str, limit: int = 10):
+        """Get change history for a config setting."""
+        with self.Session() as session:
+            history = (
+                session.query(ConfigSetting)
+                .filter_by(category=category, key=key)
+                .order_by(ConfigSetting.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+
+            return [
+                {
+                    "value": h.value,
+                    "created_at": h.created_at,
+                    "updated_by": h.updated_by,
+                    "change_reason": h.change_reason,
+                    "is_active": h.is_active,
+                }
+                for h in history
+            ]

@@ -77,6 +77,10 @@ class VideoAnalyzer:
         self.raw_width = None
         self.raw_height = None
 
+        # Debug mode flag - check if debug mode is enabled via Redis
+        self.debug_mode = False
+        self.check_debug_mode()
+
         # Initialize FPS counters for each stage
         self.incoming_fps_count = 0
         self.object_detection_fps_count = 0
@@ -131,6 +135,27 @@ class VideoAnalyzer:
 
         thread = threading.Thread(target=log_fps, daemon=True)
         thread.start()
+
+    def check_debug_mode(self):
+        """Check if debug mode is enabled via Redis flag."""
+        try:
+            debug_flag = self.redis_client.get("debug_zones_enabled")
+            self.debug_mode = debug_flag == b"1" if debug_flag else False
+        except Exception as e:
+            logger.debug(f"Could not check debug mode: {e}")
+            self.debug_mode = False
+
+    def check_config_updates(self):
+        """Check if config has been updated via Redis flag."""
+        try:
+            update_flag = self.redis_client.get("config_updated")
+            if update_flag == b"1":
+                logger.info("Config update detected, reloading...")
+                self.on_config_updated()
+                # Clear the flag
+                self.redis_client.set("config_updated", "0")
+        except Exception as e:
+            logger.debug(f"Could not check config updates: {e}")
 
     def initialize_metrics(self):
         # Frame processing metrics
@@ -346,6 +371,11 @@ class VideoAnalyzer:
         stop_detection_time = time.time() - stop_detection_start
         self.stop_detection_time.observe(stop_detection_time)
 
+        # Check debug mode and config updates periodically
+        if self.frame_count % 30 == 0:  # Check every 30 frames
+            self.check_debug_mode()
+            self.check_config_updates()
+
         # Visualization
         visualization_start = time.time()
         annotated_frame = self.visualize(
@@ -457,6 +487,8 @@ class VideoAnalyzer:
     def on_config_updated(self):
         """Called when config is updated to clear caches."""
         self._stop_line_processing_coords = None
+        # Reload config
+        self.config.load_config()
         # Recreate stop zone if dimensions are available
         if self.raw_width is not None and self.raw_height is not None:
             self.stop_detector.set_video_analyzer(self)
@@ -554,7 +586,42 @@ class VideoAnalyzer:
         text_x = frame.shape[1] - text_size[0] - 10
         cv2.putText(frame, current_time, (text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
+        # Draw debug zones if debug mode is enabled
+        if self.debug_mode:
+            self.draw_debug_zones(frame)
+
         return frame
+
+    def draw_debug_zones(self, frame: np.ndarray):
+        """Draw all zones when in debug mode (processing coordinates)."""
+        height, width = frame.shape[:2]
+
+        # Pre-stop zone (yellow vertical band)
+        pre_start, pre_end = self.config.pre_stop_zone
+        cv2.rectangle(frame, (int(pre_start), 0), (int(pre_end), height), (0, 255, 255), 2)
+        cv2.putText(frame, "PRE-STOP", (int(pre_start) + 5, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+        # Image capture zone (green vertical band)
+        cap_start, cap_end = self.config.image_capture_zone
+        cv2.rectangle(frame, (int(cap_start), 0), (int(cap_end), height), (0, 255, 0), 2)
+        cv2.putText(frame, "CAPTURE", (int(cap_start) + 5, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        # Stop zone buffer (semi-transparent overlay)
+        if self.stop_detector.stop_zone is not None:
+            overlay = frame.copy()
+            stop_box_corners = np.array(self.stop_detector.stop_zone, dtype=np.int32)
+            cv2.fillPoly(overlay, [stop_box_corners], (255, 0, 255))  # Magenta for debug
+            cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
+            cv2.polylines(frame, [stop_box_corners], True, (255, 0, 255), 2)
+            cv2.putText(
+                frame,
+                "STOP BUFFER",
+                (int(stop_box_corners[0][0]), int(stop_box_corners[0][1]) - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 0, 255),
+                2,
+            )
 
     def draw_box(self, frame: np.ndarray, car, box, color=(0, 255, 0), thickness=2):
         x1, y1, x2, y2 = map(int, box.xyxy[0])
