@@ -1,41 +1,47 @@
-video_processing:
-  scale: 0.75
-  crop_top: 0
-  crop_side: 0
-  frame_buffer_size: 500 # number of frames to buffer
-
-stopsign_detection:
-
-  stop_line:
-  - - 525.3475935828877
-    - 825.3773771790808
-  - - 811.1229946524064
-    - 708.9906893819334
-  stop_box_tolerance: [50, 50]
-  pre_stop_zone: [1000, 1100]
-  image_capture_zone: [800, 900]
-  max_movement_speed: 20  # pixels / second
-  parked_frame_threshold: 60
-  unparked_frame_threshold: 20
-  unparked_speed_threshold: 30
-  in_zone_frame_threshold: 2
-  out_zone_frame_threshold: 2
-  stop_speed_threshold: 20
-  min_stop_time: 2.0
-
-tracking:
-  use_kalman_filter: true
-
-output:
-  save_video: true
-  frame_skip: 3
-  jpeg_quality: 10
-
 debugging_visualization:
   draw_grid: true
   grid_size: 100
-
+output:
+  frame_skip: 3
+  jpeg_quality: 10
+  save_video: true
+stopsign_detection:
+  image_capture_zone:
+  - 800
+  - 900
+  in_zone_frame_threshold: 2
+  max_movement_speed: 20
+  min_stop_time: 2.0
+  out_zone_frame_threshold: 2
+  parked_frame_threshold: 60
+  pre_stop_zone:
+  - 1000
+  - 1100
+  stop_box_tolerance:
+  - 10
+  - 10
+  stop_line:
+  - - 303.7067209775968
+    - 230.0
+  - - 376.70061099796334
+    - 291.3333333333333
+  stop_speed_threshold: 20
+  unparked_frame_threshold: 20
+  unparked_speed_threshold: 30
 stream_settings:
-  input_source: live
   fps: 15
-  vehicle_classes: [1, 2, 3, 5, 6, 7]
+  input_source: live
+  vehicle_classes:
+  - 1
+  - 2
+  - 3
+  - 5
+  - 6
+  - 7
+tracking:
+  use_kalman_filter: true
+video_processing:
+  crop_side: 0
+  crop_top: 0
+  frame_buffer_size: 500
+  scale: 0.75
