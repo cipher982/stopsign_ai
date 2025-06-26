@@ -1038,25 +1038,20 @@ async def get_recent_vehicle_passes():
 
 @app.get("/records")  # type: ignore
 def records():
-    return Html(
-        Head(
-            Title("Records - Stop Sign Nanny"),
-            Script(src="https://unpkg.com/htmx.org@1.9.4"),
-        ),
-        Body(
-            get_common_header("Records"),
-            Main(
+    return (
+        get_common_header("Records"),
+        Main(
+            Div(
+                H2("Vehicle Records"),
                 Div(
-                    H2("Vehicle Records"),
-                    Div(
-                        Div(id="worstPasses", hx_get="/api/worst-passes", hx_trigger="load"),
-                        Div(id="bestPasses", hx_get="/api/best-passes", hx_trigger="load"),
-                        cls="two-col",
-                    ),
+                    Div(id="worstPasses", hx_get="/api/worst-passes", hx_trigger="load"),
+                    Div(id="bestPasses", hx_get="/api/best-passes", hx_trigger="load"),
+                    cls="two-col",
                 ),
+                cls="window",
             ),
-            get_common_footer(),
         ),
+        get_common_footer(),
     )
 
 
@@ -1181,25 +1176,20 @@ def create_pass_item(pass_data, scores):
 
 @app.get("/statistics")  # type: ignore
 def statistics():
-    return Html(
-        Head(
-            Title("Statistics - Stop Sign Nanny"),
-        ),
-        Body(
-            get_common_header("Statistics"),
-            Main(
-                Div(
-                    Iframe(
-                        src=GRAFANA_URL,
-                        width="100%",
-                        height="600",
-                        frameborder="0",
-                    ),
-                    cls="window",
+    return (
+        get_common_header("Statistics"),
+        Main(
+            Div(
+                Iframe(
+                    src=GRAFANA_URL,
+                    width="100%",
+                    height="600",
+                    frameborder="0",
                 ),
+                cls="window",
             ),
-            get_common_footer(),
         ),
+        get_common_footer(),
     )
 
 
@@ -1207,21 +1197,16 @@ def statistics():
 def about():
     with open("static/summary.md", "r") as file:
         summary_content = file.read()
-    return Html(
-        Head(
-            Title("About - Stop Sign Nanny"),
-        ),
-        Body(
-            get_common_header("About"),
-            Main(
-                Div(
-                    H2("Project Summary"),
-                    P(summary_content),
-                    cls="window",
-                ),
+    return (
+        get_common_header("About"),
+        Main(
+            Div(
+                H2("Project Summary"),
+                P(summary_content),
+                cls="window",
             ),
-            get_common_footer(),
         ),
+        get_common_footer(),
     )
 
 
