@@ -180,3 +180,6 @@ volumes/
 sample_data/*.mp4
 sample_data/*.avi
 sample_data/*.mov
+
+# Copied stopsign module for deployment
+rtsp_to_redis/stopsign/

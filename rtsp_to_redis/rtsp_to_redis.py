@@ -35,7 +35,7 @@ from redis.exceptions import RedisError
 # Ensure project root is on ``sys.path`` when this file is executed as a
 # top-level script inside its own Docker image.
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from stopsign.settings import (  # noqa: E402  (import after path tweak)
     FRAME_BUFFER_SIZE,
