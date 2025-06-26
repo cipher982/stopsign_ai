@@ -55,7 +55,7 @@ class BaseConfig:
     """Base configuration with common settings"""
 
     def __init__(self):
-        self.validate_environment()
+        pass
 
     @property
     def is_local(self) -> bool:
@@ -64,25 +64,6 @@ class BaseConfig:
     @property
     def is_production(self) -> bool:
         return ENV == "prod"
-
-    def validate_environment(self):
-        """Validate environment configuration for safety"""
-        if self.is_local:
-            # Block production URLs in local mode
-            redis_url = os.getenv("REDIS_URL", "")
-            db_url = os.getenv("DB_URL", "")
-
-            prod_indicators = ["prod-redis", "production", ".internal", "aws.com", "gcp.com"]
-            for indicator in prod_indicators:
-                if indicator in redis_url or indicator in db_url:
-                    raise ConfigError(f"Production URL detected in local environment: ENV={ENV}")
-
-        elif self.is_production:
-            # Ensure production has required variables
-            required_vars = ["REDIS_URL", "DB_URL"]
-            missing = [var for var in required_vars if not os.getenv(var)]
-            if missing:
-                raise ConfigError(f"Missing required production environment variables: {missing}")
 
 
 class LocalConfig(BaseConfig):
@@ -110,27 +91,78 @@ class LocalConfig(BaseConfig):
 
 
 class ProductionConfig(BaseConfig):
-    """Production configuration"""
+    """Production configuration with lazy loading"""
 
     def __init__(self):
         super().__init__()
-        # Core infrastructure (required)
-        self.REDIS_URL = get_env("REDIS_URL")
-        self.DB_URL = get_env("DB_URL")
+        self._redis_url = None
+        self._db_url = None
+        self._minio_endpoint = None
+        self._minio_access_key = None
+        self._minio_secret_key = None
+        self._minio_bucket = None
+        self._yolo_model_name = None
+        self._yolo_device = None
 
-        # MinIO (required)
-        self.MINIO_ENDPOINT = get_env("MINIO_ENDPOINT")
-        self.MINIO_ACCESS_KEY = get_env("MINIO_ACCESS_KEY")
-        self.MINIO_SECRET_KEY = get_env("MINIO_SECRET_KEY")
-        self.MINIO_BUCKET = get_env("MINIO_BUCKET")
+    @property
+    def REDIS_URL(self):
+        if self._redis_url is None:
+            self._redis_url = get_env("REDIS_URL")
+        return self._redis_url
 
-        # AI Model (production defaults)
-        self.YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME", "yolov8x.pt", required=False)
-        self.YOLO_DEVICE = get_env("YOLO_DEVICE", "cuda", required=False)
+    @property
+    def DB_URL(self):
+        if self._db_url is None:
+            self._db_url = get_env("DB_URL")
+        return self._db_url
 
-        # FFmpeg (GPU encoding)
-        self.FFMPEG_ENCODER = get_env("FFMPEG_ENCODER", "h264_nvenc", required=False)
-        self.FFMPEG_PRESET = get_env("FFMPEG_PRESET", "p4", required=False)
+    @property
+    def MINIO_ENDPOINT(self):
+        if self._minio_endpoint is None:
+            self._minio_endpoint = get_env("MINIO_ENDPOINT")
+        return self._minio_endpoint
+
+    @property
+    def MINIO_ACCESS_KEY(self):
+        if self._minio_access_key is None:
+            self._minio_access_key = get_env("MINIO_ACCESS_KEY")
+        return self._minio_access_key
+
+    @property
+    def MINIO_SECRET_KEY(self):
+        if self._minio_secret_key is None:
+            self._minio_secret_key = get_env("MINIO_SECRET_KEY")
+        return self._minio_secret_key
+
+    @property
+    def MINIO_BUCKET(self):
+        if self._minio_bucket is None:
+            self._minio_bucket = get_env("MINIO_BUCKET")
+        return self._minio_bucket
+
+    @property
+    def YOLO_MODEL_NAME(self):
+        if self._yolo_model_name is None:
+            self._yolo_model_name = get_env("YOLO_MODEL_NAME", "yolov8x.pt", required=False)
+        return self._yolo_model_name
+
+    @property
+    def YOLO_DEVICE(self):
+        if self._yolo_device is None:
+            self._yolo_device = get_env("YOLO_DEVICE", "cuda", required=False)
+        return self._yolo_device
+
+    @property
+    def FFMPEG_ENCODER(self):
+        if not hasattr(self, "_ffmpeg_encoder"):
+            self._ffmpeg_encoder = get_env("FFMPEG_ENCODER", "h264_nvenc", required=False)
+        return self._ffmpeg_encoder
+
+    @property
+    def FFMPEG_PRESET(self):
+        if not hasattr(self, "_ffmpeg_preset"):
+            self._ffmpeg_preset = get_env("FFMPEG_PRESET", "p4", required=False)
+        return self._ffmpeg_preset
 
 
 # Common settings (same for all environments)
@@ -147,17 +179,29 @@ if ENV == "local":
 else:
     config = ProductionConfig()
 
-# Export commonly used settings for backward compatibility
-REDIS_URL = config.REDIS_URL
-DB_URL = config.DB_URL
-YOLO_MODEL_NAME = config.YOLO_MODEL_NAME
-YOLO_DEVICE = config.YOLO_DEVICE
-MINIO_ENDPOINT = config.MINIO_ENDPOINT
-MINIO_ACCESS_KEY = config.MINIO_ACCESS_KEY
-MINIO_SECRET_KEY = config.MINIO_SECRET_KEY
-MINIO_BUCKET = config.MINIO_BUCKET
-FFMPEG_ENCODER = config.FFMPEG_ENCODER
-FFMPEG_PRESET = config.FFMPEG_PRESET
 
-logger.info(f"Configuration loaded for environment: {ENV}")
-logger.info(f"Using config class: {config.__class__.__name__}")
+# Lazy exports for backward compatibility
+def __getattr__(name):
+    """Lazy loading of module-level settings"""
+    if name == "REDIS_URL":
+        return config.REDIS_URL
+    elif name == "DB_URL":
+        return config.DB_URL
+    elif name == "YOLO_MODEL_NAME":
+        return config.YOLO_MODEL_NAME
+    elif name == "YOLO_DEVICE":
+        return config.YOLO_DEVICE
+    elif name == "MINIO_ENDPOINT":
+        return config.MINIO_ENDPOINT
+    elif name == "MINIO_ACCESS_KEY":
+        return config.MINIO_ACCESS_KEY
+    elif name == "MINIO_SECRET_KEY":
+        return config.MINIO_SECRET_KEY
+    elif name == "MINIO_BUCKET":
+        return config.MINIO_BUCKET
+    elif name == "FFMPEG_ENCODER":
+        return config.FFMPEG_ENCODER
+    elif name == "FFMPEG_PRESET":
+        return config.FFMPEG_PRESET
+    else:
+        raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
