@@ -31,6 +31,11 @@ from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from redis.exceptions import RedisError
 
 
+# ----------------- logging setup --------------------
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+
 # ------------------- local app ----------------------
 def get_env(key: str) -> str:
     value = os.getenv(key)
@@ -44,14 +49,6 @@ RTSP_URL: str = get_env("RTSP_URL")
 REDIS_URL: str = get_env("REDIS_URL")
 RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
 FRAME_BUFFER_SIZE: int = int(get_env("FRAME_BUFFER_SIZE"))
-
-# ----------------- logging setup --------------------
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
 
 
 class RTSPToRedis:
