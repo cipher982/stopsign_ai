@@ -20,7 +20,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
 import os
 from queue import Empty, Queue
-import sys
 import threading
 import time
 from typing import Optional
@@ -31,19 +30,20 @@ import redis
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from redis.exceptions import RedisError
 
+
 # ------------------- local app ----------------------
-# Ensure project root is on ``sys.path`` when this file is executed as a
-# top-level script inside its own Docker image.
+def get_env(key: str) -> str:
+    value = os.getenv(key)
+    assert value is not None, f"{key} is not set"
+    logger.info(f"Loaded env var {key}: {value}")
+    return value
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from stopsign.settings import (  # noqa: E402  (import after path tweak)
-    FRAME_BUFFER_SIZE,
-    PROMETHEUS_PORT,
-    RAW_FRAME_KEY,
-    REDIS_URL,
-    RTSP_URL,
-)
+PROMETHEUS_PORT: int = int(get_env("PROMETHEUS_PORT"))
+RTSP_URL: str = get_env("RTSP_URL")
+REDIS_URL: str = get_env("REDIS_URL")
+RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
+FRAME_BUFFER_SIZE: int = int(get_env("FRAME_BUFFER_SIZE"))
 
 # ----------------- logging setup --------------------
 
