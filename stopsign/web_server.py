@@ -34,7 +34,6 @@ from fasthtml.common import Script
 from fasthtml.common import Span
 from fasthtml.common import StaticFiles
 from fasthtml.common import StreamingResponse
-from fasthtml.common import Style
 from fasthtml.common import Summary
 from fasthtml.common import Title
 from fasthtml.common import Ul
@@ -73,125 +72,23 @@ def get_minio_client():
     )
 
 
-def get_common_styles():
-    return Style("""
-            :root {
-                --bg-color: #1a1a1a;
-                --text-color: #e0e0e0;
-                --accent-color: #ff6600;
-                --secondary-color: #8b00ff;
-                --card-bg: #2a2a2a;
-            }
-            body {
-                font-family: 'Roboto', sans-serif;
-                background-color: var(--bg-color);
-                color: var(--text-color);
-                line-height: 1.6;
-            }
-            header {
-                background-color: var(--bg-color);
-                border-bottom: 1px solid var(--accent-color);
-            }
-            h1, h2, h3 {
-                color: var(--accent-color);
-                text-shadow: 2px 2px 4px rgba(255, 102, 0, 0.5);
-            }
-            a {
-                color: var(--secondary-color);
-                text-decoration: none;
-                transition: color 0.3s ease;
-            }
-            a:hover {
-                color: var(--accent-color);
-            }
-            .container {
-                max-width: 1200px;
-                margin: 0 auto;
-                padding: 0 20px;
-            }
-            .card {
-                background-color: var(--card-bg);
-                border-radius: 8px;
-                padding: 20px;
-                margin-bottom: 20px;
-                box-shadow: 0 4px 6px rgba(255, 102, 0, 0.2);
-                transition: transform 0.3s ease;
-            }
-            .card:hover {
-                transform: translateY(-5px);
-            }
-            button {
-                background-color: var(--accent-color);
-                color: var(--bg-color);
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                cursor: pointer;
-                transition: background-color 0.3s ease;
-            }
-            button:hover {
-                background-color: var(--secondary-color);
-            }
-            code {
-                font-family: 'Roboto Mono', monospace;
-                background-color: #3a3a3a;
-                padding: 2px 4px;
-                border-radius: 4px;
-            }
-            nav a {
-                color: var(--accent-color);
-                text-decoration: none;
-                transition: color 0.3s ease;
-                margin-left: 15px;
-            }
-            nav a:hover {
-                color: var(--secondary-color);
-            }
-            ::-webkit-scrollbar {
-                width: 10px;
-            }
-
-            ::-webkit-scrollbar-track {
-                background: var(--bg-color);
-                border-radius: 5px;
-            }
-
-            ::-webkit-scrollbar-thumb {
-                background: var(--accent-color);
-                border-radius: 5px;
-            }
-
-            ::-webkit-scrollbar-thumb:hover {
-                background: var(--secondary-color);
-            }
-
-            /* For Firefox */
-            * {
-                scrollbar-width: thin;
-                scrollbar-color: var(--accent-color) var(--bg-color);
-            }
-        """)
-
-
 def get_common_header(title):
     return Header(
-        H1(title, style="text-align: center; flex-grow: 1;"),
+        Div(title, cls="title-bar"),
         Nav(
             A("Home", href="/"),
             A("Records", href="/records"),
-            # A("Statistics", href="/statistics"),
             A("About", href="/about"),
             A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
-            style="margin-left: 20px;",
         ),
-        style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--accent-color);",
+        cls="window",
     )
 
 
 def get_common_footer():
     return Footer(
         P("By David Rose"),
-        style="padding: 10px; text-align: center; border-top: 1px solid var(--accent-color);",
+        cls="window",
     )
 
 
@@ -200,11 +97,7 @@ app = FastHTML(
     ws_hdr=True,
     pico=False,
     hdrs=(
-        Link(
-            rel="stylesheet",
-            href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&family=Roboto+Mono&display=swap",
-        ),
-        get_common_styles(),
+        Link(rel="stylesheet", href="/static/base.css"),
         Script(src="https://unpkg.com/htmx.org@1.9.4"),
     ),
 )
@@ -513,127 +406,71 @@ def home():
                 
                 // Simple setup - no keyboard shortcuts needed
             """),
-            Style("""
-                .content-wrapper {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 20px;
-                }
-                .video-container {
-                    position: relative;
-                    width: 100%;
-                }
-                #videoFrame {
-                    width: 100%;
-                    height: auto;
-                    border: 1px solid var(--accent-color);
-                    border-radius: 8px;
-                }
-                #videoPlayer {
-                    width: 100%;
-                    height: auto;
-                    border: 1px solid var(--accent-color);
-                    border-radius: 8px;
-                }
-                .video-container {
-                    position: relative;
-                    display: inline-block;
-                }
-                #selectionCanvas {
-                    position: absolute;
-                    top: 0;
-                    left: 0;
-                    width: 100%;
-                    height: 100%;
-                    pointer-events: none;
-                }
-                .recent-passes {
-                    width: 100%;
-                    max-width: 500px;
-                }
-                @media (min-width: 768px) {
-                    .content-wrapper {
-                        flex-direction: row;
-                    }
-                    .video-container, .recent-passes {
-                        flex: 1;
-                    }
-                }
-            """),
         ),
         Body(
             get_common_header("Stop Sign Nanny"),
             Main(
                 Div(
                     Div(
-                        id="videoContainer",
-                        hx_get="/load-video",
-                        hx_trigger="load",
+                        Div(
+                            id="videoContainer",
+                            hx_get="/load-video",
+                            hx_trigger="load",
+                        ),
+                        cls="sunken",
                     ),
-                    cls="video-container",
+                    Div(
+                        H2("Recent Vehicle Passes"),
+                        Div(id="recentPasses"),
+                        cls="window",
+                    ),
+                    cls="two-col",
                 ),
                 # Stop line adjustment panel (hidden by default, activated by Ctrl+Shift+A)
                 Div(
-                    H3("Stop Line Adjustment", style="margin-bottom: 15px; color: var(--accent-color);"),
+                    H3("Stop Line Adjustment"),
                     # Click-to-set interface
                     Div(
                         Button(
                             "Adjust Stop Line",
                             id="adjustmentModeBtn",
                             onclick="toggleAdjustmentMode()",
-                            style="padding: 10px 20px; margin: 10px 0; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;",
                         ),
                         P(
                             "Click the button above, then click two points on the video to set the new stop line position.",
-                            style="margin: 10px 0; font-size: 14px; color: var(--text-color);",
                         ),
-                        style="margin-bottom: 20px;",
                     ),
                     # Manual coordinate input (legacy interface)
                     Details(
-                        Summary(
-                            "Manual Coordinate Input", style="cursor: pointer; font-weight: bold; margin-bottom: 10px;"
-                        ),
+                        Summary("Manual Coordinate Input"),
                         Div(
                             Div(
-                                Label("Point 1 - X:", style="display: inline-block; width: 80px;"),
-                                Input(type="number", id="x1", value="550", style="width: 80px; margin: 5px;"),
-                                Label("Y:", style="margin-left: 10px;"),
-                                Input(type="number", id="y1", value="500", style="width: 80px; margin: 5px;"),
-                                style="margin-bottom: 10px;",
+                                Label("Point 1 - X:"),
+                                Input(type="number", id="x1", value="550"),
+                                Label("Y:"),
+                                Input(type="number", id="y1", value="500"),
                             ),
                             Div(
-                                Label("Point 2 - X:", style="display: inline-block; width: 80px;"),
-                                Input(type="number", id="x2", value="400", style="width: 80px; margin: 5px;"),
-                                Label("Y:", style="margin-left: 10px;"),
-                                Input(type="number", id="y2", value="550", style="width: 80px; margin: 5px;"),
-                                style="margin-bottom: 15px;",
+                                Label("Point 2 - X:"),
+                                Input(type="number", id="x2", value="400"),
+                                Label("Y:"),
+                                Input(type="number", id="y2", value="550"),
                             ),
                             Button(
                                 "Update Stop Zone",
                                 onclick="updateStopZone()",
-                                style="padding: 8px 16px; background-color: var(--accent-color); color: white; border: none; border-radius: 4px; cursor: pointer;",
                             ),
-                            style="padding: 10px; background-color: var(--card-bg); border-radius: 5px;",
+                            cls="sunken",
                         ),
                     ),
                     # Status display
                     Div(
                         id="status",
-                        style="margin-top: 15px; padding: 10px; border-radius: 5px; background-color: var(--card-bg); min-height: 20px; font-weight: bold;",
                     ),
                     id="adjustmentPanel",
-                    style="display: none; margin: 20px 0; padding: 20px; background-color: var(--bg-secondary); border-radius: 10px; border: 2px solid var(--accent-color);",
+                    style="display: none;",
+                    cls="window",
                 ),
-                Div(
-                    H2("Recent Vehicle Passes"),
-                    Div(
-                        Div(id="recentPasses"),
-                        style="overflow-y: auto; max-height: 70vh;",
-                    ),
-                    cls="recent-passes",
-                ),
-                cls="content-wrapper",
             ),
             get_common_footer(),
         ),
@@ -1079,449 +916,7 @@ def debug_page():
             Title("Stop Sign Debug"),
             Script(src="https://unpkg.com/htmx.org@1.9.4"),
             Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest"),
-            Script("""
-                let adjustmentMode = false;
-                let clickedPoints = [];
-                let currentZoneType = 'stop-line';  // Current zone being edited
-                let debugZonesVisible = false;
-                
-                // Zone configuration
-                const zoneConfig = {
-                    'stop-line': {
-                        name: 'Stop Line',
-                        color: '#c0c0c0',
-                        bgColor: '#c0c0c0',
-                        clicksRequired: 2,
-                        description: 'Click two points to define where vehicles must stop'
-                    },
-                    'pre-stop': {
-                        name: 'Pre-Stop Zone',
-                        color: '#c0c0c0',
-                        bgColor: '#c0c0c0',
-                        clicksRequired: 2,
-                        description: 'Click two points to set detection range for approaching vehicles'
-                    },
-                    'capture': {
-                        name: 'Image Capture Zone',
-                        color: '#c0c0c0',
-                        bgColor: '#c0c0c0',
-                        clicksRequired: 2,
-                        description: 'Click two points to set optimal photo capture range'
-                    }
-                };
-                
-                function selectZoneType(zoneType) {
-                    currentZoneType = zoneType;
-                    clickedPoints = [];
-                    clearClickMarkers();
-                    
-                    // Update zone selector buttons
-                    const buttons = document.querySelectorAll('.zone-selector');
-                    buttons.forEach(btn => {
-                        btn.classList.remove('active');
-                        btn.style.backgroundColor = '';
-                        btn.style.color = '';
-                    });
-                    
-                    const activeButton = document.getElementById('zone-' + zoneType);
-                    activeButton.classList.add('active');
-                    
-                    // Update instructions
-                    const instructions = document.getElementById('zone-instructions');
-                    instructions.innerText = zoneConfig[zoneType].description;
-                    
-                    // Update status
-                    const status = document.getElementById('status');
-                    status.innerText = `Ready to adjust ${zoneConfig[zoneType].name}`;
-                    
-                    // Reset adjustment mode button
-                    const adjustBtn = document.getElementById('adjustmentModeBtn');
-                    adjustBtn.innerText = `Adjust ${zoneConfig[zoneType].name}`;
-                }
-                
-                function toggleDebugZones() {
-                    debugZonesVisible = !debugZonesVisible;
-                    
-                    fetch('/api/toggle-debug-zones', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: debugZonesVisible })
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        const button = document.getElementById('debugZonesBtn');
-                        button.innerText = debugZonesVisible ? 'Hide Debug Zones' : 'Show Debug Zones';
-                        
-                        const status = document.getElementById('status');
-                        status.innerText = debugZonesVisible ? 'Debug zones visible on video' : 'Debug zones hidden';
-                    })
-                    .catch(error => {
-                        console.error('Error toggling debug zones:', error);
-                    });
-                }
-                
-                function toggleAdjustmentMode() {
-                    adjustmentMode = !adjustmentMode;
-                    clickedPoints = [];
-                    
-                    const video = document.getElementById('videoPlayer');
-                    const button = document.getElementById('adjustmentModeBtn');
-                    const status = document.getElementById('status');
-                    const config = zoneConfig[currentZoneType];
-                    
-                    if (adjustmentMode) {
-                        video.style.cursor = 'crosshair';
-                        video.style.outline = `3px solid ${config.color}`;
-                        button.innerText = 'Cancel Adjustment';
-                        status.innerText = `ADJUSTMENT MODE: ${config.description}`;
-                    } else {
-                        video.style.cursor = 'default';
-                        video.style.outline = 'none';
-                        button.innerText = `Adjust ${config.name}`;
-                        status.innerText = '';
-                        clearClickMarkers();
-                    }
-                }
-                
-                function handleVideoClick(event) {
-                    if (!adjustmentMode) return;
-                    
-                    const config = zoneConfig[currentZoneType];
-                    
-                    // Prevent more clicks than required
-                    if (clickedPoints.length >= config.clicksRequired) return;
-                    
-                    const video = event.target;
-                    const rect = video.getBoundingClientRect();
-                    
-                    // Get click coordinates relative to video element
-                    const x = event.clientX - rect.left;
-                    const y = event.clientY - rect.top;
-                    
-                    console.log('Click debug:', {
-                        zoneType: currentZoneType,
-                        browserClick: { x, y },
-                        videoElement: { width: rect.width, height: rect.height },
-                        actualVideo: { width: video.videoWidth, height: video.videoHeight }
-                    });
-                    
-                    clickedPoints.push({x: x, y: y});
-                    
-                    // Position marker at exact click location with zone color
-                    addClickMarker(rect.left + x, rect.top + y, clickedPoints.length, config.color);
-                    
-                    const status = document.getElementById('status');
-                    const submitBtn = document.getElementById('submitBtn');
-                    
-                    if (clickedPoints.length === 1) {
-                        status.innerText = `POINT 1 SET ✓ - Now click the second point for ${config.name}.`;
-                    } else if (clickedPoints.length === config.clicksRequired) {
-                        status.innerText = `ALL POINTS SET ✓ - Click SUBMIT to update ${config.name}.`;
-                        submitBtn.style.display = 'inline-block';
-                        submitBtn.disabled = false;
-                    }
-                }
-                
-                function updateZoneFromClicks() {
-                    const video = document.getElementById('videoPlayer');
-                    const config = zoneConfig[currentZoneType];
-                    
-                    const data = {
-                        zone_type: currentZoneType,
-                        display_points: clickedPoints,
-                        video_element_size: {
-                            width: video.clientWidth,
-                            height: video.clientHeight
-                        },
-                        actual_video_size: {
-                            width: video.videoWidth,
-                            height: video.videoHeight
-                        }
-                    };
-                    
-                    const endpoint = currentZoneType === 'stop-line' ? 
-                        '/api/update-stop-zone-from-display' : 
-                        '/api/update-zone-from-display';
-                    
-                    fetch(endpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(data),
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        const status = document.getElementById('status');
-                        if (data.status === 'success') {
-                            status.innerText = `✅ SUCCESS! ${config.name} updated successfully.`;
-                            
-                            // Show coordinate details
-                            console.log('Coordinate transformation details:', data);
-                            
-                            setTimeout(() => {
-                                status.innerText = 'Ready for next adjustment.';
-                                toggleAdjustmentMode();
-                            }, 3000);
-                        } else {
-                            status.innerText = '❌ ERROR: ' + (data.error || 'Unknown error occurred');
-                        }
-                    })
-                    .catch((error) => {
-                        console.error('Error:', error);
-                        const status = document.getElementById('status');
-                        status.innerText = '❌ NETWORK ERROR: Could not update stop line.';
-                    });
-                }
-                
-                function resetPoints() {
-                    clickedPoints = [];
-                    clearClickMarkers();
-                    const status = document.getElementById('status');
-                    const submitBtn = document.getElementById('submitBtn');
-                    status.innerText = 'Points cleared. Click two new points on the video.';
-                    submitBtn.style.display = 'none';
-                    submitBtn.disabled = true;
-                }
-                
-                function addClickMarker(pageX, pageY, pointNumber, color = '#ff0000') {
-                    const video = document.getElementById('videoPlayer');
-                    const rect = video.getBoundingClientRect();
-                    
-                    // Ensure video has a wrapper for positioning
-                    let wrapper = video.parentElement;
-                    if (!wrapper || !wrapper.classList.contains('video-wrapper')) {
-                        wrapper = document.createElement('div');
-                        wrapper.className = 'video-wrapper';
-                        wrapper.style.position = 'relative';
-                        wrapper.style.display = 'inline-block';
-                        video.parentNode.insertBefore(wrapper, video);
-                        wrapper.appendChild(video);
-                    }
-                    
-                    // Calculate position relative to video element
-                    const relativeX = pageX - rect.left;
-                    const relativeY = pageY - rect.top;
-                    
-                    const marker = document.createElement('div');
-                    marker.className = 'click-marker';
-                    marker.innerHTML = pointNumber;
-                    marker.style.position = 'absolute';
-                    marker.style.left = (relativeX - 15) + 'px';
-                    marker.style.top = (relativeY - 15) + 'px';
-                    marker.style.width = '30px';
-                    marker.style.height = '30px';
-                    marker.style.backgroundColor = color;
-                    marker.style.color = 'white';
-                    marker.style.borderRadius = '50%';
-                    marker.style.display = 'flex';
-                    marker.style.alignItems = 'center';
-                    marker.style.justifyContent = 'center';
-                    marker.style.fontWeight = 'bold';
-                    marker.style.fontSize = '14px';
-                    marker.style.zIndex = '9999';
-                    marker.style.pointerEvents = 'none';
-                    wrapper.appendChild(marker);
-                }
-                
-                function clearClickMarkers() {
-                    const markers = document.querySelectorAll('.click-marker');
-                    markers.forEach(marker => marker.remove());
-                }
-                
-                function debugCoordinates() {
-                    const video = document.getElementById('videoPlayer');
-                    if (!video) return;
-                    
-                    const data = {
-                        display_points: [{x: 100, y: 100}, {x: 500, y: 300}],
-                        video_element_size: {
-                            width: video.clientWidth,
-                            height: video.clientHeight
-                        }
-                    };
-                    
-                    fetch('/api/debug-coordinates', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(data),
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        document.getElementById('debugOutput').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
-                    });
-                }
-                
-                function showCoordinateInfo() {
-                    fetch('/api/coordinate-info')
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.error) {
-                                document.getElementById('coordOutput').innerHTML = '<div style="color: #ff6b6b; padding: 10px; background: #2a1f1f; border-radius: 5px;">Error: ' + data.error + '<br><br>This usually means the video analyzer is not running yet. Try starting the video processing service first.</div>';
-                            } else {
-                                document.getElementById('coordOutput').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
-                            }
-                        })
-                        .catch(error => {
-                            document.getElementById('coordOutput').innerHTML = '<div style="color: #ff6b6b;">Network error: ' + error.message + '</div>';
-                        });
-                }
-                
-                document.addEventListener('DOMContentLoaded', function() {
-                    // Initialize the interface
-                    selectZoneType('stop-line'); // Set default zone
-                    
-                    setTimeout(() => {
-                        const video = document.getElementById('videoPlayer');
-                        if (video) {
-                            video.addEventListener('click', handleVideoClick);
-                        }
-                    }, 1000);
-                });
-            """),
-            Style("""
-                body { 
-                    font-family: 'MS Sans Serif', sans-serif; 
-                    margin: 0; 
-                    padding: 6px; 
-                    background: #c0c0c0;
-                    font-size: 13px;
-                    color: black; 
-                }
-                .container { max-width: none; margin: 0; }
-                
-                h1 { 
-                    text-align: center; 
-                    color: black; 
-                    font-size: 18px; 
-                    margin: 4px 0 6px 0; 
-                    font-weight: bold;
-                }
-                
-                h2, h3 { 
-                    font-size: 14px; 
-                    margin: 3px 0; 
-                    font-weight: bold;
-                    color: #000080;
-                }
-                
-                .debug-card { 
-                    background: #f0f0f0; 
-                    border: 2px inset #c0c0c0; 
-                    padding: 6px; 
-                    margin: 3px; 
-                    display: inline-block;
-                    vertical-align: top;
-                    width: calc(50% - 12px);
-                }
-                
-                .full-width { width: calc(100% - 12px); }
-                
-                .zone-selector { 
-                    padding: 4px 12px; 
-                    border: 1px outset #c0c0c0; 
-                    background: #c0c0c0;
-                    color: black;
-                    cursor: pointer; 
-                    font-size: 13px;
-                    margin: 2px;
-                    min-width: 90px;
-                }
-                
-                .zone-selector:active { 
-                    border: 1px inset #c0c0c0; 
-                }
-                
-                .zone-selector.active {
-                    border: 1px inset #c0c0c0;
-                    background: #a0a0a0;  /* Darker pressed look */
-                }
-                
-                .viz-btn, .action-btn { 
-                    padding: 4px 12px; 
-                    border: 1px outset #c0c0c0; 
-                    background: #c0c0c0;
-                    cursor: pointer; 
-                    font-size: 13px;
-                    margin: 2px;
-                }
-                
-                .viz-btn:active, .action-btn:active { 
-                    border: 1px inset #c0c0c0; 
-                }
-                
-                .action-btn.submit { 
-                    background: #008000; 
-                    color: white;
-                }
-                
-                video { 
-                    max-width: 100%; 
-                    border: 1px solid #808080; 
-                    display: block; 
-                }
-                
-                .video-wrapper { position: relative; display: inline-block; }
-                .click-marker { position: absolute; pointer-events: none; }
-                
-                pre { 
-                    background: black; 
-                    color: #00ff00; 
-                    padding: 6px; 
-                    font-size: 11px; 
-                    line-height: 1.2;
-                    font-family: 'Courier New', monospace;
-                    border: 1px inset #c0c0c0;
-                    height: 140px;
-                    overflow-y: scroll;
-                }
-                
-                .debug-tools { 
-                    background: #f0f0f0; 
-                    border: 2px inset #c0c0c0; 
-                    padding: 6px; 
-                    margin: 3px;
-                }
-                
-                .debug-tools button { 
-                    background: #c0c0c0; 
-                    border: 1px outset #c0c0c0; 
-                    padding: 3px 8px; 
-                    margin: 2px; 
-                    cursor: pointer;
-                    font-size: 12px;
-                }
-                
-                .debug-tools button:active { 
-                    border: 1px inset #c0c0c0; 
-                }
-                
-                p { 
-                    margin: 3px 0; 
-                    font-size: 12px; 
-                    line-height: 1.3;
-                }
-                
-                #status { 
-                    background: black; 
-                    color: #00ff00; 
-                    padding: 4px; 
-                    font-size: 12px; 
-                    border: 1px inset #c0c0c0;
-                    font-family: 'Courier New', monospace;
-                    min-height: 20px;
-                }
-                
-                .instructions-box {
-                    background: #ffffcc;
-                    border: 1px solid #808080;
-                    padding: 4px;
-                    font-size: 12px;
-                    margin: 3px 0;
-                }
-            """),
+            Script(src="/static/debug.js"),
         ),
         Body(
             Div(
@@ -1533,7 +928,6 @@ def debug_page():
                         H2("Video Stream"),
                         Div(hx_get="/load-video", hx_trigger="load"),
                         cls="debug-card",
-                        style="width: 70%;",
                     ),
                     # Right side - All controls stacked vertically
                     Div(
@@ -1559,49 +953,40 @@ def debug_page():
                                     onclick="selectZoneType('capture')",
                                     cls="zone-selector",
                                 ),
-                                style="border: 1px inset #c0c0c0; padding: 4px; margin: 2px 0; background: #e0e0e0;",
                             ),
-                            P(id="zone-instructions", style="font-style: italic; margin: 2px 0; font-size: 11px;"),
-                            style="margin-bottom: 4px;",
+                            P(id="zone-instructions"),
                         ),
                         # Visualization
                         Div(
                             H3("2. Visualization"),
-                            Button("Show Zones", id="debugZonesBtn", onclick="toggleDebugZones()", cls="viz-btn"),
-                            style="margin-bottom: 4px;",
+                            Button("Show Zones", id="debugZonesBtn", onclick="toggleDebugZones()"),
                         ),
                         # Actions
                         Div(
                             H3("3. Edit Zone"),
-                            Button(
-                                "Adjust", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()", cls="action-btn"
-                            ),
-                            Button("Reset", onclick="resetPoints()", cls="action-btn"),
+                            Button("Adjust", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()"),
+                            Button("Reset", onclick="resetPoints()"),
                             Button(
                                 "SUBMIT",
                                 id="submitBtn",
                                 onclick="updateZoneFromClicks()",
-                                cls="action-btn",
                                 style="display: none;",
                                 disabled=True,
                             ),
-                            style="margin-bottom: 4px;",
                         ),
                         # Status
                         Div(
                             H3("4. Status"),
-                            Div(id="status", style="height: 40px;"),
+                            Div(id="status"),
                             Div(
                                 P(
                                     "Select zone → Show zones → Adjust → Click 2 points → Submit",
-                                    cls="instructions-box",
                                 ),
                             ),
                         ),
                         cls="debug-card",
-                        style="width: 28%;",
                     ),
-                    style="display: flex; gap: 6px; align-items: flex-start;",
+                    cls="two-col",
                 ),
                 # Debug tools in compact form
                 Div(
@@ -1610,9 +995,8 @@ def debug_page():
                     Button("Debug Transforms", onclick="debugCoordinates()"),
                     Div(id="coordOutput"),
                     Div(id="debugOutput"),
-                    cls="debug-tools full-width",
+                    cls="window",
                 ),
-                cls="container",
             )
         ),
     )
@@ -1638,17 +1022,14 @@ async def get_recent_vehicle_passes():
             *[
                 Li(
                     create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)]),
-                    style="margin-bottom: 20px; background-color: var(--card-bg); padding: 15px; border-radius: 8px;",
                 )
                 for pass_data in recent_passes
             ],
-            style="list-style-type: none; padding: 0; margin: 0;",
         )
 
         return Div(
             passes_list,
             id="recentPasses",
-            style="background-color: var(--card-bg); padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,255,157,0.1);",
         )
     except Exception as e:
         logger.error(f"Error in get_recent_vehicle_passes: {str(e)}")
@@ -1657,28 +1038,20 @@ async def get_recent_vehicle_passes():
 
 @app.get("/records")  # type: ignore
 def records():
-    return Html(
-        Head(
-            Title("Records - Stop Sign Nanny"),
-            Script(src="https://unpkg.com/htmx.org@1.9.4"),
-        ),
-        Body(
-            get_common_header("Records"),
-            get_common_styles(),
-            Main(
+    return (
+        get_common_header("Records"),
+        Main(
+            Div(
+                H2("Vehicle Records"),
                 Div(
-                    H2("Vehicle Records", style="text-align: center;"),
-                    Div(
-                        Div(id="worstPasses", hx_get="/api/worst-passes", hx_trigger="load"),
-                        Div(id="bestPasses", hx_get="/api/best-passes", hx_trigger="load"),
-                        style="display: flex; justify-content: center; gap: 20px;",
-                    ),
-                    cls="container",
-                    style="margin: 20px auto; max-width: 1200px;",
+                    Div(id="worstPasses", hx_get="/api/worst-passes", hx_trigger="load"),
+                    Div(id="bestPasses", hx_get="/api/best-passes", hx_trigger="load"),
+                    cls="two-col",
                 ),
+                cls="window",
             ),
-            get_common_footer(),
         ),
+        get_common_footer(),
     )
 
 
@@ -1743,7 +1116,6 @@ def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
                 create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)])
                 for pass_data in speed_passes
             ],
-            style="display: flex; flex-direction: column; gap: 20px;",
         ),
         H4("Time in Stop Zone"),
         Div(
@@ -1751,10 +1123,9 @@ def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
                 create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)])
                 for pass_data in time_passes
             ],
-            style="display: flex; flex-direction: column; gap: 20px;",
         ),
         id=div_id,
-        cls="card",
+        cls="window",
     )
 
 
@@ -1772,67 +1143,53 @@ def create_pass_item(pass_data, scores):
             Img(
                 src=image_url,
                 alt="Vehicle Image",
-                style="width: 200px; height: auto; border-radius: 5px;",
+                cls="sunken",
             ),
-            style="flex: 0 0 200px; margin-right: 15px;",
         ),
         Div(
             Div(
                 Div(
-                    Span("Speed Score: ", style="font-weight: bold; font-size: 1.1em;"),
+                    Span("Speed Score: "),
                     Span(
                         f"{scores['speed_score']}",
-                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({scores['speed_score'] * 12}, 100%, 50%);",
                     ),
                 ),
                 Div(
                     f"Min Speed: {pass_data.min_speed:.2f} pixels/sec",
-                    style="font-size: 0.9em; margin-left: 10px;",
                 ),
-                style="margin-bottom: 10px;",
             ),
             Div(
                 Div(
-                    Span("Time Score: ", style="font-weight: bold; font-size: 1.1em;"),
+                    Span("Time Score: "),
                     Span(
                         f"{scores['time_score']}",
-                        style=f"font-weight: bold; font-size: 1.1em; color: hsl({scores['time_score'] * 12}, 100%, 50%);",
                     ),
                 ),
                 Div(
                     f"Time in Zone: {pass_data.time_in_zone:.2f} seconds",
-                    style="font-size: 0.9em; margin-left: 10px;",
                 ),
-                style="margin-bottom: 3px;",
             ),
-            style="flex: 1;",
         ),
-        style="display: flex; align-items: flex-start;",
+        cls="two-col",
     )
 
 
 @app.get("/statistics")  # type: ignore
 def statistics():
-    return Html(
-        Head(
-            Title("Statistics - Stop Sign Nanny"),
-        ),
-        Body(
-            get_common_header("Statistics"),
-            get_common_styles(),
-            Main(
-                Div(
-                    Iframe(
-                        src=GRAFANA_URL,
-                        width="100%",
-                        height="600",
-                        frameborder="0",
-                    ),
-                    cls="container",
+    return (
+        get_common_header("Statistics"),
+        Main(
+            Div(
+                Iframe(
+                    src=GRAFANA_URL,
+                    width="100%",
+                    height="600",
+                    frameborder="0",
                 ),
+                cls="window",
             ),
-            get_common_footer(),
         ),
+        get_common_footer(),
     )
 
 
@@ -1840,23 +1197,16 @@ def statistics():
 def about():
     with open("static/summary.md", "r") as file:
         summary_content = file.read()
-    return Html(
-        Head(
-            Title("About - Stop Sign Nanny"),
-        ),
-        Body(
-            get_common_header("About"),
-            get_common_styles(),
-            Main(
-                Div(
-                    H2("Project Summary"),
-                    P(summary_content),
-                    cls="container",
-                    style="margin: 20px auto; padding: 20px; background-color: var(--card-bg); border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 255, 157, 0.1); white-space: pre-wrap; max-width: 800px;",
-                ),
+    return (
+        get_common_header("About"),
+        Main(
+            Div(
+                H2("Project Summary"),
+                P(summary_content),
+                cls="window",
             ),
-            get_common_footer(),
         ),
+        get_common_footer(),
     )
 
 
@@ -1993,23 +1343,50 @@ async def health():
             )
 
 
-def main(config: Config):
+def main():
+    """Main entry point for the web server."""
+    db_connected = False
+    db_init_attempts = 0
+    max_db_init_attempts = 10
+    db_init_delay = 5  # seconds
+
+    while not db_connected and db_init_attempts < max_db_init_attempts:
+        try:
+            app.state.db = Database(db_url=DB_URL)
+            # A simple query to ensure the database is responsive
+            with app.state.db.Session() as session:
+                session.execute(text("SELECT 1"))
+            db_connected = True
+            logger.info("Database connection successful.")
+        except Exception as e:
+            db_init_attempts += 1
+            logger.warning(
+                f"Database connection attempt {db_init_attempts} failed: {e}. "
+                f"Retrying in {db_init_delay} seconds..."
+            )
+            time.sleep(db_init_delay)
+
+    if not db_connected:
+        logger.error("Failed to connect to the database after several attempts. Exiting.")
+        # Fallback to YAML config if the database is unavailable
+        logger.warning("Config: Database connection failed, using YAML fallback")
+        # Depending on requirements, you might exit here or continue with limited functionality
+        # For now, we'll continue and let endpoints handle the lack of a DB connection.
+
     try:
-        app.state.db = Database(db_url=DB_URL)
         uvicorn.run(
             "stopsign.web_server:app",
             host="0.0.0.0",
             port=8000,
-            reload=True,  # Enable auto-reload for live development
+            reload=True,
             log_level="warning",
-            reload_dirs=["./stopsign"],  # Watch for changes in stopsign directory
-            reload_excludes=["./app/data/*"],  # Exclude data files from watching
+            reload_dirs=["./stopsign"],
+            reload_excludes=["./app/data/*"],
         )
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    config = Config("./config.yaml")
-    main(config)
+    logging.basicConfig(level=logging.INFO)
+    main()
