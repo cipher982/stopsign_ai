@@ -183,3 +183,5 @@ sample_data/*.mov
 
 # Copied stopsign module for deployment
 rtsp_to_redis/stopsign/
+
+docker/local/docker-compose.prod-view.yml
