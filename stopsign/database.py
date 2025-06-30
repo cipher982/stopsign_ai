@@ -1,5 +1,6 @@
 import functools
 import logging
+import os
 import time
 from datetime import datetime
 from typing import List
@@ -98,6 +99,12 @@ class Database:
         )
         self.Session = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
+
+        # Check if we're in read-only mode
+        self.read_only_mode = os.getenv("READ_ONLY_MODE", "false").lower() == "true"
+        if self.read_only_mode:
+            logger.warning("🔒 DATABASE IN READ-ONLY MODE - All write operations will be blocked")
+
         logger.info(f"Database connection established at {db_url}")
         self.log_database_summary()
 
@@ -111,6 +118,10 @@ class Database:
 
     @log_execution_time
     def save_car_state(self, car):
+        if self.read_only_mode:
+            logger.debug("🚫 Blocked save_car_state (READ-ONLY MODE)")
+            return
+
         with self.Session() as session:
             car_state = CarStateHistory(
                 car_id=car.id,
@@ -133,6 +144,10 @@ class Database:
     def add_vehicle_pass(
         self, vehicle_id: int, time_in_zone: float, stop_duration: float, min_speed: float, image_path: str
     ):
+        if self.read_only_mode:
+            logger.debug("🚫 Blocked add_vehicle_pass (READ-ONLY MODE)")
+            return
+
         with self.Session() as session:
             vehicle_pass = VehiclePass(
                 vehicle_id=vehicle_id,
