@@ -82,6 +82,18 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/stream", StaticFiles(directory="/app/data/stream"), name="stream")
 
 
+# Add cache headers for images
+@app.middleware("http")
+async def add_cache_headers(request, call_next):
+    response = await call_next(request)
+    # Add cache headers for static images and assets
+    if request.url.path.startswith("/static/") or request.url.path.startswith("/vehicle-image/"):
+        if any(request.url.path.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".css", ".js"]):
+            response.headers["Cache-Control"] = "public, max-age=3600"  # 1 hour cache
+            response.headers["ETag"] = f'"{hash(request.url.path)}"'
+    return response
+
+
 @app.get("/vehicle-image/{object_name:path}")  # type: ignore
 def get_image(object_name: str):
     # Validate object_name before trying to fetch
@@ -660,15 +672,18 @@ async def get_recent_vehicle_passes():
             *[
                 Li(
                     create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)]),
+                    id=f"pass-{pass_data.id}",  # Add unique ID for each pass
                 )
                 for pass_data in recent_passes
             ],
+            id="passes-list",
         )
 
         return Div(
             passes_list,
             id="recentPasses",
         )
+
     except Exception as e:
         logger.error(f"Error in get_recent_vehicle_passes: {str(e)}")
         return Div(P(f"Error: {str(e)}"), id="recentPasses")
@@ -789,6 +804,7 @@ def create_pass_item(pass_data, scores):
                 cls="sunken vehicle-image",
                 width="200",
                 loading="lazy",
+                decoding="async",
             ),
         ),
         Div(

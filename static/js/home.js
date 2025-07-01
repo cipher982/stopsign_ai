@@ -194,22 +194,10 @@ function clearClickMarkers() {
     markers.forEach(marker => marker.remove());
 }
 
-// Fetch recent vehicle passes
+// Fetch recent vehicle passes - now handled by HTMX
 function fetchRecentPasses() {
-    fetch('/api/recent-vehicle-passes')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.text();
-        })
-        .then(html => {
-            document.getElementById('recentPasses').innerHTML = html;
-        })
-        .catch(error => {
-            console.error('Error fetching recent passes:', error);
-            document.getElementById('recentPasses').innerHTML = `<p>Error fetching data: ${error.message}</p>`;
-        });
+    // This function is no longer needed as HTMX handles the updates
+    console.log('Recent passes now handled by HTMX auto-refresh');
 }
 
 // Debug mode for coordinate testing
@@ -303,9 +291,7 @@ document.addEventListener('htmx:afterRequest', function(event) {
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    // Fetch recent passes initially and set up refresh
-    fetchRecentPasses();
-    setInterval(fetchRecentPasses, 30000);
+    // Recent passes now handled by HTMX - no manual refresh needed
     
     // Initialize video event listeners
     setTimeout(() => {
