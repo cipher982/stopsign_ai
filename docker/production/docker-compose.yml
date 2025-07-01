@@ -2,7 +2,7 @@ services:
 
   video_analyzer:
     build:
-      context: ..
+      context: ../..
       dockerfile: docker/production/Dockerfile.processor
     env_file:
       - .env
@@ -32,7 +32,7 @@ services:
 
   ffmpeg_service:
     build:
-      context: ..
+      context: ../..
       dockerfile: docker/production/Dockerfile.ffmpeg
     env_file:
       - .env
@@ -64,7 +64,7 @@ services:
 
   web_server:
     build:
-      context: ..
+      context: ../..
       dockerfile: docker/production/Dockerfile.web
     ports:
       - ${WEB_SERVER_PORT}:8000
