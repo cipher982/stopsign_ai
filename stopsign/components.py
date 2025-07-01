@@ -5,6 +5,7 @@ Reusable UI components for the Stop Sign application
 
 from fasthtml.common import H2
 from fasthtml.common import H3
+from fasthtml.common import H4
 from fasthtml.common import A
 from fasthtml.common import Button
 from fasthtml.common import Details
@@ -16,6 +17,7 @@ from fasthtml.common import Label
 from fasthtml.common import Main
 from fasthtml.common import Nav
 from fasthtml.common import P
+from fasthtml.common import Span
 from fasthtml.common import Summary
 
 
@@ -44,7 +46,10 @@ def main_layout_component():
     """Main two-column layout for home page"""
     return Main(
         Div(
-            video_component(),
+            Div(
+                video_component(),
+                live_stats_component(),
+            ),
             recent_passes_component(),
             cls="two-col",
         ),
@@ -217,6 +222,63 @@ def debug_controls_component():
             ),
         ),
         cls="debug-card",
+    )
+
+
+def live_stats_component():
+    """Dense live statistics panel - Win98 Task Manager style"""
+    return Div(
+        Div("System Status", cls="title-bar"),
+        Div(
+            # Today's Report Card
+            Div(
+                H4("Today's Report"),
+                Div(
+                    Span("Compliance: "),
+                    Span("...", id="complianceRate"),
+                ),
+                Div(
+                    Span("Violations: "),
+                    Span("...", id="violationCount"),
+                ),
+                Div(
+                    Span("Trend: "),
+                    Span("→", id="trendArrow"),
+                ),
+            ),
+            # Live Activity
+            Div(
+                H4("Activity"),
+                Div(
+                    Span("Vehicles: "),
+                    Span("...", id="vehicleCount"),
+                ),
+                Div(
+                    Span("Last: "),
+                    Span("...", id="lastDetection"),
+                ),
+                Div(
+                    Span("Status: "),
+                    Span(cls="status-indicator good", id="systemStatus"),
+                    Span(" Online"),
+                ),
+            ),
+            # Rotating Insight
+            Div(
+                H4("Insight"),
+                P("Loading...", id="rotatingInsight"),
+            ),
+            cls="three-col",
+        ),
+        # Hidden div that triggers updates and distributes data
+        Div(
+            hx_get="/api/live-stats",
+            hx_trigger="load, every 15s",
+            hx_swap="none",
+            hx_vals='{"update": "stats"}',
+            id="statsUpdater",
+        ),
+        cls="metric-card",
     )
 
 
