@@ -586,6 +586,48 @@ def debug_page():
     )
 
 
+@app.get("/debug-perf")  # type: ignore
+def debug_perf_page():
+    """Performance debugging page"""
+    from fasthtml.common import H1
+    from fasthtml.common import Button
+    from fasthtml.common import Code
+    from fasthtml.common import Pre
+
+    return Html(
+        page_head_component("Performance Debug"),
+        Body(
+            Div(
+                H1("Performance Debugging"),
+                Button(
+                    "Run Performance Test",
+                    hx_get="/debug-performance",
+                    hx_target="#perf-results",
+                    hx_indicator="#loading",
+                ),
+                Div("Loading...", id="loading", style="display: none;"),
+                Pre(
+                    Code(id="perf-results"),
+                    style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin-top: 20px;",
+                ),
+                Script("""
+                    document.body.addEventListener('htmx:afterRequest', function(evt) {
+                        if (evt.detail.target.id === 'perf-results') {
+                            try {
+                                const data = JSON.parse(evt.detail.xhr.response);
+                                evt.detail.target.textContent = JSON.stringify(data, null, 2);
+                            } catch (e) {
+                                evt.detail.target.textContent = evt.detail.xhr.response;
+                            }
+                        }
+                    });
+                """),
+                cls="window",
+            )
+        ),
+    )
+
+
 @app.get("/api/live-stats")  # type: ignore
 async def get_live_stats():
     """Get live statistics for the stats panel"""
@@ -956,6 +998,122 @@ async def check_stream():
         else:
             logger.warning(f"Stream directory does not exist: {stream_dir}")
         return {"status": f"HLS file not found at {STREAM_FS_PATH}"}
+
+
+@app.get("/debug-performance")  # type: ignore
+async def debug_performance():
+    """Debug endpoint to time various operations"""
+    import os
+    import time
+
+    import psutil
+
+    results = {}
+
+    # Test database queries
+    if hasattr(app.state, "db"):
+        # Test recent passes query
+        start = time.time()
+        try:
+            recent_passes = app.state.db.get_recent_vehicle_passes(limit=10)
+            results["db_recent_passes"] = {
+                "time_ms": round((time.time() - start) * 1000),
+                "count": len(recent_passes),
+                "status": "success",
+            }
+        except Exception as e:
+            results["db_recent_passes"] = {
+                "time_ms": round((time.time() - start) * 1000),
+                "error": str(e),
+                "status": "error",
+            }
+
+        # Test bulk scoring
+        start = time.time()
+        try:
+            test_passes = [{"min_speed": 10.0, "time_in_zone": 2.5}]
+            scores = app.state.db.get_bulk_scores(test_passes)
+            results["db_bulk_scores"] = {"time_ms": round((time.time() - start) * 1000), "status": "success"}
+        except Exception as e:
+            results["db_bulk_scores"] = {
+                "time_ms": round((time.time() - start) * 1000),
+                "error": str(e),
+                "status": "error",
+            }
+
+        # Test stats query
+        start = time.time()
+        try:
+            total = app.state.db.get_total_passes_last_24h()
+            results["db_stats"] = {
+                "time_ms": round((time.time() - start) * 1000),
+                "total_passes": total,
+                "status": "success",
+            }
+        except Exception as e:
+            results["db_stats"] = {"time_ms": round((time.time() - start) * 1000), "error": str(e), "status": "error"}
+
+    # Test MinIO connection
+    start = time.time()
+    try:
+        client = get_minio_client()
+        # Try to list first few objects
+        objects = list(client.list_objects(MINIO_BUCKET, max_keys=1))
+        results["minio_connection"] = {
+            "time_ms": round((time.time() - start) * 1000),
+            "status": "success",
+            "objects_found": len(objects),
+        }
+    except Exception as e:
+        results["minio_connection"] = {
+            "time_ms": round((time.time() - start) * 1000),
+            "error": str(e),
+            "status": "error",
+        }
+
+    # Test Redis connection
+    start = time.time()
+    try:
+        r = redis.from_url(REDIS_URL)
+        r.ping()
+        results["redis_connection"] = {"time_ms": round((time.time() - start) * 1000), "status": "success"}
+    except Exception as e:
+        results["redis_connection"] = {
+            "time_ms": round((time.time() - start) * 1000),
+            "error": str(e),
+            "status": "error",
+        }
+
+    # System info
+    try:
+        results["system"] = {
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_percent": psutil.disk_usage("/").percent,
+            "load_avg": os.getloadavg() if hasattr(os, "getloadavg") else "N/A",
+        }
+    except Exception as e:
+        results["system"] = {"error": str(e)}
+
+    # HLS stream check
+    start = time.time()
+    stream_exists = os.path.exists(STREAM_FS_PATH)
+    results["hls_stream"] = {
+        "time_ms": round((time.time() - start) * 1000),
+        "exists": stream_exists,
+        "path": STREAM_FS_PATH,
+    }
+
+    if stream_exists:
+        try:
+            stat = os.stat(STREAM_FS_PATH)
+            results["hls_stream"]["size_bytes"] = stat.st_size
+            results["hls_stream"]["last_modified"] = stat.st_mtime
+            results["hls_stream"]["age_seconds"] = time.time() - stat.st_mtime
+        except Exception as e:
+            results["hls_stream"]["stat_error"] = str(e)
+
+    return results
 
 
 @app.get("/load-video")  # type: ignore
