@@ -36,11 +36,29 @@ function initializeVideoPlayer() {
             console.error('HLS error:', event, data);
             if (data.fatal) {
                 console.log('Fatal HLS error, attempting recovery');
+                switch(data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                    console.log('Network error - stream may be unavailable');
+                    break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                    console.log('Media error - trying to recover');
+                    hls.recoverMediaError();
+                    return;
+                default:
+                    console.log('Unrecoverable error');
+                    break;
+                }
                 hls.destroy();
                 videoPlayerInitialized = false;
+                video.hlsInstance = null;
                 // Retry after delay
-                setTimeout(initializeVideoPlayer, 2000);
+                setTimeout(initializeVideoPlayer, 3000);
             }
+        });
+        
+        // Add manifest loading timeout
+        hls.on(Hls.Events.MANIFEST_LOADING, function() {
+            console.log('Loading HLS manifest...');
         });
         
         // Store HLS instance for cleanup and prevent re-initialization
@@ -85,11 +103,14 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeVideoPlayer();
     
     // Also try after a delay in case video is loaded via HTMX
-    setTimeout(initializeVideoPlayer, 500);
-    setTimeout(initializeVideoPlayer, 1500);
+    setTimeout(initializeVideoPlayer, 1000);
 });
 
 // Also listen for HTMX events in case video is loaded dynamically
-document.addEventListener('htmx:afterSettle', function() {
-    setTimeout(initializeVideoPlayer, 100);
+document.addEventListener('htmx:afterSettle', function(event) {
+    // Only initialize if the video container was updated
+    if (event.detail.target.id === 'videoContainer' || 
+        event.detail.target.querySelector('#videoPlayer')) {
+        setTimeout(initializeVideoPlayer, 200);
+    }
 });
