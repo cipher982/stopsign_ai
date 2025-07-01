@@ -41,7 +41,6 @@ from stopsign.settings import DB_URL
 from stopsign.settings import MINIO_ACCESS_KEY
 from stopsign.settings import MINIO_BUCKET
 from stopsign.settings import MINIO_ENDPOINT
-from stopsign.settings import MINIO_PUBLIC_URL
 from stopsign.settings import MINIO_SECRET_KEY
 from stopsign.settings import REDIS_URL
 
@@ -104,7 +103,13 @@ def get_image(object_name: str):
     try:
         client = get_minio_client()
         data = client.get_object(MINIO_BUCKET, object_name)
-        return StreamingResponse(data, media_type="image/jpeg")
+
+        # Create response with proper cache headers
+        response = StreamingResponse(data, media_type="image/jpeg")
+        response.headers["Cache-Control"] = "public, max-age=86400"  # 24-hour cache for images
+        response.headers["ETag"] = f'"{hash(object_name)}"'
+        return response
+
     except Exception as e:
         logger.error(f"Error fetching image from Minio: {str(e)}", exc_info=True)
         return HTMLResponse("Image not found", status_code=404)
@@ -794,7 +799,8 @@ def create_pass_item(pass_data, scores):
         parts = pass_data.image_path.split("/", 3)
         if len(parts) >= 4 and parts[3]:
             object_name = parts[3]
-            image_url = f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{object_name}"
+            # Route through our server for proper caching
+            image_url = f"/vehicle-image/{object_name}"
 
     return Div(
         Div(

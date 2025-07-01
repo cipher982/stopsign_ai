@@ -14,10 +14,17 @@ function initializeVideoPlayer() {
         return;
     }
     
-    // Prevent multiple initializations
-    if (videoPlayerInitialized || video.hlsInstance) {
+    // Prevent multiple initializations, but allow retry if previous attempt failed
+    if (videoPlayerInitialized && video.hlsInstance) {
         console.log('Video player already initialized, skipping');
         return;
+    }
+    
+    // Clean up any existing instance before re-initializing
+    if (video.hlsInstance) {
+        console.log('Cleaning up existing HLS instance');
+        video.hlsInstance.destroy();
+        video.hlsInstance = null;
     }
     
     videoPlayerInitialized = true;

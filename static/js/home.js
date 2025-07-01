@@ -194,10 +194,84 @@ function clearClickMarkers() {
     markers.forEach(marker => marker.remove());
 }
 
-// Fetch recent vehicle passes - now handled by HTMX
+// Track existing passes to avoid reloading unchanged images
+let existingPasses = new Set();
+let imageCache = new Map(); // Cache for preloaded images
+
+// Fetch recent vehicle passes with smart updates
 function fetchRecentPasses() {
-    // This function is no longer needed as HTMX handles the updates
-    console.log('Recent passes now handled by HTMX auto-refresh');
+    fetch('/api/recent-vehicle-passes')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.text();
+        })
+        .then(html => {
+            // Parse the new HTML to compare with existing
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newPasses = doc.querySelectorAll('[id^="pass-"]');
+            const currentContainer = document.getElementById('recentPasses');
+            
+            // Only update if we have significant changes
+            const newPassIds = new Set(Array.from(newPasses).map(p => p.id));
+            
+            // If this is first load or we have new passes, update
+            if (existingPasses.size === 0 || !setsEqual(existingPasses, newPassIds)) {
+                // Preload new images before updating DOM
+                preloadNewImages(doc).then(() => {
+                    currentContainer.innerHTML = html;
+                    existingPasses = newPassIds;
+                    console.log('Updated recent passes - new content detected');
+                });
+            } else {
+                console.log('No new passes, skipping update to preserve images');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching recent passes:', error);
+            document.getElementById('recentPasses').innerHTML = `<p>Error fetching data: ${error.message}</p>`;
+        });
+}
+
+// Helper function to compare sets
+function setsEqual(set1, set2) {
+    return set1.size === set2.size && [...set1].every(x => set2.has(x));
+}
+
+// Preload images to browser cache
+function preloadNewImages(doc) {
+    return new Promise((resolve) => {
+        const images = doc.querySelectorAll('img[src]');
+        const imagePromises = [];
+        
+        images.forEach(img => {
+            const src = img.getAttribute('src');
+            if (src && !imageCache.has(src)) {
+                const imagePromise = new Promise((imgResolve) => {
+                    const preloadImg = new Image();
+                    preloadImg.onload = () => {
+                        imageCache.set(src, true);
+                        console.log('Preloaded image:', src);
+                        imgResolve();
+                    };
+                    preloadImg.onerror = () => {
+                        console.warn('Failed to preload image:', src);
+                        imgResolve(); // Continue even if image fails
+                    };
+                    preloadImg.src = src;
+                });
+                imagePromises.push(imagePromise);
+            }
+        });
+        
+        if (imagePromises.length === 0) {
+            resolve(); // No new images to preload
+        } else {
+            Promise.all(imagePromises).then(resolve);
+        }
+    });
 }
 
 // Debug mode for coordinate testing
@@ -291,7 +365,9 @@ document.addEventListener('htmx:afterRequest', function(event) {
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    // Recent passes now handled by HTMX - no manual refresh needed
+    // Fetch recent passes initially and set up smart refresh
+    fetchRecentPasses();
+    setInterval(fetchRecentPasses, 60000); // Check every 60 seconds, but only update if changed
     
     // Initialize video event listeners
     setTimeout(() => {

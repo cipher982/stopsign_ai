@@ -34,15 +34,10 @@ def video_component():
 
 
 def recent_passes_component():
-    """Recent vehicle passes component with optimized refresh"""
+    """Recent vehicle passes component - no auto refresh to prevent image reloading"""
     return Div(
         H2("Recent Vehicle Passes"),
-        Div(
-            id="recentPasses",
-            hx_get="/api/recent-vehicle-passes",
-            hx_trigger="load, every 60s",  # Reduced frequency, less disruptive
-            hx_swap="innerHTML settle:500ms",  # Smooth transition
-        ),
+        Div(id="recentPasses"),
         cls="window",
     )
 
