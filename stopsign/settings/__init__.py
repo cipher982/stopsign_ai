@@ -75,12 +75,12 @@ class LocalConfig(BaseConfig):
         self.REDIS_URL = get_env("REDIS_URL", "redis://redis:6379/0", required=False)
         self.DB_URL = get_env("DB_URL", "postgresql://postgres:password@postgres:***REMOVED***/stopsign", required=False)
 
-        # MinIO defaults
-        self.MINIO_ENDPOINT = get_env("MINIO_ENDPOINT", "minio:9000", required=False)
-        self.MINIO_ACCESS_KEY = get_env("MINIO_ACCESS_KEY", "minioadmin", required=False)
-        self.MINIO_SECRET_KEY = get_env("MINIO_SECRET_KEY", "minioadmin", required=False)
-        self.MINIO_BUCKET = get_env("MINIO_BUCKET", "stopsign-local", required=False)
-        self.MINIO_PUBLIC_URL = get_env("MINIO_PUBLIC_URL", "http://minio:9000", required=False)
+        # MinIO settings (required - no defaults)
+        self.MINIO_ENDPOINT = get_env("MINIO_ENDPOINT")
+        self.MINIO_ACCESS_KEY = get_env("MINIO_ACCESS_KEY")
+        self.MINIO_SECRET_KEY = get_env("MINIO_SECRET_KEY")
+        self.MINIO_BUCKET = get_env("MINIO_BUCKET")
+        self.MINIO_PUBLIC_URL = get_env("MINIO_PUBLIC_URL")
 
         # AI Model (CPU-optimized)
         self.YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME", "yolov8n.pt", required=False)

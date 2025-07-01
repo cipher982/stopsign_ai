@@ -5,43 +5,36 @@ import time
 
 import redis
 import uvicorn
-from fasthtml.common import H1
 from fasthtml.common import H2
 from fasthtml.common import H3
 from fasthtml.common import H4
-from fasthtml.common import A
 from fasthtml.common import Body
-from fasthtml.common import Button
-from fasthtml.common import Details
 from fasthtml.common import Div
 from fasthtml.common import FastHTML
 from fasthtml.common import FileResponse
-from fasthtml.common import Footer
-from fasthtml.common import Head
-from fasthtml.common import Header
 from fasthtml.common import Html
 from fasthtml.common import HTMLResponse
 from fasthtml.common import Iframe
 from fasthtml.common import Img
-from fasthtml.common import Input
-from fasthtml.common import Label
 from fasthtml.common import Li
 from fasthtml.common import Link
-from fasthtml.common import Main
-from fasthtml.common import Meta
-from fasthtml.common import Nav
 from fasthtml.common import P
 from fasthtml.common import Script
 from fasthtml.common import Span
 from fasthtml.common import StaticFiles
 from fasthtml.common import StreamingResponse
-from fasthtml.common import Summary
-from fasthtml.common import Title
 from fasthtml.common import Ul
 from fasthtml.common import Video
 from minio import Minio
 from sqlalchemy import text
 
+from stopsign.components import common_footer_component
+from stopsign.components import common_header_component
+from stopsign.components import debug_controls_component
+from stopsign.components import debug_tools_component
+from stopsign.components import debug_video_component
+from stopsign.components import main_layout_component
+from stopsign.components import page_head_component
 from stopsign.config import Config
 from stopsign.database import Database
 from stopsign.settings import DB_URL
@@ -71,26 +64,6 @@ def get_minio_client():
         secret_key=MINIO_SECRET_KEY,
         secure=True,  # Set to True if using HTTPS
         # cert_check=True is default, so we can remove the argument
-    )
-
-
-def get_common_header(title):
-    return Header(
-        Div(title, cls="title-bar"),
-        Nav(
-            A("Home", href="/"),
-            A("Records", href="/records"),
-            A("About", href="/about"),
-            A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
-        ),
-        cls="window",
-    )
-
-
-def get_common_footer():
-    return Footer(
-        P("By David Rose"),
-        cls="window",
     )
 
 
@@ -133,349 +106,11 @@ async def favicon():
 @app.get("/")  # type: ignore
 def home():
     return Html(
-        Head(
-            Title("Stop Sign Nanny"),
-            Meta(name="viewport", content="width=device-width, initial-scale=1"),
-            Script(src="https://unpkg.com/htmx.org@1.9.4", defer=True),
-            Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest", defer=True),
-            Script("""
-                // Stop zone adjustment state
-                let adjustmentMode = false;
-                let clickedPoints = [];
-                let coordinateInfo = null;
-                let currentZoneType = 'stop-line';  // Default zone type
-                
-                function updateStopZone() {
-                    const x1 = document.getElementById('x1').value;
-                    const y1 = document.getElementById('y1').value;
-                    const x2 = document.getElementById('x2').value;
-                    const y2 = document.getElementById('y2').value;
-                    
-                    const points = [
-                        {x: parseFloat(x1), y: parseFloat(y1)},
-                        {x: parseFloat(x2), y: parseFloat(y2)}
-                    ];
-                    
-                    fetch('/api/update-stop-zone', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({points: points}),
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log('Success:', data);
-                        document.getElementById("status").innerText = 'Stop zone updated successfully!';
-                    })
-                    .catch((error) => {
-                        console.error('Error:', error);
-                        document.getElementById("status").innerText = 'Failed to update stop zone.';
-                    });
-                }
-                
-                // Load coordinate system information
-                function loadCoordinateInfo() {
-                    fetch('/api/coordinate-info')
-                        .then(response => response.json())
-                        .then(data => {
-                            coordinateInfo = data;
-                            console.log('Coordinate info loaded:', data);
-                        })
-                        .catch(error => {
-                            console.error('Error loading coordinate info:', error);
-                        });
-                }
-                
-                // Toggle click-to-set adjustment mode
-                function toggleAdjustmentMode() {
-                    adjustmentMode = !adjustmentMode;
-                    clickedPoints = [];
-                    
-                    const video = document.getElementById('videoPlayer');
-                    const button = document.getElementById('adjustmentModeBtn');
-                    const status = document.getElementById('status');
-                    
-                    if (adjustmentMode) {
-                        video.style.cursor = 'crosshair';
-                        video.style.outline = '3px solid #ff0000';
-                        button.innerText = 'Cancel Adjustment';
-                        status.innerText = 'ADJUSTMENT MODE: Click two points on the video to set the stop line';
-                        loadCoordinateInfo();
-                    } else {
-                        video.style.cursor = 'default';
-                        video.style.outline = 'none';
-                        button.innerText = 'Adjust Stop Line';
-                        status.innerText = '';
-                        clearClickMarkers();
-                    }
-                }
-                
-                // Handle video clicks for stop line adjustment
-                function handleVideoClick(event) {
-                    if (!adjustmentMode) return;
-                    
-                    const video = event.target;
-                    const rect = video.getBoundingClientRect();
-                    
-                    // Get click coordinates relative to video element
-                    const x = event.clientX - rect.left;
-                    const y = event.clientY - rect.top;
-                    
-                    // Add click point
-                    clickedPoints.push({x: x, y: y});
-                    
-                    // Add visual marker
-                    addClickMarker(event.clientX, event.clientY, clickedPoints.length);
-                    
-                    const status = document.getElementById('status');
-                    
-                    if (clickedPoints.length === 1) {
-                        status.innerText = 'Good! Now click the second point for the stop line.';
-                    } else if (clickedPoints.length === 2) {
-                        // Send both points to update the stop zone
-                        updateStopZoneFromClicks();
-                    }
-                }
-                
-                // Update stop zone using clicked coordinates
-                function updateStopZoneFromClicks() {
-                    const video = document.getElementById('videoPlayer');
-                    
-                    const data = {
-                        display_points: clickedPoints,
-                        video_element_size: {
-                            width: video.clientWidth,
-                            height: video.clientHeight
-                        },
-                        actual_video_size: {
-                            width: video.videoWidth,
-                            height: video.videoHeight
-                        }
-                    };
-                    
-                    fetch('/api/update-stop-zone-from-display', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(data),
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        const status = document.getElementById('status');
-                        if (data.status === 'success') {
-                            status.innerText = 'Stop line updated successfully! Coordinates transformed from display to processing system.';
-                            console.log('Coordinate transformation details:', data);
-                            
-                            // Exit adjustment mode
-                            setTimeout(() => {
-                                toggleAdjustmentMode();
-                            }, 2000);
-                        } else {
-                            status.innerText = 'Error: ' + (data.error || 'Unknown error occurred');
-                            console.error('Update error:', data);
-                        }
-                    })
-                    .catch((error) => {
-                        console.error('Error:', error);
-                        document.getElementById('status').innerText = 'Network error occurred.';
-                    });
-                }
-                
-                // Add visual click markers
-                function addClickMarker(pageX, pageY, pointNumber) {
-                    const video = document.getElementById('videoPlayer');
-                    const rect = video.getBoundingClientRect();
-                    
-                    // Ensure video has a wrapper for positioning
-                    let wrapper = video.parentElement;
-                    if (!wrapper || !wrapper.classList.contains('video-wrapper')) {
-                        wrapper = document.createElement('div');
-                        wrapper.className = 'video-wrapper';
-                        wrapper.style.position = 'relative';
-                        wrapper.style.display = 'inline-block';
-                        video.parentNode.insertBefore(wrapper, video);
-                        wrapper.appendChild(video);
-                    }
-                    
-                    // Calculate position relative to video element
-                    const relativeX = pageX - rect.left;
-                    const relativeY = pageY - rect.top;
-                    
-                    const marker = document.createElement('div');
-                    marker.className = 'click-marker';
-                    marker.innerHTML = pointNumber;
-                    marker.style.position = 'absolute';
-                    marker.style.left = (relativeX - 15) + 'px';
-                    marker.style.top = (relativeY - 15) + 'px';
-                    marker.style.width = '30px';
-                    marker.style.height = '30px';
-                    marker.style.backgroundColor = color;
-                    marker.style.color = 'white';
-                    marker.style.borderRadius = '50%';
-                    marker.style.display = 'flex';
-                    marker.style.alignItems = 'center';
-                    marker.style.justifyContent = 'center';
-                    marker.style.fontWeight = 'bold';
-                    marker.style.fontSize = '14px';
-                    marker.style.zIndex = '9999';
-                    marker.style.pointerEvents = 'none';
-                    wrapper.appendChild(marker);
-                }
-                
-                // Clear all click markers
-                function clearClickMarkers() {
-                    const markers = document.querySelectorAll('.click-marker');
-                    markers.forEach(marker => marker.remove());
-                }
-
-                function fetchRecentPasses() {
-                    fetch('/api/recent-vehicle-passes')
-                        .then(response => {
-                            if (!response.ok) {
-                                throw new Error(`HTTP error! status: ${response.status}`);
-                            }
-                            return response.text();
-                        })
-                        .then(html => {
-                            document.getElementById('recentPasses').innerHTML = html;
-                        })
-                        .catch(error => {
-                            console.error('Error fetching recent passes:', error);
-                            document.getElementById('recentPasses').innerHTML = `<p>Error fetching data: ${error.message}</p>`;
-                        });
-                }
-
-                document.addEventListener('DOMContentLoaded', function() {
-                    fetchRecentPasses();
-                    setInterval(fetchRecentPasses, 30000);
-                    
-                    // Initialize video event listeners
-                    setTimeout(() => {
-                        const video = document.getElementById('videoPlayer');
-                        if (video) {
-                            video.addEventListener('click', handleVideoClick);
-                            console.log('Video click handler attached');
-                        }
-                        loadCoordinateInfo();
-                    }, 1000);
-                });
-                
-                // Debug mode for coordinate testing (Ctrl+Shift+D)
-                function debugCoordinateTransform(testPoints) {
-                    const video = document.getElementById('videoPlayer');
-                    if (!video) {
-                        console.error('Video element not found');
-                        return;
-                    }
-                    
-                    const data = {
-                        display_points: testPoints || [
-                            {x: 100, y: 100},
-                            {x: 500, y: 300}
-                        ],
-                        video_element_size: {
-                            width: video.clientWidth,
-                            height: video.clientHeight
-                        }
-                    };
-                    
-                    fetch('/api/debug-coordinates', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(data),
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log('=== COORDINATE TRANSFORMATION DEBUG ===');
-                        console.log('Coordinate System Info:', data.coordinate_system_info);
-                        console.log('Transformation Chain:', data.transformation_debug);
-                        console.log('Point Transformations:', data.point_transformations);
-                        console.log('Current Stop Line (Display Coords):', data.current_stop_line_display);
-                        
-                        // Show roundtrip errors
-                        data.point_transformations.forEach(pt => {
-                            const error = Math.sqrt(pt.roundtrip_error.x ** 2 + pt.roundtrip_error.y ** 2);
-                            console.log(`Point ${pt.point_index + 1} roundtrip error: ${error.toFixed(2)}px`);
-                        });
-                    })
-                    .catch(error => {
-                        console.error('Debug error:', error);
-                    });
-                }
-                
-                // Simple setup - no keyboard shortcuts needed
-            """),
-        ),
+        page_head_component("Stop Sign Nanny", include_video_deps=True, page_type="home"),
         Body(
-            get_common_header("Stop Sign Nanny"),
-            Main(
-                Div(
-                    Div(
-                        Div(
-                            id="videoContainer",
-                            hx_get="/load-video",
-                            hx_trigger="load",
-                        ),
-                        cls="sunken",
-                    ),
-                    Div(
-                        H2("Recent Vehicle Passes"),
-                        Div(id="recentPasses"),
-                        cls="window",
-                    ),
-                    cls="two-col",
-                ),
-                # Stop line adjustment panel (hidden by default, activated by Ctrl+Shift+A)
-                Div(
-                    H3("Stop Line Adjustment"),
-                    # Click-to-set interface
-                    Div(
-                        Button(
-                            "Adjust Stop Line",
-                            id="adjustmentModeBtn",
-                            onclick="toggleAdjustmentMode()",
-                        ),
-                        P(
-                            "Click the button above, then click two points on the video to set the new stop line position.",
-                        ),
-                    ),
-                    # Manual coordinate input (legacy interface)
-                    Details(
-                        Summary("Manual Coordinate Input"),
-                        Div(
-                            Div(
-                                Label("Point 1 - X:"),
-                                Input(type="number", id="x1", value="550"),
-                                Label("Y:"),
-                                Input(type="number", id="y1", value="500"),
-                            ),
-                            Div(
-                                Label("Point 2 - X:"),
-                                Input(type="number", id="x2", value="400"),
-                                Label("Y:"),
-                                Input(type="number", id="y2", value="550"),
-                            ),
-                            Button(
-                                "Update Stop Zone",
-                                onclick="updateStopZone()",
-                            ),
-                            cls="sunken",
-                        ),
-                    ),
-                    # Status display
-                    Div(
-                        id="status",
-                    ),
-                    id="adjustmentPanel",
-                    style="display: none;",
-                    cls="window",
-                ),
-            ),
-            get_common_footer(),
+            common_header_component("Stop Sign Nanny"),
+            main_layout_component(),
+            common_footer_component(),
         ),
     )
 
@@ -914,93 +549,20 @@ async def update_zone_from_display(request):
 @app.get("/debug")  # type: ignore
 def debug_page():
     """Simple debug page for stop line adjustment - access via /debug URL"""
+    from fasthtml.common import H1
+
     return Html(
-        Head(
-            Title("Stop Sign Debug"),
-            Meta(name="viewport", content="width=device-width, initial-scale=1"),
-            Script(src="https://unpkg.com/htmx.org@1.9.4", defer=True),
-            Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest", defer=True),
-            Script(src="/static/debug.js"),
-        ),
+        page_head_component("Stop Sign Debug", include_video_deps=True, page_type="debug"),
         Body(
             Div(
                 H1("Stop Sign Debug Interface"),
                 # Main layout: Video left, Controls right
                 Div(
-                    # Left side - Video
-                    Div(
-                        H2("Video Stream"),
-                        Div(hx_get="/load-video", hx_trigger="load"),
-                        cls="debug-card",
-                    ),
-                    # Right side - All controls stacked vertically
-                    Div(
-                        # Zone Selection
-                        Div(
-                            H3("1. Select Zone"),
-                            Div(
-                                Button(
-                                    "Stop Line",
-                                    id="zone-stop-line",
-                                    onclick="selectZoneType('stop-line')",
-                                    cls="zone-selector active",
-                                ),
-                                Button(
-                                    "Pre-Stop",
-                                    id="zone-pre-stop",
-                                    onclick="selectZoneType('pre-stop')",
-                                    cls="zone-selector",
-                                ),
-                                Button(
-                                    "Capture",
-                                    id="zone-capture",
-                                    onclick="selectZoneType('capture')",
-                                    cls="zone-selector",
-                                ),
-                            ),
-                            P(id="zone-instructions"),
-                        ),
-                        # Visualization
-                        Div(
-                            H3("2. Visualization"),
-                            Button("Show Zones", id="debugZonesBtn", onclick="toggleDebugZones()"),
-                        ),
-                        # Actions
-                        Div(
-                            H3("3. Edit Zone"),
-                            Button("Adjust", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()"),
-                            Button("Reset", onclick="resetPoints()"),
-                            Button(
-                                "SUBMIT",
-                                id="submitBtn",
-                                onclick="updateZoneFromClicks()",
-                                style="display: none;",
-                                disabled=True,
-                            ),
-                        ),
-                        # Status
-                        Div(
-                            H3("4. Status"),
-                            Div(id="status"),
-                            Div(
-                                P(
-                                    "Select zone → Show zones → Adjust → Click 2 points → Submit",
-                                ),
-                            ),
-                        ),
-                        cls="debug-card",
-                    ),
+                    debug_video_component(),
+                    debug_controls_component(),
                     cls="two-col",
                 ),
-                # Debug tools in compact form
-                Div(
-                    H3("Debug Tools"),
-                    Button("Coord Info", onclick="showCoordinateInfo()"),
-                    Button("Debug Transforms", onclick="debugCoordinates()"),
-                    Div(id="coordOutput"),
-                    Div(id="debugOutput"),
-                    cls="window",
-                ),
+                debug_tools_component(),
             )
         ),
     )
@@ -1042,20 +604,25 @@ async def get_recent_vehicle_passes():
 
 @app.get("/records")  # type: ignore
 def records():
-    return (
-        get_common_header("Records"),
-        Main(
-            Div(
-                H2("Vehicle Records"),
+    from fasthtml.common import Main
+
+    return Html(
+        page_head_component("Records"),
+        Body(
+            common_header_component("Records"),
+            Main(
                 Div(
-                    Div(id="worstPasses", hx_get="/api/worst-passes", hx_trigger="load"),
-                    Div(id="bestPasses", hx_get="/api/best-passes", hx_trigger="load"),
-                    cls="two-col",
+                    H2("Vehicle Records"),
+                    Div(
+                        Div(id="worstPasses", hx_get="/api/worst-passes", hx_trigger="load"),
+                        Div(id="bestPasses", hx_get="/api/best-passes", hx_trigger="load"),
+                        cls="two-col",
+                    ),
+                    cls="window",
                 ),
-                cls="window",
             ),
+            common_footer_component(),
         ),
-        get_common_footer(),
     )
 
 
@@ -1182,37 +749,47 @@ def create_pass_item(pass_data, scores):
 
 @app.get("/statistics")  # type: ignore
 def statistics():
-    return (
-        get_common_header("Statistics"),
-        Main(
-            Div(
-                Iframe(
-                    src=GRAFANA_URL,
-                    width="100%",
-                    height="600",
-                    frameborder="0",
+    from fasthtml.common import Main
+
+    return Html(
+        page_head_component("Statistics"),
+        Body(
+            common_header_component("Statistics"),
+            Main(
+                Div(
+                    Iframe(
+                        src=GRAFANA_URL,
+                        width="100%",
+                        height="600",
+                        frameborder="0",
+                    ),
+                    cls="window",
                 ),
-                cls="window",
             ),
+            common_footer_component(),
         ),
-        get_common_footer(),
     )
 
 
 @app.get("/about")  # type: ignore
 def about():
+    from fasthtml.common import Main
+
     with open("static/summary.md", "r") as file:
         summary_content = file.read()
-    return (
-        get_common_header("About"),
-        Main(
-            Div(
-                H2("Project Summary"),
-                P(summary_content),
-                cls="window",
+    return Html(
+        page_head_component("About"),
+        Body(
+            common_header_component("About"),
+            Main(
+                Div(
+                    H2("Project Summary"),
+                    P(summary_content),
+                    cls="window",
+                ),
             ),
+            common_footer_component(),
         ),
-        get_common_footer(),
     )
 
 
@@ -1242,47 +819,7 @@ def load_video():
             controls=True,
             autoplay=True,
             muted=True,
-            style="max-width: 100%; height: auto; max-height: 60vh;",
         ),
-        Script(f"""
-            var video = document.getElementById('videoPlayer');
-            console.log('Attempting to load video');
-            if (Hls.isSupported()) {{
-                console.log('HLS is supported');
-                var hls = new Hls({{debug: false}});
-                hls.loadSource('{STREAM_URL}');
-                hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, function() {{
-                    console.log('Manifest parsed, attempting to play');
-                    video.play();
-                }});
-                hls.on(Hls.Events.ERROR, function(event, data) {{
-                    console.error('HLS error:', event, data);
-                }});
-            }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
-                console.log('HLS not supported, but can play HLS natively');
-                video.src = '{STREAM_URL}';
-                video.addEventListener('loadedmetadata', function() {{
-                    console.log('Metadata loaded, attempting to play');
-                    video.play();
-                }});
-            }} else {{
-                console.error('HLS is not supported and cannot play HLS natively');
-            }}
-            video.addEventListener('error', function(e) {{
-                console.error('Video error:', e);
-            }});
-            
-            // Log video dimensions when metadata is loaded
-            video.addEventListener('loadedmetadata', function() {{
-                console.log('Video dimensions:', {{
-                    videoWidth: video.videoWidth,
-                    videoHeight: video.videoHeight,
-                    displayWidth: video.clientWidth,
-                    displayHeight: video.clientHeight
-                }});
-            }});
-        """),
     )
 
 
