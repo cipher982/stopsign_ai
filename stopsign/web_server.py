@@ -41,6 +41,7 @@ from stopsign.settings import DB_URL
 from stopsign.settings import MINIO_ACCESS_KEY
 from stopsign.settings import MINIO_BUCKET
 from stopsign.settings import MINIO_ENDPOINT
+from stopsign.settings import MINIO_PUBLIC_URL
 from stopsign.settings import MINIO_SECRET_KEY
 from stopsign.settings import REDIS_URL
 
@@ -694,6 +695,58 @@ async def get_recent_vehicle_passes():
         return Div(P(f"Error: {str(e)}"), id="recentPasses")
 
 
+@app.get("/api/new-vehicles")  # type: ignore
+async def get_new_vehicles(since: int = 0):
+    """Get only new vehicle passes since timestamp for incremental updates"""
+    try:
+        if not hasattr(app.state, "db"):
+            app.state.db = Database(db_url=DB_URL)
+
+        import time
+
+        current_time = int(time.time())
+
+        # Get recent passes
+        all_passes = app.state.db.get_recent_vehicle_passes(limit=10)
+
+        # Filter for new passes since timestamp
+        if since > 0:
+            new_passes = [p for p in all_passes if int(p.timestamp.timestamp()) > since]
+        else:
+            # First load - return top 3 most recent
+            new_passes = all_passes[:3]
+
+        if not new_passes:
+            # Return empty response with timestamp for next check
+            return Div(hx_vals=f'{{"last_check": {current_time}}}', style="display: none;")
+
+        # Get scores for new passes
+        scores = app.state.db.get_bulk_scores(
+            [{"min_speed": p.min_speed, "time_in_zone": p.time_in_zone} for p in new_passes]
+        )
+        scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
+
+        # Create new vehicle items with out-of-band swap to prepend to list
+        new_items = []
+        for pass_data in new_passes:
+            new_items.append(
+                Li(
+                    create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)]),
+                    id=f"pass-{pass_data.id}",
+                    hx_swap_oob="afterbegin:#passes-list",
+                )
+            )
+
+        # Also include timestamp for next check
+        response_div = Div(*new_items, Div(hx_vals=f'{{"last_check": {current_time}}}', style="display: none;"))
+
+        return response_div
+
+    except Exception as e:
+        logger.error(f"Error in get_new_vehicles: {str(e)}")
+        return Div(hx_vals=f'{{"last_check": {int(time.time())}}}', style="display: none;")
+
+
 @app.get("/records")  # type: ignore
 def records():
     from fasthtml.common import Main
@@ -799,8 +852,8 @@ def create_pass_item(pass_data, scores):
         parts = pass_data.image_path.split("/", 3)
         if len(parts) >= 4 and parts[3]:
             object_name = parts[3]
-            # Route through our server for proper caching
-            image_url = f"/vehicle-image/{object_name}"
+            # Use direct MinIO URL for now - proxy endpoint has issues
+            image_url = f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{object_name}"
 
     return Div(
         Div(
