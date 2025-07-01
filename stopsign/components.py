@@ -27,17 +27,22 @@ def video_component():
         Div(
             id="videoContainer",
             hx_get="/load-video",
-            hx_trigger="load",
+            hx_trigger="load once",
         ),
         cls="sunken",
     )
 
 
 def recent_passes_component():
-    """Recent vehicle passes component with auto-refresh"""
+    """Recent vehicle passes component with optimized refresh"""
     return Div(
         H2("Recent Vehicle Passes"),
-        Div(id="recentPasses"),
+        Div(
+            id="recentPasses",
+            hx_get="/api/recent-vehicle-passes",
+            hx_trigger="load, every 60s",  # Reduced frequency, less disruptive
+            hx_swap="innerHTML settle:500ms",  # Smooth transition
+        ),
         cls="window",
     )
 
@@ -273,7 +278,7 @@ def live_stats_component():
         # Hidden div that triggers updates and distributes data
         Div(
             hx_get="/api/live-stats",
-            hx_trigger="load, every 15s",
+            hx_trigger="load, every 30s",
             hx_swap="none",
             hx_vals='{"update": "stats"}',
             id="statsUpdater",

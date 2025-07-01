@@ -3,6 +3,9 @@
  * Handles HLS video streaming and playback
  */
 
+// Track if video player is already initialized
+let videoPlayerInitialized = false;
+
 // Video player initialization
 function initializeVideoPlayer() {
     const video = document.getElementById('videoPlayer');
@@ -11,6 +14,13 @@ function initializeVideoPlayer() {
         return;
     }
     
+    // Prevent multiple initializations
+    if (videoPlayerInitialized || video.hlsInstance) {
+        console.log('Video player already initialized, skipping');
+        return;
+    }
+    
+    videoPlayerInitialized = true;
     const streamUrl = '/stream/stream.m3u8';
     
     console.log('Attempting to load video');
@@ -23,11 +33,28 @@ function initializeVideoPlayer() {
         
         hls.on(Hls.Events.MANIFEST_PARSED, function() {
             console.log('Manifest parsed, attempting to play');
-            video.play();
+            video.play().catch(e => console.log('Play failed:', e));
         });
         
         hls.on(Hls.Events.ERROR, function(event, data) {
             console.error('HLS error:', event, data);
+            if (data.fatal) {
+                switch(data.type) {
+                    case Hls.ErrorTypes.NETWORK_ERROR:
+                        console.log('Network error, trying to recover...');
+                        hls.startLoad();
+                        break;
+                    case Hls.ErrorTypes.MEDIA_ERROR:
+                        console.log('Media error, trying to recover...');
+                        hls.recoverMediaError();
+                        break;
+                    default:
+                        console.log('Fatal error, destroying HLS');
+                        hls.destroy();
+                        videoPlayerInitialized = false;
+                        break;
+                }
+            }
         });
         
         // Store HLS instance for cleanup if needed
@@ -39,7 +66,7 @@ function initializeVideoPlayer() {
         
         video.addEventListener('loadedmetadata', function() {
             console.log('Metadata loaded, attempting to play');
-            video.play();
+            video.play().catch(e => console.log('Play failed:', e));
         });
     } else {
         console.error('HLS is not supported and cannot play HLS natively');
@@ -61,17 +88,22 @@ function initializeVideoPlayer() {
     });
 }
 
-// Initialize video when DOM is ready, with retry logic for HTMX loaded content
+// Initialize video when DOM is ready, with single retry
 document.addEventListener('DOMContentLoaded', function() {
     // Try to initialize immediately
     initializeVideoPlayer();
     
-    // Also try after a delay in case video is loaded via HTMX
-    setTimeout(initializeVideoPlayer, 500);
-    setTimeout(initializeVideoPlayer, 1500);
+    // Single retry after delay for HTMX loaded content
+    setTimeout(function() {
+        if (!videoPlayerInitialized) {
+            initializeVideoPlayer();
+        }
+    }, 1000);
 });
 
-// Also listen for HTMX events in case video is loaded dynamically
+// Listen for HTMX events only if video isn't initialized yet
 document.addEventListener('htmx:afterSettle', function() {
-    setTimeout(initializeVideoPlayer, 100);
+    if (!videoPlayerInitialized) {
+        setTimeout(initializeVideoPlayer, 100);
+    }
 });
