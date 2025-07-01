@@ -3,6 +3,9 @@
  * Handles HLS video streaming and playback
  */
 
+// Track initialization state to prevent multiple instances
+let videoPlayerInitialized = false;
+
 // Video player initialization
 function initializeVideoPlayer() {
     const video = document.getElementById('videoPlayer');
@@ -10,35 +13,51 @@ function initializeVideoPlayer() {
         console.log('Video player element not found, will try again later');
         return;
     }
-    const streamUrl = '/stream/stream.m3u8';
     
+    // Prevent multiple initializations
+    if (videoPlayerInitialized || video.hlsInstance) {
+        console.log('Video player already initialized, skipping');
+        return;
+    }
+    
+    const streamUrl = '/stream/stream.m3u8';
     console.log('Attempting to load video');
     
     if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         console.log('HLS is supported');
         const hls = new Hls({debug: false});
-        hls.loadSource(streamUrl);
-        hls.attachMedia(video);
         
         hls.on(Hls.Events.MANIFEST_PARSED, function() {
             console.log('Manifest parsed, attempting to play');
-            video.play();
+            video.play().catch(e => console.log('Play failed:', e));
         });
         
         hls.on(Hls.Events.ERROR, function(event, data) {
             console.error('HLS error:', event, data);
+            if (data.fatal) {
+                console.log('Fatal HLS error, attempting recovery');
+                hls.destroy();
+                videoPlayerInitialized = false;
+                // Retry after delay
+                setTimeout(initializeVideoPlayer, 2000);
+            }
         });
         
-        // Store HLS instance for cleanup if needed
+        // Store HLS instance for cleanup and prevent re-initialization
         video.hlsInstance = hls;
+        videoPlayerInitialized = true;
+        
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
         
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         console.log('HLS not supported, but can play HLS natively');
         video.src = streamUrl;
+        videoPlayerInitialized = true;
         
         video.addEventListener('loadedmetadata', function() {
             console.log('Metadata loaded, attempting to play');
-            video.play();
+            video.play().catch(e => console.log('Play failed:', e));
         });
     } else {
         console.error('HLS is not supported and cannot play HLS natively');
