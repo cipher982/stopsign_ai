@@ -85,6 +85,8 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         FRAME_RATE,
         "-i",
         "-",
+        "-vf",
+        "scale=640:360",
         "-c:v",
         ENCODER,
         "-preset",

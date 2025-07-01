@@ -39,6 +39,8 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL}
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
+      FFMPEG_ENCODER: ${FFMPEG_ENCODER}
+      FFMPEG_PRESET: ${FFMPEG_PRESET}
     volumes:
       - storage-dir:/app/data
     depends_on:
