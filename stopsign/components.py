@@ -27,17 +27,32 @@ def video_component():
         Div(
             id="videoContainer",
             hx_get="/load-video",
-            hx_trigger="load once",
+            hx_trigger="load",
         ),
         cls="sunken",
     )
 
 
 def recent_passes_component():
-    """Recent vehicle passes component - no auto refresh to prevent image reloading"""
+    """Recent vehicle passes component with incremental updates"""
     return Div(
         H2("Recent Vehicle Passes"),
-        Div(id="recentPasses"),
+        Div(
+            # Initial load of recent passes
+            hx_get="/api/recent-vehicle-passes",
+            hx_trigger="load",
+            hx_swap="innerHTML",
+            id="recentPasses",
+        ),
+        # Hidden div for incremental updates
+        Div(
+            hx_get="/api/new-vehicles",
+            hx_trigger="every 30s",
+            hx_swap="none",  # Items use hx-swap-oob to update themselves
+            hx_include="[hx-vals]",  # Include timestamp from previous response
+            style="display: none;",
+            id="newVehicleUpdater",
+        ),
         cls="window",
     )
 
@@ -273,7 +288,7 @@ def live_stats_component():
         # Hidden div that triggers updates and distributes data
         Div(
             hx_get="/api/live-stats",
-            hx_trigger="load, every 30s",
+            hx_trigger="load, every 15s",
             hx_swap="none",
             hx_vals='{"update": "stats"}',
             id="statsUpdater",
