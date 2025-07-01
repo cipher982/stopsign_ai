@@ -47,6 +47,7 @@ from stopsign.settings import DB_URL
 from stopsign.settings import MINIO_ACCESS_KEY
 from stopsign.settings import MINIO_BUCKET
 from stopsign.settings import MINIO_ENDPOINT
+from stopsign.settings import MINIO_PUBLIC_URL
 from stopsign.settings import MINIO_SECRET_KEY
 from stopsign.settings import REDIS_URL
 
@@ -1136,7 +1137,7 @@ def create_pass_item(pass_data, scores):
         parts = pass_data.image_path.split("/", 3)
         if len(parts) >= 4 and parts[3]:
             object_name = parts[3]
-            image_url = f"/vehicle-image/{object_name}"
+            image_url = f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{object_name}"
 
     return Div(
         Div(

@@ -80,6 +80,7 @@ class LocalConfig(BaseConfig):
         self.MINIO_ACCESS_KEY = get_env("MINIO_ACCESS_KEY", "minioadmin", required=False)
         self.MINIO_SECRET_KEY = get_env("MINIO_SECRET_KEY", "minioadmin", required=False)
         self.MINIO_BUCKET = get_env("MINIO_BUCKET", "stopsign-local", required=False)
+        self.MINIO_PUBLIC_URL = get_env("MINIO_PUBLIC_URL", "http://minio:9000", required=False)
 
         # AI Model (CPU-optimized)
         self.YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME", "yolov8n.pt", required=False)
@@ -101,6 +102,7 @@ class ProductionConfig(BaseConfig):
         self._minio_access_key = None
         self._minio_secret_key = None
         self._minio_bucket = None
+        self._minio_public_url = None
         self._yolo_model_name = None
         self._yolo_device = None
 
@@ -139,6 +141,12 @@ class ProductionConfig(BaseConfig):
         if self._minio_bucket is None:
             self._minio_bucket = get_env("MINIO_BUCKET")
         return self._minio_bucket
+
+    @property
+    def MINIO_PUBLIC_URL(self):
+        if self._minio_public_url is None:
+            self._minio_public_url = get_env("MINIO_PUBLIC_URL")
+        return self._minio_public_url
 
     @property
     def YOLO_MODEL_NAME(self):
@@ -199,6 +207,8 @@ def __getattr__(name):
         return config.MINIO_SECRET_KEY
     elif name == "MINIO_BUCKET":
         return config.MINIO_BUCKET
+    elif name == "MINIO_PUBLIC_URL":
+        return config.MINIO_PUBLIC_URL
     elif name == "FFMPEG_ENCODER":
         return config.FFMPEG_ENCODER
     elif name == "FFMPEG_PRESET":
