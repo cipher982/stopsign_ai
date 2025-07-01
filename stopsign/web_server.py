@@ -706,7 +706,7 @@ async def get_recent_vehicle_passes():
         if not hasattr(app.state, "db"):
             app.state.db = Database(db_url=DB_URL)
 
-        recent_passes = app.state.db.get_recent_vehicle_passes(limit=50)
+        recent_passes = app.state.db.get_recent_vehicle_passes(limit=10)
 
         # Get all scores at once
         scores = app.state.db.get_bulk_scores(
