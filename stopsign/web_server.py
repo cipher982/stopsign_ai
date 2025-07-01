@@ -28,6 +28,7 @@ from fasthtml.common import Label
 from fasthtml.common import Li
 from fasthtml.common import Link
 from fasthtml.common import Main
+from fasthtml.common import Meta
 from fasthtml.common import Nav
 from fasthtml.common import P
 from fasthtml.common import Script
@@ -134,8 +135,9 @@ def home():
     return Html(
         Head(
             Title("Stop Sign Nanny"),
-            Script(src="https://unpkg.com/htmx.org@1.9.4"),
-            Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest"),
+            Meta(name="viewport", content="width=device-width, initial-scale=1"),
+            Script(src="https://unpkg.com/htmx.org@1.9.4", defer=True),
+            Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest", defer=True),
             Script("""
                 // Stop zone adjustment state
                 let adjustmentMode = false;
@@ -915,8 +917,9 @@ def debug_page():
     return Html(
         Head(
             Title("Stop Sign Debug"),
-            Script(src="https://unpkg.com/htmx.org@1.9.4"),
-            Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest"),
+            Meta(name="viewport", content="width=device-width, initial-scale=1"),
+            Script(src="https://unpkg.com/htmx.org@1.9.4", defer=True),
+            Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest", defer=True),
             Script(src="/static/debug.js"),
         ),
         Body(
@@ -1145,6 +1148,9 @@ def create_pass_item(pass_data, scores):
                 src=image_url,
                 alt="Vehicle Image",
                 cls="sunken",
+                width="200",
+                height="150",
+                loading="lazy",
             ),
         ),
         Div(
@@ -1237,6 +1243,7 @@ def load_video():
             controls=True,
             autoplay=True,
             muted=True,
+            style="max-width: 100%; height: auto; max-height: 60vh;",
         ),
         Script(f"""
             var video = document.getElementById('videoPlayer');
