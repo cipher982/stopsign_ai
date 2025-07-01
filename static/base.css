@@ -176,3 +176,7 @@ pre {
     font-family: 'Courier New', monospace;
     min-height: 20px;
 }
+
+.vehicle-image {
+    height: auto;
+}

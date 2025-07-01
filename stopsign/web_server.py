@@ -1147,9 +1147,8 @@ def create_pass_item(pass_data, scores):
             Img(
                 src=image_url,
                 alt="Vehicle Image",
-                cls="sunken",
+                cls="sunken vehicle-image",
                 width="200",
-                height="150",
                 loading="lazy",
             ),
         ),
