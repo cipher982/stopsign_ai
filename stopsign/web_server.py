@@ -138,7 +138,7 @@ async def update_stop_zone(request):
     data = await request.json()
     points = data["points"]
     stop_line = ((points[0]["x"], points[0]["y"]), (points[1]["x"], points[1]["y"]))
-    stop_box_tolerance = 10
+    stop_box_tolerance = [10, 10]
     min_stop_duration = 2.0
 
     new_config = {
@@ -315,7 +315,7 @@ async def update_stop_zone_from_display(request):
             config.update_stop_zone(
                 {
                     "stop_line": stop_line,
-                    "stop_box_tolerance": 10,
+                    "stop_box_tolerance": [10, 10],
                     "min_stop_duration": 2.0,
                 }
             )

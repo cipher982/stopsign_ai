@@ -73,7 +73,14 @@ class Config:
         stop_box_tolerance_raw = self._get_config_value(
             "zones", "stop_box_tolerance", ["stopsign_detection", "stop_box_tolerance"]
         )
-        self.stop_box_tolerance = tuple(stop_box_tolerance_raw) if stop_box_tolerance_raw else None
+        if stop_box_tolerance_raw:
+            if isinstance(stop_box_tolerance_raw, (list, tuple)):
+                self.stop_box_tolerance = tuple(stop_box_tolerance_raw)
+            else:
+                # Handle case where it's returned as int instead of list
+                self.stop_box_tolerance = (stop_box_tolerance_raw, stop_box_tolerance_raw)
+        else:
+            self.stop_box_tolerance = None
 
         pre_stop_zone_raw = self._get_config_value("zones", "pre_stop_zone", ["stopsign_detection", "pre_stop_zone"])
         self.pre_stop_zone = tuple(pre_stop_zone_raw) if pre_stop_zone_raw else None
