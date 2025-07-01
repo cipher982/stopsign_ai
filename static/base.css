@@ -95,6 +95,7 @@ button:active {
   display: table;
   width: 100%;
   border-spacing: 8px 0;
+  table-layout: fixed;
 }
 
 .three-col {
@@ -106,6 +107,14 @@ button:active {
 .two-col > *, .three-col > * {
     display: table-cell;
     vertical-align: top;
+}
+
+.two-col > *:first-child {
+    width: 60%;
+}
+
+.two-col > *:last-child {
+    width: 40%;
 }
 
 .three-col > * {
@@ -179,4 +188,31 @@ pre {
 
 .vehicle-image {
     height: auto;
+}
+
+/* Video container layout stability */
+#videoContainer {
+    min-height: 480px;
+    min-width: 853px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--taskman-bg);
+    aspect-ratio: 16/9;
+}
+
+#videoPlayer {
+    max-width: 100%;
+    height: auto;
+    max-height: 60vh;
+    width: 100%;
+}
+
+/* Loading state placeholder */
+#videoContainer:empty::before {
+    content: "Loading video stream...";
+    color: var(--taskman-green);
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    text-align: center;
 }
