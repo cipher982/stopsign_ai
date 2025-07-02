@@ -308,7 +308,7 @@ p {
 
 .activity-feed__data {
   color: var(--color-win98-text);
-  font-weight: normal;
+  font-weight: bold;
 }
 
 .data-square {
