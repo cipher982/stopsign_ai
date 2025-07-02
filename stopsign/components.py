@@ -66,7 +66,7 @@ def main_layout_component():
                 live_stats_component(),
             ),
             recent_passes_component(),
-            cls="two-col",
+            cls="layout-main",
         ),
         adjustment_panel_component(),
     )
@@ -283,7 +283,7 @@ def live_stats_component():
                 H4("Insight"),
                 P("Loading...", id="rotatingInsight"),
             ),
-            cls="three-col",
+            cls="stats-grid",
         ),
         # Hidden div that triggers updates and distributes data
         Div(
