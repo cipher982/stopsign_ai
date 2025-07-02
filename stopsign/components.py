@@ -35,25 +35,16 @@ def video_component():
 
 
 def recent_passes_component():
-    """Recent vehicle passes component with incremental updates"""
+    """Recent vehicle passes component - loads once on page load"""
     return Div(
         H3("Recent Passes"),
         Div(
-            # Initial load of recent passes
+            # Initial load of recent passes - no auto updates
             hx_get="/api/recent-vehicle-passes",
             hx_trigger="load",
             hx_swap="innerHTML",
             id="recentPasses",
             cls="activity-feed",
-        ),
-        # Hidden div for incremental updates
-        Div(
-            hx_get="/api/new-vehicles",
-            hx_trigger="every 30s",
-            hx_swap="none",  # Items use hx-swap-oob to update themselves
-            hx_include="[hx-vals]",  # Include timestamp from previous response
-            style="display: none;",
-            id="newVehicleUpdater",
         ),
         cls="window window--panel",
     )
