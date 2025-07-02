@@ -23,7 +23,6 @@ from fasthtml.common import Script
 from fasthtml.common import Span
 from fasthtml.common import StaticFiles
 from fasthtml.common import StreamingResponse
-from fasthtml.common import Ul
 from fasthtml.common import Video
 from minio import Minio
 from sqlalchemy import text
@@ -723,12 +722,9 @@ async def get_recent_vehicle_passes():
         # Create a dict to map scores to passes
         scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
 
-        passes_list = Ul(
+        passes_list = Div(
             *[
-                Li(
-                    create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)]),
-                    id=f"pass-{pass_data.id}",  # Add unique ID for each pass
-                )
+                create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)])
                 for pass_data in recent_passes
             ],
             id="passes-list",
@@ -928,7 +924,7 @@ def create_pass_item(pass_data, scores):
         Img(
             src=image_url,
             alt="Vehicle",
-            cls="activity-feed__image sunken",
+            cls="activity-feed__image",
             loading="lazy",
             decoding="async",
         ),
@@ -1139,6 +1135,7 @@ def load_video():
             controls=True,
             autoplay=True,
             muted=True,
+            cls="video-stream__player",
         ),
     )
 
