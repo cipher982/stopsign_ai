@@ -281,8 +281,7 @@ p {
 
 .activity-feed__image {
   width: 80px;
-  height: 60px;
-  object-fit: cover;
+  height: auto;
   flex-shrink: 0;
 }
 
@@ -293,8 +292,9 @@ p {
 
 .activity-feed__time {
   font-size: var(--font-size-sm);
-  color: var(--color-win98-shadow);
+  color: var(--color-win98-text);
   margin-bottom: var(--space-xs);
+  font-weight: bold;
 }
 
 .activity-feed__metrics {
@@ -317,6 +317,13 @@ p {
   border: 1px solid var(--color-win98-shadow);
   margin-right: var(--space-xs);
   vertical-align: middle;
+}
+
+.activity-feed__legend {
+  font-size: var(--font-size-sm);
+  color: var(--color-win98-text);
+  margin-bottom: var(--space-xs);
+  font-family: 'Courier New', monospace;
 }
 
 /* Legacy vehicle-image class compatibility */
@@ -410,7 +417,7 @@ p {
   
   .activity-feed__image {
     width: 60px;
-    height: 45px;
+    height: auto;
   }
 }
 
@@ -448,7 +455,7 @@ p {
   
   .activity-feed__image {
     width: 50px;
-    height: 38px;
+    height: auto;
   }
 }
 
