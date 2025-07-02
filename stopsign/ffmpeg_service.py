@@ -106,7 +106,7 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         "-hls_time",
         "1",
         "-hls_list_size",
-        "6",
+        "10",
         "-hls_flags",
         "delete_segments",
         "-hls_segment_type",
