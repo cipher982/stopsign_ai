@@ -40,7 +40,7 @@ def recent_passes_component():
         H3("Recent Passes"),
         Div(
             "■ Speed (px/s) ■ Duration (s) - Colors show percentile distribution",
-            style="font-size: 11px; color: #818181; margin-bottom: 4px; font-family: 'Courier New', monospace;",
+            cls="activity-feed__legend",
         ),
         Div(
             # Initial load of recent passes
