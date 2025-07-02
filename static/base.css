@@ -280,7 +280,7 @@ p {
 }
 
 .activity-feed__image {
-  width: 120px;
+  width: 160px;
   height: auto;
   flex-shrink: 0;
 }
@@ -416,7 +416,7 @@ p {
   }
   
   .activity-feed__image {
-    width: 100px;
+    width: 140px;
     height: auto;
   }
 }
@@ -454,7 +454,7 @@ p {
   }
   
   .activity-feed__image {
-    width: 80px;
+    width: 120px;
     height: auto;
   }
 }
