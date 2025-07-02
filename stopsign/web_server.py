@@ -16,7 +16,6 @@ from fasthtml.common import Html
 from fasthtml.common import HTMLResponse
 from fasthtml.common import Iframe
 from fasthtml.common import Img
-from fasthtml.common import Li
 from fasthtml.common import Link
 from fasthtml.common import P
 from fasthtml.common import Script
@@ -740,58 +739,6 @@ async def get_recent_vehicle_passes():
         return Div(P(f"Error: {str(e)}"), id="recentPasses")
 
 
-@app.get("/api/new-vehicles")  # type: ignore
-async def get_new_vehicles(since: int = 0):
-    """Get only new vehicle passes since timestamp for incremental updates"""
-    try:
-        if not hasattr(app.state, "db"):
-            app.state.db = Database(db_url=DB_URL)
-
-        import time
-
-        current_time = int(time.time())
-
-        # Get recent passes
-        all_passes = app.state.db.get_recent_vehicle_passes(limit=10)
-
-        # Filter for new passes since timestamp
-        if since > 0:
-            new_passes = [p for p in all_passes if int(p.timestamp.timestamp()) > since]
-        else:
-            # First load - return top 3 most recent
-            new_passes = all_passes[:3]
-
-        if not new_passes:
-            # Return empty response with timestamp for next check
-            return Div(hx_vals=f'{{"last_check": {current_time}}}', style="display: none;")
-
-        # Get scores for new passes
-        scores = app.state.db.get_bulk_scores(
-            [{"min_speed": p.min_speed, "time_in_zone": p.time_in_zone} for p in new_passes]
-        )
-        scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
-
-        # Create new vehicle items with out-of-band swap to prepend to list
-        new_items = []
-        for pass_data in new_passes:
-            new_items.append(
-                Li(
-                    create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)]),
-                    id=f"pass-{pass_data.id}",
-                    hx_swap_oob="afterbegin:#passes-list",
-                )
-            )
-
-        # Also include timestamp for next check
-        response_div = Div(*new_items, Div(hx_vals=f'{{"last_check": {current_time}}}', style="display: none;"))
-
-        return response_div
-
-    except Exception as e:
-        logger.error(f"Error in get_new_vehicles: {str(e)}")
-        return Div(hx_vals=f'{{"last_check": {int(time.time())}}}', style="display: none;")
-
-
 @app.get("/records")  # type: ignore
 def records():
     from fasthtml.common import Main
@@ -903,22 +850,34 @@ def create_pass_item(pass_data, scores):
     # Format timestamp
     time_str = pass_data.timestamp.strftime("%H:%M:%S") if hasattr(pass_data, "timestamp") else "N/A"
 
-    # Create data visualization squares based on percentiles
-    speed_percentile = int(scores.get("speed_score", 0))
-    time_percentile = int(scores.get("time_score", 0))
+    # Use actual values to create visual variety (simpler approach)
+    speed_val = pass_data.min_speed
+    time_val = pass_data.time_in_zone
 
-    # Color squares based on percentile ranges (retro style)
-    def get_retro_color(percentile):
-        if percentile >= 90:
-            return "#FF0000"  # Red - high values
-        elif percentile >= 70:
+    # Color squares based on value ranges (using raw values for now)
+    def get_speed_color(speed):
+        if speed > 2.0:
+            return "#FF0000"  # Red - high speed
+        elif speed > 1.5:
             return "#FF8000"  # Orange
-        elif percentile >= 50:
+        elif speed > 1.0:
             return "#FFFF00"  # Yellow
-        elif percentile >= 30:
+        elif speed > 0.5:
             return "#80FF00"  # Light green
         else:
-            return "#00FF00"  # Green - low values
+            return "#00FF00"  # Green - low speed
+
+    def get_time_color(time):
+        if time > 4.0:
+            return "#FF0000"  # Red - long time
+        elif time > 3.0:
+            return "#FF8000"  # Orange
+        elif time > 2.0:
+            return "#FFFF00"  # Yellow
+        elif time > 1.0:
+            return "#80FF00"  # Light green
+        else:
+            return "#00FF00"  # Green - short time
 
     return Div(
         Img(
@@ -932,12 +891,10 @@ def create_pass_item(pass_data, scores):
             Div(time_str, cls="activity-feed__time"),
             Div(
                 # Speed data with color square
-                Span(cls="data-square", style=f"background-color: {get_retro_color(speed_percentile)};"),
+                Span(cls="data-square", style=f"background-color: {get_speed_color(speed_val)};"),
                 Span(f"{pass_data.min_speed:.2f} px/s", cls="activity-feed__data"),
                 # Time data with color square
-                Span(
-                    cls="data-square", style=f"background-color: {get_retro_color(time_percentile)}; margin-left: 8px;"
-                ),
+                Span(cls="data-square", style=f"background-color: {get_time_color(time_val)}; margin-left: 8px;"),
                 Span(f"{pass_data.time_in_zone:.2f}s", cls="activity-feed__data"),
                 cls="activity-feed__metrics",
             ),

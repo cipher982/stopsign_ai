@@ -298,10 +298,11 @@ p {
 }
 
 .activity-feed__metrics {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-base);
   font-family: 'Courier New', monospace;
   display: flex;
   align-items: center;
+  gap: var(--space-xs);
   margin-top: var(--space-xs);
 }
 
@@ -319,12 +320,6 @@ p {
   vertical-align: middle;
 }
 
-.activity-feed__legend {
-  font-size: var(--font-size-sm);
-  color: var(--color-win98-text);
-  margin-bottom: var(--space-xs);
-  font-family: 'Courier New', monospace;
-}
 
 /* Legacy vehicle-image class compatibility */
 .vehicle-image {
