@@ -576,11 +576,18 @@ def debug_page():
                 H1("Stop Sign Debug Interface"),
                 # Main layout: Video left, Controls right
                 Div(
-                    debug_video_component(),
-                    debug_controls_component(),
-                    cls="two-col",
+                    Div(
+                        debug_video_component(),
+                        cls="content-primary",
+                    ),
+                    Div(
+                        debug_controls_component(),
+                        cls="content-secondary",
+                    ),
+                    cls="content-grid",
                 ),
                 debug_tools_component(),
+                cls="app-layout",
             )
         ),
     )
