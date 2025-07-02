@@ -904,42 +904,44 @@ def create_pass_item(pass_data, scores):
             # Use direct MinIO URL for now - proxy endpoint has issues
             image_url = f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{object_name}"
 
+    # Format timestamp
+    import datetime
+    time_str = pass_data.created_at.strftime("%H:%M:%S") if hasattr(pass_data, 'created_at') else "N/A"
+    
+    # Create data visualization squares based on percentiles
+    speed_percentile = int(scores.get('speed_score', 0))
+    time_percentile = int(scores.get('time_score', 0))
+    
+    # Color squares based on percentile ranges (retro style)
+    def get_retro_color(percentile):
+        if percentile >= 90: return "#FF0000"  # Red - high values
+        elif percentile >= 70: return "#FF8000"  # Orange
+        elif percentile >= 50: return "#FFFF00"  # Yellow
+        elif percentile >= 30: return "#80FF00"  # Light green
+        else: return "#00FF00"  # Green - low values
+
     return Div(
-        Div(
-            Img(
-                src=image_url,
-                alt="Vehicle Image",
-                cls="sunken vehicle-image",
-                width="200",
-                loading="lazy",
-                decoding="async",
-            ),
+        Img(
+            src=image_url,
+            alt="Vehicle",
+            cls="activity-feed__image sunken",
+            loading="lazy",
+            decoding="async",
         ),
         Div(
+            Div(time_str, cls="activity-feed__time"),
             Div(
-                Div(
-                    Span("Speed Score: "),
-                    Span(
-                        f"{scores['speed_score']}",
-                    ),
-                ),
-                Div(
-                    f"Min Speed: {pass_data.min_speed:.2f} pixels/sec",
-                ),
+                # Speed data with color square
+                Span(cls="data-square", style=f"background-color: {get_retro_color(speed_percentile)};"),
+                Span(f"{pass_data.min_speed:.2f} px/s", cls="activity-feed__data"),
+                # Time data with color square  
+                Span(cls="data-square", style=f"background-color: {get_retro_color(time_percentile)}; margin-left: 8px;"),
+                Span(f"{pass_data.time_in_zone:.2f}s", cls="activity-feed__data"),
+                cls="activity-feed__metrics"
             ),
-            Div(
-                Div(
-                    Span("Time Score: "),
-                    Span(
-                        f"{scores['time_score']}",
-                    ),
-                ),
-                Div(
-                    f"Time in Zone: {pass_data.time_in_zone:.2f} seconds",
-                ),
-            ),
+            cls="activity-feed__content",
         ),
-        cls="two-col",
+        cls="activity-feed__item",
     )
 
 
