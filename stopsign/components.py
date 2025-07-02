@@ -39,10 +39,6 @@ def recent_passes_component():
     return Div(
         H3("Recent Passes"),
         Div(
-            "■ Speed (px/s) ■ Duration (s) - Colors show percentile distribution",
-            cls="activity-feed__legend",
-        ),
-        Div(
             # Initial load of recent passes
             hx_get="/api/recent-vehicle-passes",
             hx_trigger="load",

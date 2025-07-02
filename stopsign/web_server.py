@@ -905,7 +905,7 @@ def create_pass_item(pass_data, scores):
             image_url = f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{object_name}"
 
     # Format timestamp
-    time_str = pass_data.created_at.strftime("%H:%M:%S") if hasattr(pass_data, "created_at") else "N/A"
+    time_str = pass_data.timestamp.strftime("%H:%M:%S") if hasattr(pass_data, "timestamp") else "N/A"
 
     # Create data visualization squares based on percentiles
     speed_percentile = int(scores.get("speed_score", 0))
@@ -1047,7 +1047,7 @@ async def debug_performance():
         start = time.time()
         try:
             test_passes = [{"min_speed": 10.0, "time_in_zone": 2.5}]
-            scores = app.state.db.get_bulk_scores(test_passes)
+            _ = app.state.db.get_bulk_scores(test_passes)
             results["db_bulk_scores"] = {"time_ms": round((time.time() - start) * 1000), "status": "success"}
         except Exception as e:
             results["db_bulk_scores"] = {
