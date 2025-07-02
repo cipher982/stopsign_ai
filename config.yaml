@@ -3,7 +3,6 @@ debugging_visualization:
   grid_size: 100
 output:
   frame_skip: 3
-  jpeg_quality: 10
   save_video: true
 stopsign_detection:
   image_capture_zone:
