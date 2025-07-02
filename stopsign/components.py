@@ -37,7 +37,11 @@ def video_component():
 def recent_passes_component():
     """Recent vehicle passes component with incremental updates"""
     return Div(
-        H2("Recent Vehicle Passes"),
+        H3("Recent Passes"),
+        Div(
+            "■ Speed (px/s) ■ Duration (s) - Colors show percentile distribution",
+            style="font-size: 11px; color: #818181; margin-bottom: 4px; font-family: 'Courier New', monospace;",
+        ),
         Div(
             # Initial load of recent passes
             hx_get="/api/recent-vehicle-passes",
