@@ -905,20 +905,24 @@ def create_pass_item(pass_data, scores):
             image_url = f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{object_name}"
 
     # Format timestamp
-    import datetime
-    time_str = pass_data.created_at.strftime("%H:%M:%S") if hasattr(pass_data, 'created_at') else "N/A"
-    
+    time_str = pass_data.created_at.strftime("%H:%M:%S") if hasattr(pass_data, "created_at") else "N/A"
+
     # Create data visualization squares based on percentiles
-    speed_percentile = int(scores.get('speed_score', 0))
-    time_percentile = int(scores.get('time_score', 0))
-    
+    speed_percentile = int(scores.get("speed_score", 0))
+    time_percentile = int(scores.get("time_score", 0))
+
     # Color squares based on percentile ranges (retro style)
     def get_retro_color(percentile):
-        if percentile >= 90: return "#FF0000"  # Red - high values
-        elif percentile >= 70: return "#FF8000"  # Orange
-        elif percentile >= 50: return "#FFFF00"  # Yellow
-        elif percentile >= 30: return "#80FF00"  # Light green
-        else: return "#00FF00"  # Green - low values
+        if percentile >= 90:
+            return "#FF0000"  # Red - high values
+        elif percentile >= 70:
+            return "#FF8000"  # Orange
+        elif percentile >= 50:
+            return "#FFFF00"  # Yellow
+        elif percentile >= 30:
+            return "#80FF00"  # Light green
+        else:
+            return "#00FF00"  # Green - low values
 
     return Div(
         Img(
@@ -934,10 +938,12 @@ def create_pass_item(pass_data, scores):
                 # Speed data with color square
                 Span(cls="data-square", style=f"background-color: {get_retro_color(speed_percentile)};"),
                 Span(f"{pass_data.min_speed:.2f} px/s", cls="activity-feed__data"),
-                # Time data with color square  
-                Span(cls="data-square", style=f"background-color: {get_retro_color(time_percentile)}; margin-left: 8px;"),
+                # Time data with color square
+                Span(
+                    cls="data-square", style=f"background-color: {get_retro_color(time_percentile)}; margin-left: 8px;"
+                ),
                 Span(f"{pass_data.time_in_zone:.2f}s", cls="activity-feed__data"),
-                cls="activity-feed__metrics"
+                cls="activity-feed__metrics",
             ),
             cls="activity-feed__content",
         ),
