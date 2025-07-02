@@ -1,357 +1,423 @@
+/* =============================================================================
+   STOPSIGN AI - MODERN CSS ARCHITECTURE
+   Semantic, modular, responsive design system
+   ============================================================================= */
 
-/* base.css */
+/* =============================================================================
+   1. DESIGN TOKENS
+   ============================================================================= */
 
 :root {
-  --win98-face: #C3C3C3;
-  --win98-shadow: #818181;
-  --win98-highlight: #FDFFFF;
-  --win98-accent: #000080;
-  --win98-accent-text: #FDFFFF;
-  --win98-text: #000000;
-  --taskman-bg: #000000;
-  --taskman-green: #00FF00;
-  --status-good: #008000;
-  --status-warn: #FFFF00;
-  --status-error: #FF0000;
+  /* Win98 Color Palette */
+  --color-win98-face: #C3C3C3;
+  --color-win98-shadow: #818181;
+  --color-win98-highlight: #FDFFFF;
+  --color-win98-accent: #000080;
+  --color-win98-accent-text: #FDFFFF;
+  --color-win98-text: #000000;
   
-  /* Layout variables */
-  --gutter-size: 8px;
-  --grid-main-ratio: 60% 40%;
-  --baseline-grid: 8px;
-  --min-tap-target: 44px;
+  /* Status Colors */
+  --color-status-good: #008000;
+  --color-status-warn: #FFFF00;
+  --color-status-error: #FF0000;
+  
+  /* Terminal Colors */
+  --color-terminal-bg: #000000;
+  --color-terminal-text: #00FF00;
+  
+  /* Spacing Scale (4px base) */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-xxl: 32px;
+  
+  /* Typography Scale */
+  --font-size-sm: 11px;
+  --font-size-base: 14px;
+  --font-size-md: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 20px;
+  
+  /* Layout Dimensions */
+  --content-max-width: 1200px;
+  --sidebar-width: 320px;
+  --touch-target-min: 44px;
+  
+  /* Breakpoints */
+  --breakpoint-tablet: 768px;
+  --breakpoint-mobile: 480px;
+  
+  /* Borders */
+  --border-width: 2px;
+  --border-win98-raised: var(--border-width) solid;
+  --border-win98-sunken: var(--border-width) solid;
 }
+
+/* =============================================================================
+   2. BASE STYLES
+   ============================================================================= */
 
 html {
   image-rendering: pixelated;
   -webkit-font-smoothing: none;
   font-smooth: never;
   -moz-osx-font-smoothing: unset;
+  box-sizing: border-box;
+}
+
+*, *::before, *::after {
+  box-sizing: inherit;
 }
 
 body {
   font-family: "MS Sans Serif", "Tahoma", system-ui, sans-serif;
-  font-size: clamp(14px, 4vw, 18px);
-  background-color: var(--win98-face);
-  color: var(--win98-text);
+  font-size: var(--font-size-base);
+  line-height: 1.4;
+  background-color: var(--color-win98-face);
+  color: var(--color-win98-text);
   margin: 0;
-  padding: var(--baseline-grid);
+  padding: var(--space-sm);
 }
 
-.window, .metric-card, article, section {
-  border: 2px solid;
-  border-color: var(--win98-highlight) var(--win98-shadow) var(--win98-shadow) var(--win98-highlight);
-  padding: 3px;
-  background-color: var(--win98-face);
-  margin-bottom: 10px;
-}
-
-.title-bar {
-  background: linear-gradient(to right, var(--win98-accent), #A6CAF0);
-  padding: calc(var(--baseline-grid) * 0.5) calc(var(--baseline-grid) * 0.75);
-  color: var(--win98-accent-text);
-  font-weight: bold;
-  margin-bottom: calc(var(--baseline-grid) * 0.5);
-  font-size: clamp(16px, 5vw, 20px);
-}
-
-nav {
-    text-align: right;
-    padding: calc(var(--baseline-grid) * 0.5) 0;
-}
-
-nav a {
-    margin: 0 calc(var(--baseline-grid) * 0.75);
-    color: var(--win98-text);
-    text-decoration: none;
-    font-size: clamp(14px, 4vw, 16px);
-    display: inline-block;
-    padding: calc(var(--baseline-grid) * 0.5) calc(var(--baseline-grid) * 0.75);
-    min-height: var(--min-tap-target);
-    line-height: calc(var(--min-tap-target) - var(--baseline-grid));
-}
-
-nav a:hover {
-    background-color: var(--win98-accent);
-    color: var(--win98-accent-text);
-}
-
+/* Typography */
 h1, h2, h3, h4, h5, h6 {
-    font-weight: bold;
+  font-weight: bold;
+  margin: 0 0 var(--space-sm) 0;
 }
 
-h1 { font-size: 20px; }
-h2 { font-size: 18px; border-bottom: 2px solid var(--win98-shadow); padding-bottom: 2px; margin-bottom: 2px;}
-h3 { font-size: 16px; }
+h1 { font-size: var(--font-size-xl); }
+h2 { 
+  font-size: var(--font-size-lg);
+  border-bottom: var(--border-width) solid var(--color-win98-shadow);
+  padding-bottom: var(--space-xs);
+}
+h3 { font-size: var(--font-size-md); }
+h4 { font-size: var(--font-size-base); }
 
-
-button {
-  border: 2px solid;
-  border-color: var(--win98-highlight) var(--win98-shadow) var(--win98-shadow) var(--win98-highlight);
-  background-color: var(--win98-face);
-  padding: calc(var(--baseline-grid) * 0.75) calc(var(--baseline-grid) * 1.25);
-  cursor: pointer;
-  min-height: var(--min-tap-target);
-  font-size: clamp(13px, 3.5vw, 14px);
+p {
+  margin: 0 0 var(--space-sm) 0;
 }
 
-button:active {
-  border-color: var(--win98-shadow) var(--win98-highlight) var(--win98-highlight) var(--win98-shadow);
-  background: #A9A9A9;
+/* =============================================================================
+   3. LAYOUT SYSTEM
+   ============================================================================= */
+
+/* App Layout Container */
+.app-layout {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
 }
 
+/* Main Content Areas */
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr var(--sidebar-width);
+  gap: var(--space-sm);
+  align-items: start;
+}
+
+.content-primary {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.content-secondary {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+/* Metrics Grid */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-sm);
+  align-items: start;
+}
+
+/* =============================================================================
+   4. COMPONENT SYSTEM
+   ============================================================================= */
+
+/* Win98 Window Component */
+.window {
+  border: var(--border-win98-raised);
+  border-color: var(--color-win98-highlight) var(--color-win98-shadow) var(--color-win98-shadow) var(--color-win98-highlight);
+  background-color: var(--color-win98-face);
+  padding: var(--space-xs);
+  margin-bottom: var(--space-sm);
+}
+
+.window--panel {
+  padding: var(--space-sm);
+}
+
+.window--card {
+  padding: var(--space-xs);
+}
+
+/* Window Title Bar */
+.title-bar {
+  background: linear-gradient(to right, var(--color-win98-accent), #A6CAF0);
+  color: var(--color-win98-accent-text);
+  font-weight: bold;
+  font-size: var(--font-size-md);
+  padding: var(--space-xs) var(--space-sm);
+  margin: calc(var(--space-xs) * -1) calc(var(--space-xs) * -1) var(--space-xs);
+}
+
+/* Sunken Effect */
 .sunken {
-  border: 2px solid;
-  border-color: var(--win98-shadow) var(--win98-highlight) var(--win98-highlight) var(--win98-shadow);
-  padding: 2px;
+  border: var(--border-win98-sunken);
+  border-color: var(--color-win98-shadow) var(--color-win98-highlight) var(--color-win98-highlight) var(--color-win98-shadow);
+  padding: var(--space-xs);
 }
 
-.layout-main {
-  display: grid;
-  grid-template-columns: var(--grid-main-ratio);
-  gap: var(--gutter-size);
-  align-items: start;
+/* =============================================================================
+   5. INTERACTIVE COMPONENTS
+   ============================================================================= */
+
+/* Buttons */
+.button {
+  border: var(--border-win98-raised);
+  border-color: var(--color-win98-highlight) var(--color-win98-shadow) var(--color-win98-shadow) var(--color-win98-highlight);
+  background-color: var(--color-win98-face);
+  color: var(--color-win98-text);
+  font-family: inherit;
+  font-size: var(--font-size-base);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  min-height: var(--touch-target-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: calc(var(--gutter-size) * 0.75);
-  align-items: start;
+.button:active {
+  border-color: var(--color-win98-shadow) var(--color-win98-highlight) var(--color-win98-highlight) var(--color-win98-shadow);
+  background-color: #A9A9A9;
 }
 
-.two-col {
-  display: grid;
-  grid-template-columns: var(--grid-main-ratio);
-  gap: var(--gutter-size);
-  align-items: start;
+.button--zone {
+  min-width: 90px;
+  margin: var(--space-xs);
+  background-color: #c0c0c0;
+  border: 1px outset #c0c0c0;
+  font-size: 13px;
 }
 
-.three-col {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--gutter-size);
-  align-items: start;
+.button--zone:active,
+.button--zone.active {
+  border: 1px inset #c0c0c0;
+  background-color: #a0a0a0;
 }
 
+/* Navigation */
+.navigation {
+  text-align: right;
+  padding: var(--space-sm) 0;
+}
+
+.navigation__link {
+  margin: 0 var(--space-sm);
+  color: var(--color-win98-text);
+  text-decoration: none;
+  font-size: var(--font-size-base);
+  padding: var(--space-xs) var(--space-sm);
+  display: inline-block;
+}
+
+.navigation__link:hover {
+  background-color: var(--color-win98-accent);
+  color: var(--color-win98-accent-text);
+}
+
+/* =============================================================================
+   6. SPECIALIZED COMPONENTS
+   ============================================================================= */
+
+/* Video Stream */
+.video-stream {
+  width: 100%;
+  aspect-ratio: 16/9;
+  background-color: var(--color-terminal-bg);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-stream__player {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.video-stream:empty::before {
+  content: "Loading video stream...";
+  color: var(--color-terminal-text);
+  font-family: 'Courier New', monospace;
+  font-size: var(--font-size-base);
+}
+
+/* Activity Feed */
+.activity-feed {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.activity-feed__item {
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--color-win98-shadow);
+}
+
+.activity-feed__item:last-child {
+  border-bottom: none;
+}
+
+.activity-feed__image {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin-bottom: var(--space-xs);
+}
+
+/* Status Indicators */
 .status-indicator {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border: 1px solid;
-    border-color: var(--win98-highlight) var(--win98-shadow) var(--win98-shadow) var(--win98-highlight);
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1px solid;
+  border-color: var(--color-win98-highlight) var(--color-win98-shadow) var(--color-win98-shadow) var(--color-win98-highlight);
+  margin-right: var(--space-xs);
 }
 
-.status-indicator.good { background-color: var(--status-good); }
-.status-indicator.warn { background-color: var(--status-warn); }
-.status-indicator.error { background-color: var(--status-error); }
+.status-indicator--good { background-color: var(--color-status-good); }
+.status-indicator--warn { background-color: var(--color-status-warn); }
+.status-indicator--error { background-color: var(--color-status-error); }
 
-.taskman-chart {
-    background-color: var(--taskman-bg);
-    border: 2px solid;
-    border-color: var(--win98-shadow) var(--win98-highlight) var(--win98-highlight) var(--win98-shadow);
+/* Terminal/Code Display */
+.terminal {
+  background-color: var(--color-terminal-bg);
+  color: var(--color-terminal-text);
+  font-family: 'Courier New', monospace;
+  font-size: var(--font-size-sm);
+  padding: var(--space-sm);
+  border: 1px inset #c0c0c0;
+  overflow-y: auto;
 }
 
-/* Debug Page Specific Styles */
-.debug-card {
-    background: #f0f0f0;
-    border: 2px inset #c0c0c0;
-    padding: 6px;
-    margin: 3px;
-    display: inline-block;
-    vertical-align: top;
+.terminal--status {
+  min-height: 20px;
+  font-size: var(--font-size-sm);
+  padding: var(--space-xs);
 }
 
-.zone-selector {
-    padding: calc(var(--baseline-grid) * 0.75) calc(var(--baseline-grid) * 1.5);
-    border: 1px outset #c0c0c0;
-    background: #c0c0c0;
-    color: black;
-    cursor: pointer;
-    font-size: clamp(13px, 3.5vw, 14px);
-    margin: calc(var(--baseline-grid) * 0.25);
-    min-width: 90px;
-    min-height: var(--min-tap-target);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+.terminal--log {
+  height: 140px;
 }
 
-.zone-selector:active, .zone-selector.active {
-    border: 1px inset #c0c0c0;
-    background: #a0a0a0;
+/* Debug Components */
+.debug-panel {
+  background-color: #f0f0f0;
+  border: var(--border-width) inset #c0c0c0;
+  padding: var(--space-sm);
+  margin: var(--space-xs);
 }
 
-pre {
-    background: black;
-    color: #00ff00;
-    padding: 6px;
-    font-size: 11px;
-    font-family: 'Courier New', monospace;
-    border: 1px inset #c0c0c0;
-    height: 140px;
-    overflow-y: scroll;
-}
+/* =============================================================================
+   7. RESPONSIVE DESIGN
+   ============================================================================= */
 
-#status {
-    background: black;
-    color: #00ff00;
-    padding: 4px;
-    font-size: 12px;
-    border: 1px inset #c0c0c0;
-    font-family: 'Courier New', monospace;
-    min-height: 20px;
-}
-
-.vehicle-image {
-    height: auto;
-}
-
-/* Video container layout stability */
-#videoContainer {
-    width: 100%;
-    aspect-ratio: 16/9;
-    background-color: var(--taskman-bg);
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-#videoPlayer {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-}
-
-/* Loading state placeholder */
-#videoContainer:empty::before {
-    content: "Loading video stream...";
-    color: var(--taskman-green);
-    font-family: 'Courier New', monospace;
-    font-size: 14px;
+/* Tablet Layout */
+@media (max-width: 768px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+  }
+  
+  .metrics-grid {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+  
+  .navigation {
     text-align: center;
+  }
+  
+  .navigation__link {
+    margin: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+  }
+  
+  .button,
+  .button--zone {
+    min-height: 48px;
+    padding: var(--space-sm) var(--space-lg);
+  }
+  
+  .debug-panel {
+    display: block;
+    width: 100%;
+    margin: var(--space-sm) 0;
+  }
+  
+  .activity-feed {
+    max-height: 40vh;
+  }
 }
 
-/* Recent vehicle images responsive sizing */
-.vehicle-image {
-    max-width: 100%;
-    height: auto;
-}
-
-/* Scrollable containers with mobile-friendly heights */
-#recentPasses {
-    max-height: 60vh;
-    overflow-y: auto;
-}
-
-/* ========================================
-   MOBILE RESPONSIVE OVERRIDES
-   ======================================== */
-
-/* Tablet and smaller screens */
-@media (max-width: 760px) {
-    :root {
-        --grid-main-ratio: 1fr;
-        --gutter-size: 4px;
-        --baseline-grid: 4px;
-    }
-    
-    body {
-        padding: calc(var(--baseline-grid) * 0.5);
-    }
-    
-    /* Stack main layout vertically */
-    .layout-main,
-    .two-col {
-        grid-template-columns: 1fr;
-        gap: calc(var(--gutter-size) * 2);
-    }
-    
-    /* Stats grid adapts to single/dual columns */
-    .stats-grid,
-    .three-col {
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-        gap: calc(var(--gutter-size) * 1.5);
-    }
-    
-    /* Navigation centers and improves touch targets */
-    nav {
-        text-align: center;
-        padding: var(--baseline-grid) 0;
-    }
-    
-    nav a {
-        margin: calc(var(--baseline-grid) * 0.5);
-        padding: calc(var(--baseline-grid) * 1.5) calc(var(--baseline-grid) * 2);
-        border-radius: 2px;
-    }
-    
-    /* Improve button touch targets */
-    button,
-    .zone-selector {
-        padding: calc(var(--baseline-grid) * 2) calc(var(--baseline-grid) * 3);
-        margin: calc(var(--baseline-grid) * 0.5);
-        min-height: 48px;
-    }
-    
-    /* Debug cards stack better */
-    .debug-card {
-        display: block;
-        margin-bottom: var(--baseline-grid);
-        width: 100%;
-    }
-    
-    /* Video container responsive aspect ratio */
-    #videoContainer {
-        aspect-ratio: 16/9;
-        max-height: 50vh;
-    }
-    
-    /* Reduce recent passes height on mobile */
-    #recentPasses {
-        max-height: 40vh;
-    }
-    
-    /* Code blocks more readable on small screens */
-    pre {
-        font-size: 10px;
-        height: 120px;
-    }
-    
-    /* Status display improvements */
-    #status {
-        font-size: 11px;
-        padding: calc(var(--baseline-grid) * 0.75);
-    }
-}
-
-/* Mobile phones */
+/* Mobile Layout */
 @media (max-width: 480px) {
-    /* Hide "GitHub" text, show only icon if available */
-    nav a[href*="github"] {
-        font-size: 0;
-        width: var(--min-tap-target);
-        text-indent: -9999px;
-        background-size: 16px 16px;
-        background-repeat: no-repeat;
-        background-position: center;
-    }
-    
-    /* Further reduce spacing on very small screens */
-    .window, .metric-card, article, section {
-        margin-bottom: calc(var(--baseline-grid) * 0.75);
-    }
-    
-    /* Single column stats on very small screens */
-    .stats-grid,
-    .three-col {
-        grid-template-columns: 1fr;
-    }
-    
-    /* Larger touch targets for critical actions */
-    .zone-selector,
-    button {
-        min-height: 52px;
-        font-size: clamp(14px, 4vw, 16px);
-    }
+  body {
+    padding: var(--space-xs);
+  }
+  
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .window {
+    margin-bottom: var(--space-xs);
+  }
+  
+  .button,
+  .button--zone {
+    min-height: 52px;
+    font-size: var(--font-size-md);
+  }
+  
+  /* Hide GitHub text on mobile, show icon only */
+  .navigation__link[href*="github"] {
+    font-size: 0;
+    width: var(--touch-target-min);
+    text-indent: -9999px;
+  }
 }
+
+/* =============================================================================
+   8. UTILITY CLASSES
+   ============================================================================= */
+
+.hidden { display: none; }
+.sr-only { 
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Spacing utilities */
+.mt-0 { margin-top: 0; }
+.mb-sm { margin-bottom: var(--space-sm); }
+.mb-md { margin-bottom: var(--space-md); }
+.p-0 { padding: 0; }
+
+/* Text alignment */
+.text-center { text-align: center; }
+.text-right { text-align: right; }

@@ -28,8 +28,9 @@ def video_component():
             id="videoContainer",
             hx_get="/load-video",
             hx_trigger="load",
+            cls="video-stream__player",
         ),
-        cls="sunken",
+        cls="video-stream sunken",
     )
 
 
@@ -43,6 +44,7 @@ def recent_passes_component():
             hx_trigger="load",
             hx_swap="innerHTML",
             id="recentPasses",
+            cls="activity-feed",
         ),
         # Hidden div for incremental updates
         Div(
@@ -53,22 +55,27 @@ def recent_passes_component():
             style="display: none;",
             id="newVehicleUpdater",
         ),
-        cls="window",
+        cls="window window--panel",
     )
 
 
 def main_layout_component():
-    """Main two-column layout for home page"""
+    """Main semantic layout for home page"""
     return Main(
         Div(
             Div(
                 video_component(),
                 live_stats_component(),
+                cls="content-primary",
             ),
-            recent_passes_component(),
-            cls="layout-main",
+            Div(
+                recent_passes_component(),
+                cls="content-secondary",
+            ),
+            cls="content-grid",
         ),
         adjustment_panel_component(),
+        cls="app-layout",
     )
 
 
@@ -82,6 +89,7 @@ def adjustment_panel_component():
                 "Adjust Stop Line",
                 id="adjustmentModeBtn",
                 onclick="toggleAdjustmentMode()",
+                cls="button",
             ),
             P(
                 "Click the button above, then click two points on the video to set the new stop line position.",
@@ -106,15 +114,16 @@ def adjustment_panel_component():
                 Button(
                     "Update Stop Zone",
                     onclick="updateStopZone()",
+                    cls="button",
                 ),
                 cls="sunken",
             ),
         ),
         # Status display
-        Div(id="status"),
+        Div(id="status", cls="terminal terminal--status"),
         id="adjustmentPanel",
         style="display: none;",
-        cls="window",
+        cls="window window--panel",
     )
 
 
@@ -154,10 +163,11 @@ def common_header_component(title):
     return Header(
         Div(title, cls="title-bar"),
         Nav(
-            A("Home", href="/"),
-            A("Records", href="/records"),
-            A("About", href="/about"),
-            A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank"),
+            A("Home", href="/", cls="navigation__link"),
+            A("Records", href="/records", cls="navigation__link"),
+            A("About", href="/about", cls="navigation__link"),
+            A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank", cls="navigation__link"),
+            cls="navigation",
         ),
         cls="window",
     )
@@ -175,8 +185,12 @@ def debug_video_component():
     """Video component for debug page"""
     return Div(
         H2("Video Stream"),
-        Div(hx_get="/load-video", hx_trigger="load"),
-        cls="debug-card",
+        Div(
+            hx_get="/load-video",
+            hx_trigger="load",
+            cls="video-stream__player",
+        ),
+        cls="window window--panel",
     )
 
 
@@ -191,19 +205,19 @@ def debug_controls_component():
                     "Stop Line",
                     id="zone-stop-line",
                     onclick="selectZoneType('stop-line')",
-                    cls="zone-selector active",
+                    cls="button button--zone active",
                 ),
                 Button(
                     "Pre-Stop",
                     id="zone-pre-stop",
                     onclick="selectZoneType('pre-stop')",
-                    cls="zone-selector",
+                    cls="button button--zone",
                 ),
                 Button(
                     "Capture",
                     id="zone-capture",
                     onclick="selectZoneType('capture')",
-                    cls="zone-selector",
+                    cls="button button--zone",
                 ),
             ),
             P(id="zone-instructions"),
@@ -211,32 +225,33 @@ def debug_controls_component():
         # Visualization
         Div(
             H3("2. Visualization"),
-            Button("Show Zones", id="debugZonesBtn", onclick="toggleDebugZones()"),
+            Button("Show Zones", id="debugZonesBtn", onclick="toggleDebugZones()", cls="button"),
         ),
         # Actions
         Div(
             H3("3. Edit Zone"),
-            Button("Adjust", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()"),
-            Button("Reset", onclick="resetPoints()"),
+            Button("Adjust", id="adjustmentModeBtn", onclick="toggleAdjustmentMode()", cls="button"),
+            Button("Reset", onclick="resetPoints()", cls="button"),
             Button(
                 "SUBMIT",
                 id="submitBtn",
                 onclick="updateZoneFromClicks()",
                 style="display: none;",
                 disabled=True,
+                cls="button",
             ),
         ),
         # Status
         Div(
             H3("4. Status"),
-            Div(id="status"),
+            Div(id="status", cls="terminal terminal--status"),
             Div(
                 P(
                     "Select zone → Show zones → Adjust → Click 2 points → Submit",
                 ),
             ),
         ),
-        cls="debug-card",
+        cls="debug-panel",
     )
 
 
@@ -274,7 +289,7 @@ def live_stats_component():
                 ),
                 Div(
                     Span("Status: "),
-                    Span(cls="status-indicator good", id="systemStatus"),
+                    Span(cls="status-indicator status-indicator--good", id="systemStatus"),
                     Span(" Online"),
                 ),
             ),
@@ -283,7 +298,7 @@ def live_stats_component():
                 H4("Insight"),
                 P("Loading...", id="rotatingInsight"),
             ),
-            cls="stats-grid",
+            cls="metrics-grid",
         ),
         # Hidden div that triggers updates and distributes data
         Div(
@@ -293,7 +308,7 @@ def live_stats_component():
             hx_vals='{"update": "stats"}',
             id="statsUpdater",
         ),
-        cls="metric-card",
+        cls="window window--card",
     )
 
 
@@ -301,9 +316,9 @@ def debug_tools_component():
     """Debug tools section"""
     return Div(
         H3("Debug Tools"),
-        Button("Coord Info", onclick="showCoordinateInfo()"),
-        Button("Debug Transforms", onclick="debugCoordinates()"),
-        Div(id="coordOutput"),
-        Div(id="debugOutput"),
-        cls="window",
+        Button("Coord Info", onclick="showCoordinateInfo()", cls="button"),
+        Button("Debug Transforms", onclick="debugCoordinates()", cls="button"),
+        Div(id="coordOutput", cls="terminal terminal--log"),
+        Div(id="debugOutput", cls="terminal terminal--log"),
+        cls="window window--panel",
     )
