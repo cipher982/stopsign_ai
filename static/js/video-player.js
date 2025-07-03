@@ -27,12 +27,10 @@ function initializeVideoPlayer() {
         console.log('HLS is supported');
         const hls = new Hls({
             debug: false,
-            lowLatencyMode: true,
-            liveSyncDurationCount: 1,        
-            liveMaxLatencyDurationCount: 3,  
-            maxLiveSyncPlaybackRate: 1.5,    
-            liveDurationInfinity: true,      
-            enableWorker: true               
+            liveSyncDurationCount: 3,        
+            liveMaxLatencyDurationCount: 10,  
+            maxLiveSyncPlaybackRate: 1.2,    
+            liveDurationInfinity: true      
         });
         
         hls.on(Hls.Events.MANIFEST_PARSED, function() {
@@ -69,13 +67,7 @@ function initializeVideoPlayer() {
             console.log('Loading HLS manifest...');
         });
         
-        // Force immediate jump to live edge for live streams (only when significantly behind)
-        hls.on(Hls.Events.LEVEL_UPDATED, function(event, data) {
-            if (data.details.live && video.currentTime < hls.liveSyncPosition - 10) {
-                console.log('Jumping to live edge (10s+ behind):', hls.liveSyncPosition);
-                video.currentTime = hls.liveSyncPosition - 2;
-            }
-        });
+        // Let HLS.js handle live streaming automatically with our configuration
         
         // Store HLS instance for cleanup and prevent re-initialization
         video.hlsInstance = hls;
