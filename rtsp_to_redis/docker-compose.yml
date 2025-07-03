@@ -1,8 +1,8 @@
 services:
   rtsp_to_redis:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: rtsp_to_redis/Dockerfile
     env_file:
       - .env
     environment:
