@@ -11,10 +11,6 @@ from opentelemetry import metrics
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.redis import RedisInstrumentor
-from opentelemetry.instrumentation.requests import RequestsInstrumentor
-from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -95,10 +91,20 @@ def setup_telemetry(service_name: str, service_version: str = "1.0.0", enable_co
         _meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
         metrics.set_meter_provider(_meter_provider)
 
-        # Auto-instrument common libraries
-        RedisInstrumentor().instrument()
-        RequestsInstrumentor().instrument()
-        SQLAlchemyInstrumentor().instrument()
+        # Auto-instrument common libraries (conditional imports)
+        try:
+            from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+            RedisInstrumentor().instrument()
+        except ImportError:
+            pass
+
+        try:
+            from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
+            RequestsInstrumentor().instrument()
+        except ImportError:
+            pass
 
         _telemetry_initialized = True
         logger.info(f"OpenTelemetry initialized for {service_name} -> {otlp_endpoint}")
@@ -110,6 +116,8 @@ def setup_telemetry(service_name: str, service_version: str = "1.0.0", enable_co
 def setup_fastapi_telemetry(app, service_name: str) -> None:
     """Setup FastAPI-specific telemetry instrumentation."""
     try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
         FastAPIInstrumentor.instrument_app(app)
         logger.info(f"FastAPI instrumentation enabled for {service_name}")
     except Exception as e:
@@ -197,6 +205,15 @@ def setup_web_server_telemetry(app):
     """Setup telemetry for the web server service."""
     setup_telemetry("stopsign-web-server")
     setup_fastapi_telemetry(app, "stopsign-web-server")
+
+    # SQLAlchemy instrumentation for web server
+    try:
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+        SQLAlchemyInstrumentor().instrument()
+    except ImportError:
+        pass
+
     return StopSignMetrics("web-server")
 
 
