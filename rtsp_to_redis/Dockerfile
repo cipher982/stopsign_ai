@@ -14,6 +14,9 @@ COPY rtsp_to_redis/ ./rtsp_to_redis/
 COPY stopsign/telemetry.py ./stopsign/
 RUN touch ./stopsign/__init__.py
 
+# Add /app to Python path so stopsign module can be imported
+ENV PYTHONPATH="/app:${PYTHONPATH}"
+
 # Set the working directory to rtsp_to_redis and run the service
 WORKDIR /app/rtsp_to_redis
 CMD ["python", "rtsp_to_redis.py"]
