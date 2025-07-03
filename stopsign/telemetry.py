@@ -9,8 +9,8 @@ from typing import Optional
 
 from opentelemetry import metrics
 from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -69,6 +69,7 @@ def setup_telemetry(service_name: str, service_version: str = "1.0.0", enable_co
         # OTLP trace exporter
         otlp_trace_exporter = OTLPSpanExporter(
             endpoint=otlp_endpoint,
+            insecure=True,
         )
         _tracer_provider.add_span_processor(BatchSpanProcessor(otlp_trace_exporter))
 
@@ -82,7 +83,7 @@ def setup_telemetry(service_name: str, service_version: str = "1.0.0", enable_co
         trace.set_tracer_provider(_tracer_provider)
 
         # Setup metrics
-        otlp_metric_exporter = OTLPMetricExporter(endpoint=otlp_endpoint)
+        otlp_metric_exporter = OTLPMetricExporter(endpoint=otlp_endpoint, insecure=True)
         metric_reader = PeriodicExportingMetricReader(
             exporter=otlp_metric_exporter,
             export_interval_millis=30000,  # Export every 30 seconds
