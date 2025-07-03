@@ -35,6 +35,8 @@ from stopsign.settings import RAW_FRAME_KEY
 from stopsign.settings import REDIS_URL
 from stopsign.settings import YOLO_DEVICE
 from stopsign.settings import YOLO_MODEL_NAME
+from stopsign.telemetry import get_tracer
+from stopsign.telemetry import setup_video_analyzer_telemetry
 from stopsign.tracking import Car
 from stopsign.tracking import CarTracker
 from stopsign.tracking import StopDetector
@@ -334,14 +336,22 @@ class VideoAnalyzer:
                 time.sleep(1)
 
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, Dict]:
-        start_time = time.time()
+        with tracer.start_as_current_span("process_frame_complete") as span:
+            span.set_attribute("frame.height", frame.shape[0])
+            span.set_attribute("frame.width", frame.shape[1])
+            span.set_attribute("frame.channels", frame.shape[2])
 
-        # Calculate average brightness
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        avg_brightness = np.mean(gray)  # type: ignore
-        contrast = np.std(gray)  # type: ignore
-        self.avg_brightness.set(float(avg_brightness))
-        self.contrast.set(float(contrast))
+            start_time = time.time()
+
+            # Calculate average brightness
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            avg_brightness = np.mean(gray)  # type: ignore
+            contrast = np.std(gray)  # type: ignore
+            self.avg_brightness.set(float(avg_brightness))
+            self.contrast.set(float(contrast))
+
+            span.set_attribute("frame.brightness", float(avg_brightness))
+            span.set_attribute("frame.contrast", float(contrast))
 
         # Draw stop lines on raw frame BEFORE crop/scale
         # This allows direct mapping from browser coordinates to raw frame coordinates
@@ -358,16 +368,54 @@ class VideoAnalyzer:
 
         # Car Tracking
         car_tracking_start = time.time()
-        self.car_tracker.update_cars(boxes, time.time(), processed_frame)
+        with tracer.start_as_current_span("car_tracking") as span:
+            # Get counts before update
+            cars_before = len(self.car_tracker.get_cars())
+
+            self.car_tracker.update_cars(boxes, time.time(), processed_frame)
+
+            # Get counts after update
+            cars_after = len(self.car_tracker.get_cars())
+            new_cars = cars_after - cars_before
+
+            span.set_attribute("cars.before_count", cars_before)
+            span.set_attribute("cars.after_count", cars_after)
+            span.set_attribute("cars.new_count", new_cars)
+            span.set_attribute("detections.input_count", len(boxes))
+
+            if new_cars > 0:
+                metrics.vehicles_tracked.add(new_cars)
+
         car_tracking_time = time.time() - car_tracking_start
         self.car_tracking_time.observe(car_tracking_time)
         self.car_tracking_fps_count += 1  # Increment car tracking FPS counter
 
         # Stop Detection
         stop_detection_start = time.time()
-        for car in self.car_tracker.get_cars().values():
-            if not car.state.is_parked:
+        active_cars = [car for car in self.car_tracker.get_cars().values() if not car.state.is_parked]
+
+        with tracer.start_as_current_span("stop_detection") as span:
+            span.set_attribute("cars.active_count", len(active_cars))
+            span.set_attribute("cars.total_count", len(self.car_tracker.get_cars()))
+
+            violations_detected = 0
+            for car in active_cars:
+                # Check if car was violating before update
+                was_violating = getattr(car.state, "violating_stop", False)
+
                 self.stop_detector.update_car_stop_status(car, time.time(), processed_frame)
+
+                # Check if car is now violating (new violation)
+                is_violating = getattr(car.state, "violating_stop", False)
+                if is_violating and not was_violating:
+                    violations_detected += 1
+
+            if violations_detected > 0:
+                metrics.stop_violations.add(violations_detected)
+                span.set_attribute("violations.detected_count", violations_detected)
+
+            span.set_attribute("violations.total_detected", violations_detected)
+
         stop_detection_time = time.time() - stop_detection_start
         self.stop_detection_time.observe(stop_detection_time)
 
@@ -403,7 +451,13 @@ class VideoAnalyzer:
         self.cars_in_stop_zone.set(cars_in_stop_zone)
 
         # Measure frame processing time
-        self.frame_processing_time.observe(time.time() - start_time)
+        total_time = time.time() - start_time
+        self.frame_processing_time.observe(total_time)
+        span.set_attribute("processing.total_duration_seconds", total_time)
+
+        # Add high-level processing metrics to span
+        cars_detected = len(self.car_tracker.get_cars()) if hasattr(self, "car_tracker") else 0
+        span.set_attribute("processing.cars_detected", cars_detected)
 
         return annotated_frame, metadata
 
@@ -509,23 +563,34 @@ class VideoAnalyzer:
 
     def detect_objects(self, frame: np.ndarray) -> Tuple[np.ndarray, List]:
         try:
-            start_time = time.time()
-            with contextlib.redirect_stdout(io.StringIO()):
-                results = self.model.track(
-                    source=frame,
-                    tracker="./trackers/bytetrack.yaml",
-                    stream=False,
-                    persist=True,
-                    classes=self.config.vehicle_classes,
-                    verbose=False,
-                )
-            self.model_inference_latency.observe(time.time() - start_time)
+            with tracer.start_as_current_span("yolo_inference") as span:
+                span.set_attribute("frame.shape", str(frame.shape))
+                span.set_attribute("vehicle_classes", str(self.config.vehicle_classes))
 
-            boxes = results[0].boxes
-            if boxes:
-                boxes = [obj for obj in boxes if obj.cls in self.config.vehicle_classes]
-            else:
-                boxes = []
+                start_time = time.time()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    results = self.model.track(
+                        source=frame,
+                        tracker="./trackers/bytetrack.yaml",
+                        stream=False,
+                        persist=True,
+                        classes=self.config.vehicle_classes,
+                        verbose=False,
+                    )
+                inference_time = time.time() - start_time
+                self.model_inference_latency.observe(inference_time)
+                metrics.yolo_inference_duration.record(inference_time)
+
+                span.set_attribute("inference.duration_seconds", inference_time)
+
+                boxes = results[0].boxes
+                if boxes:
+                    boxes = [obj for obj in boxes if obj.cls in self.config.vehicle_classes]
+                    metrics.objects_detected.add(len(boxes), {"type": "vehicle"})
+                    span.set_attribute("objects.detected_count", len(boxes))
+                else:
+                    boxes = []
+                    span.set_attribute("objects.detected_count", 0)
 
             return frame, boxes
         except Exception as e:
@@ -783,6 +848,14 @@ class VideoAnalyzer:
 
 
 if __name__ == "__main__":
+    # Initialize telemetry
+    metrics = setup_video_analyzer_telemetry()
+    tracer = get_tracer("stopsign.video_analyzer")
+
+    # Make telemetry available globally for class methods
+    globals()["metrics"] = metrics
+    globals()["tracer"] = tracer
+
     config = Config("./config.yaml")
     db = Database(db_url=DB_URL)
     processor = VideoAnalyzer(config, db)

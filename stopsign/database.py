@@ -20,6 +20,8 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 
+from stopsign.telemetry import get_tracer
+
 # Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,11 +32,18 @@ Base = declarative_base()
 def log_execution_time(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        elapsed = time.time() - start_time
-        logger.debug(f"{func.__name__} completed in {elapsed:.2f} seconds")
-        return result
+        tracer = get_tracer("stopsign.database")
+        with tracer.start_as_current_span(f"db_{func.__name__}") as span:
+            span.set_attribute("db.operation", func.__name__)
+            span.set_attribute("db.system", "postgresql")
+
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            elapsed = time.time() - start_time
+
+            span.set_attribute("db.duration_seconds", elapsed)
+            logger.debug(f"{func.__name__} completed in {elapsed:.2f} seconds")
+            return result
 
     return wrapper
 

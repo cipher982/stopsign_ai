@@ -29,6 +29,7 @@ import cv2
 import redis
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from redis.exceptions import RedisError
+from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
 
 
 # ----------------- logging setup --------------------
@@ -149,7 +150,11 @@ class RTSPToRedis:
         while not self.should_stop.is_set():
             try:
                 frame = self.frame_queue.get(timeout=1)
-                self.store_frame(frame)
+                with tracer.start_as_current_span("store_frame") as span:
+                    span.set_attribute("frame.height", frame.shape[0])
+                    span.set_attribute("frame.width", frame.shape[1])
+                    span.set_attribute("frame.channels", frame.shape[2])
+                    self.store_frame(frame)
                 self.frame_queue.task_done()
                 self.queue_size.set(self.frame_queue.qsize())
 
@@ -167,7 +172,10 @@ class RTSPToRedis:
                 self.redis_errors.inc()
 
     def store_frame(self, frame):
-        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+        with tracer.start_as_current_span("encode_frame") as span:
+            _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+            span.set_attribute("jpeg.quality", self.jpeg_quality)
+            span.set_attribute("encoded.size_bytes", len(buffer))
 
         if self.redis_client is None:
             logger.error("Redis client is not initialized")
@@ -175,13 +183,21 @@ class RTSPToRedis:
 
         try:
             start_time = time.time()
-            redis_start_time = time.time()
-            pipeline = self.redis_client.pipeline()
-            pipeline.lpush(RAW_FRAME_KEY, buffer.tobytes())
-            pipeline.ltrim(RAW_FRAME_KEY, 0, self.frame_buffer_size - 1)
-            pipeline.llen(RAW_FRAME_KEY)
-            _, _, current_buffer_size = pipeline.execute()
-            self.redis_operation_latency.observe(time.time() - redis_start_time)
+            with tracer.start_as_current_span("redis_publish") as span:
+                redis_start_time = time.time()
+                pipeline = self.redis_client.pipeline()
+                pipeline.lpush(RAW_FRAME_KEY, buffer.tobytes())
+                pipeline.ltrim(RAW_FRAME_KEY, 0, self.frame_buffer_size - 1)
+                pipeline.llen(RAW_FRAME_KEY)
+                _, _, current_buffer_size = pipeline.execute()
+                redis_duration = time.time() - redis_start_time
+
+                span.set_attribute("redis.operation", "pipeline_publish")
+                span.set_attribute("redis.buffer_size", current_buffer_size)
+                span.set_attribute("redis.duration_seconds", redis_duration)
+                span.set_attribute("frame.buffer_size_bytes", len(buffer))
+
+                self.redis_operation_latency.observe(redis_duration)
 
             self.frames_processed.inc()
             self.rtsp_redis_buffer_size.set(float(current_buffer_size))
@@ -307,6 +323,14 @@ class RTSPToRedis:
 
 
 if __name__ == "__main__":
+    # Initialize telemetry
+    metrics = setup_rtsp_service_telemetry()
+    tracer = get_tracer("stopsign.rtsp_service")
+
+    # Make telemetry available globally
+    globals()["metrics"] = metrics
+    globals()["tracer"] = tracer
+
     rtsp_to_redis = RTSPToRedis()
 
     from http.server import BaseHTTPRequestHandler

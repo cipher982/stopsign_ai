@@ -12,6 +12,9 @@ import cv2
 import numpy as np
 import redis
 
+from stopsign.telemetry import get_tracer
+from stopsign.telemetry import setup_ffmpeg_service_telemetry
+
 # Configure Logging
 logging.basicConfig(
     level=logging.INFO,
@@ -162,6 +165,15 @@ def log_stream_files():
 
 def main():
     logger.info(f"Starting FFmpeg service with STREAM_DIR: {STREAM_DIR}")
+
+    # Initialize telemetry
+    metrics = setup_ffmpeg_service_telemetry()
+    tracer = get_tracer("stopsign.ffmpeg_service")
+
+    # Make telemetry available globally
+    globals()["metrics"] = metrics
+    globals()["tracer"] = tracer
+
     clean_stream_directory()
 
     # Start health server in a separate thread
@@ -196,17 +208,31 @@ def main():
                 _, data = task  # type: ignore
                 if ffmpeg_process.stdin:
                     try:
-                        nparr = np.frombuffer(data, np.uint8)
-                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                        resized_frame = cv2.resize(frame, (frame_shape[0], frame_shape[1]))
-                        raw_frame = resized_frame.tobytes()
-                        ffmpeg_process.stdin.write(raw_frame)
-                        ffmpeg_process.stdin.flush()
-                        frames_processed += 1
+                        with tracer.start_as_current_span("process_frame") as span:
+                            span.set_attribute("frame.size_bytes", len(data))
+
+                            # Decode frame
+                            nparr = np.frombuffer(data, np.uint8)
+                            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                            # Resize frame
+                            resized_frame = cv2.resize(frame, (frame_shape[0], frame_shape[1]))
+                            span.set_attribute("frame.width", frame_shape[0])
+                            span.set_attribute("frame.height", frame_shape[1])
+
+                            # Send to FFmpeg
+                            raw_frame = resized_frame.tobytes()
+                            ffmpeg_process.stdin.write(raw_frame)
+                            ffmpeg_process.stdin.flush()
+
+                            frames_processed += 1
+                            metrics.frames_processed.add(1, {"service": "ffmpeg"})
+                            span.set_attribute("frames.total_processed", frames_processed)
 
                     except BrokenPipeError:
                         logger.error("FFmpeg process closed unexpectedly. Restarting...")
-                        ffmpeg_process = start_ffmpeg_process(frame_shape)
+                        with tracer.start_as_current_span("restart_ffmpeg_process"):
+                            ffmpeg_process = start_ffmpeg_process(frame_shape)
 
             if ffmpeg_process.poll() is not None:
                 logger.error("FFmpeg process terminated. Restarting...")
