@@ -80,15 +80,27 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/stream", StaticFiles(directory="/app/data/stream"), name="stream")
 
 
-# Add cache headers for images
+# Add cache headers for images and HLS streaming
 @app.middleware("http")
 async def add_cache_headers(request, call_next):
     response = await call_next(request)
-    # Add cache headers for static images and assets
-    if request.url.path.startswith("/static/") or request.url.path.startswith("/vehicle-image/"):
+
+    # HLS manifest files - no cache to prevent stale playlists
+    if request.url.path.startswith("/stream/") and request.url.path.endswith(".m3u8"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
+    # HLS segment files - short cache for better performance
+    elif request.url.path.startswith("/stream/") and request.url.path.endswith(".ts"):
+        response.headers["Cache-Control"] = "public, max-age=60"  # 1 minute cache for segments
+
+    # Static images and assets - longer cache
+    elif request.url.path.startswith("/static/") or request.url.path.startswith("/vehicle-image/"):
         if any(request.url.path.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".css", ".js"]):
             response.headers["Cache-Control"] = "public, max-age=3600"  # 1 hour cache
             response.headers["ETag"] = f'"{hash(request.url.path)}"'
+
     return response
 
 
