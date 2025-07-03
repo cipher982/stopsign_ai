@@ -69,7 +69,6 @@ def setup_telemetry(service_name: str, service_version: str = "1.0.0", enable_co
         # OTLP trace exporter
         otlp_trace_exporter = OTLPSpanExporter(
             endpoint=otlp_endpoint,
-            insecure=True,  # Using internal network
         )
         _tracer_provider.add_span_processor(BatchSpanProcessor(otlp_trace_exporter))
 
@@ -83,7 +82,7 @@ def setup_telemetry(service_name: str, service_version: str = "1.0.0", enable_co
         trace.set_tracer_provider(_tracer_provider)
 
         # Setup metrics
-        otlp_metric_exporter = OTLPMetricExporter(endpoint=otlp_endpoint, insecure=True)
+        otlp_metric_exporter = OTLPMetricExporter(endpoint=otlp_endpoint)
         metric_reader = PeriodicExportingMetricReader(
             exporter=otlp_metric_exporter,
             export_interval_millis=30000,  # Export every 30 seconds
