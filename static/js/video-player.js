@@ -69,11 +69,11 @@ function initializeVideoPlayer() {
             console.log('Loading HLS manifest...');
         });
         
-        // Force immediate jump to live edge for live streams
+        // Force immediate jump to live edge for live streams (only when significantly behind)
         hls.on(Hls.Events.LEVEL_UPDATED, function(event, data) {
-            if (data.details.live && video.currentTime < hls.liveSyncPosition - 2) {
-                console.log('Jumping to live edge:', hls.liveSyncPosition);
-                video.currentTime = hls.liveSyncPosition - 0.5;
+            if (data.details.live && video.currentTime < hls.liveSyncPosition - 10) {
+                console.log('Jumping to live edge (10s+ behind):', hls.liveSyncPosition);
+                video.currentTime = hls.liveSyncPosition - 2;
             }
         });
         
