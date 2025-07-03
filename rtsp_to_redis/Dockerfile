@@ -8,10 +8,12 @@ RUN pip install redis opencv-python prometheus_client opentelemetry-distro opent
 WORKDIR /app
 
 # Copy the RTSP service files
-COPY . .
+COPY rtsp_to_redis/ ./rtsp_to_redis/
 
-# Copy the telemetry module from parent directory
-COPY ../stopsign/telemetry.py ./stopsign/
+# Copy the telemetry module from stopsign directory
+COPY stopsign/telemetry.py ./stopsign/
 RUN touch ./stopsign/__init__.py
 
+# Set the working directory to rtsp_to_redis and run the service
+WORKDIR /app/rtsp_to_redis
 CMD ["python", "rtsp_to_redis.py"]
