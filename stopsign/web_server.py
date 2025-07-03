@@ -42,6 +42,8 @@ from stopsign.settings import MINIO_ENDPOINT
 from stopsign.settings import MINIO_PUBLIC_URL
 from stopsign.settings import MINIO_SECRET_KEY
 from stopsign.settings import REDIS_URL
+from stopsign.telemetry import get_tracer
+from stopsign.telemetry import setup_web_server_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -79,25 +81,114 @@ app = FastHTML(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/stream", StaticFiles(directory="/app/data/stream"), name="stream")
 
+# Initialize telemetry
+metrics = setup_web_server_telemetry(app)
+tracer = get_tracer("stopsign.web_server")
 
-# Add cache headers for images and HLS streaming
+
+# Add cache headers for images and HLS streaming with optimized telemetry
 @app.middleware("http")
 async def add_cache_headers(request, call_next):
-    response = await call_next(request)
+    # Detect browser type once for all requests
+    user_agent = request.headers.get("user-agent", "").lower()
+    if "chrome" in user_agent:
+        browser = "chrome"
+    elif "safari" in user_agent and "chrome" not in user_agent:
+        browser = "safari"
+    elif "firefox" in user_agent:
+        browser = "firefox"
+    else:
+        browser = "other"
 
-    # HLS manifest files - no cache to prevent stale playlists
-    if request.url.path.startswith("/stream/") and request.url.path.endswith(".m3u8"):
-        response.headers["Cache-Control"] = "no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-
-    # HLS segment files - short cache for better performance
-    elif request.url.path.startswith("/stream/") and request.url.path.endswith(".ts"):
-        response.headers["Cache-Control"] = "public, max-age=60"  # 1 minute cache for segments
-
-    # Static images and assets - longer cache
-    elif request.url.path.startswith("/static/") or request.url.path.startswith("/vehicle-image/"):
+    # Skip telemetry for most static assets (sample 10%)
+    if request.url.path.startswith("/static/"):
         if any(request.url.path.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".css", ".js"]):
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "public, max-age=3600"  # 1 hour cache
+            response.headers["ETag"] = f'"{hash(request.url.path)}"'
+
+            # Only trace 10% of static requests to reduce overhead
+            import random
+
+            if random.random() < 0.1:
+                with tracer.start_as_current_span("http_static_sample") as span:
+                    span.set_attribute("request.type", "static_asset")
+                    span.set_attribute("browser.type", browser)
+            return response
+
+    # Full telemetry for streaming and API requests
+    is_streaming = request.url.path.startswith("/stream/")
+    is_api = request.url.path.startswith("/api/") or request.url.path in ["/health", "/check-stream"]
+
+    if is_streaming or is_api:
+        with tracer.start_as_current_span("http_request") as span:
+            span.set_attribute("http.method", request.method)
+            span.set_attribute("browser.type", browser)
+
+            # Only log full URL for streaming requests
+            if is_streaming:
+                span.set_attribute("http.path", request.url.path)
+
+            start_time = time.time()
+            response = await call_next(request)
+            duration = time.time() - start_time
+
+            span.set_attribute("http.status_code", response.status_code)
+            span.set_attribute("http.response_time_seconds", duration)
+
+            # HLS Streaming telemetry (detailed)
+            if is_streaming:
+                if request.url.path.endswith(".m3u8"):
+                    # Manifest request
+                    span.set_attribute("hls.type", "manifest")
+                    metrics.db_operations.add(
+                        1, {"operation": "hls_manifest", "browser": browser, "status": str(response.status_code)}
+                    )
+
+                    response.headers["Cache-Control"] = "no-store, must-revalidate"
+                    response.headers["Pragma"] = "no-cache"
+                    response.headers["Expires"] = "0"
+
+                elif request.url.path.endswith(".ts"):
+                    # Video segment request
+                    segment_name = request.url.path.split("/")[-1]
+                    span.set_attribute("hls.type", "segment")
+
+                    # Extract segment number if possible
+                    try:
+                        segment_num = int("".join(filter(str.isdigit, segment_name)))
+                        span.set_attribute("hls.segment_number", segment_num)
+                    except (ValueError, TypeError):
+                        pass
+
+                    # Track successful vs failed segment requests
+                    if response.status_code == 200:
+                        metrics.db_operations.add(1, {"operation": "hls_segment_success", "browser": browser})
+                        span.set_attribute("hls.success", True)
+                    elif response.status_code == 404:
+                        metrics.db_operations.add(1, {"operation": "hls_segment_404", "browser": browser})
+                        span.set_attribute("hls.success", False)
+                        span.set_attribute("hls.error", "segment_not_found")
+                        # This is critical for debugging Chrome issues
+                        logger.warning(f"404 on HLS segment {segment_name} from {browser}")
+
+                    # Check if this is a slow request (potential Chrome issue)
+                    if duration > 1.0:  # More than 1 second for a segment
+                        span.set_attribute("hls.slow_request", True)
+                        logger.warning(f"Slow HLS segment request: {segment_name} took {duration:.2f}s from {browser}")
+
+                    response.headers["Cache-Control"] = "public, max-age=60"  # 1 minute cache for segments
+
+            # Track errors
+            if response.status_code >= 400:
+                span.set_attribute("http.error", True)
+                metrics.db_operations.add(1, {"operation": "http_error", "status": str(response.status_code)})
+    else:
+        # Minimal processing for other requests
+        response = await call_next(request)
+
+        # Apply cache headers for vehicle images
+        if request.url.path.startswith("/vehicle-image/"):
             response.headers["Cache-Control"] = "public, max-age=3600"  # 1 hour cache
             response.headers["ETag"] = f'"{hash(request.url.path)}"'
 
@@ -964,20 +1055,37 @@ def about():
 
 @app.get("/check-stream")  # type: ignore
 async def check_stream():
-    if os.path.exists(STREAM_FS_PATH):
-        logger.info(f"Stream file exists: {STREAM_FS_PATH}")
-        with open(STREAM_FS_PATH, "r") as f:
-            content = f.read()
-        logger.debug(f"Stream file content:\n{content}")
-        return {"status": "exists", "content": content}
-    else:
-        logger.warning(f"Stream file does not exist: {STREAM_FS_PATH}")
-        stream_dir = os.path.dirname(STREAM_FS_PATH)
-        if os.path.exists(stream_dir):
-            logger.warning(f"Files in stream directory: {os.listdir(stream_dir)}")
+    with tracer.start_as_current_span("check_stream_debug") as span:
+        if os.path.exists(STREAM_FS_PATH):
+            logger.info(f"Stream file exists: {STREAM_FS_PATH}")
+            with open(STREAM_FS_PATH, "r") as f:
+                content = f.read()
+            logger.debug(f"Stream file content:\n{content}")
+            span.set_attribute("stream.exists", True)
+            span.set_attribute("stream.content_length", len(content))
+            # Count segments in manifest
+            segment_count = content.count(".ts")
+            span.set_attribute("stream.segment_count", segment_count)
+            return {"status": "exists", "content": content}
         else:
-            logger.warning(f"Stream directory does not exist: {stream_dir}")
-        return {"status": f"HLS file not found at {STREAM_FS_PATH}"}
+            logger.warning(f"Stream file does not exist: {STREAM_FS_PATH}")
+            stream_dir = os.path.dirname(STREAM_FS_PATH)
+            span.set_attribute("stream.exists", False)
+            span.set_attribute("stream.error", "file_not_found")
+
+            if os.path.exists(stream_dir):
+                files = os.listdir(stream_dir)
+                ts_files = [f for f in files if f.endswith(".ts")]
+                logger.warning(f"Files in stream directory: {len(files)} total, {len(ts_files)} segments")
+                span.set_attribute("stream.directory_file_count", len(files))
+                span.set_attribute("stream.directory_segments_count", len(ts_files))
+                # Only log first few files to avoid spam
+                if files:
+                    span.set_attribute("stream.directory_sample_files", str(files[:5]))
+            else:
+                logger.warning(f"Stream directory does not exist: {stream_dir}")
+                span.set_attribute("stream.directory_exists", False)
+            return {"status": f"HLS file not found at {STREAM_FS_PATH}"}
 
 
 @app.get("/debug-performance")  # type: ignore
@@ -1147,30 +1255,54 @@ db_health_tracker = DBHealthTracker()
 
 @app.get("/health")  # type: ignore
 async def health():
-    try:
-        if not hasattr(app.state, "db"):
-            app.state.db = Database(db_url=DB_URL)
+    with tracer.start_as_current_span("health_check") as span:
+        try:
+            if not hasattr(app.state, "db"):
+                app.state.db = Database(db_url=DB_URL)
 
-        with app.state.db.Session() as session:
-            session.execute(text("SELECT 1 /* health check */"), execution_options={"timeout": 5}).scalar()
+            db_start = time.time()
+            with app.state.db.Session() as session:
+                session.execute(text("SELECT 1 /* health check */"), execution_options={"timeout": 5}).scalar()
+            db_duration = time.time() - db_start
+
             db_health_tracker.record_success()
-            return HTMLResponse(status_code=200, content="Healthy: Database connection verified")
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        db_health_tracker.record_failure()
+            span.set_attribute("health.database_ok", True)
+            span.set_attribute("health.database_duration_seconds", db_duration)
+            span.set_attribute("health.status", "healthy")
 
-        # Only return unhealthy if failures have persisted
-        if db_health_tracker.is_failure_persistent():
-            return HTMLResponse(
-                status_code=503,  # Service Unavailable
-                content=f"Unhealthy: Database connection issues for over 5 minutes - {str(e)}",
-            )
-        else:
-            # Still return healthy if this is a temporary blip
-            return HTMLResponse(
-                status_code=200,
-                content="Healthy: Tolerating temporary database connectivity issue",
-            )
+            # Check HLS stream health
+            hls_healthy = os.path.exists(STREAM_FS_PATH)
+            span.set_attribute("health.hls_stream_ok", hls_healthy)
+
+            # Check if stream directory has recent files
+            stream_dir = os.path.dirname(STREAM_FS_PATH)
+            if os.path.exists(stream_dir):
+                files = [f for f in os.listdir(stream_dir) if f.endswith(".ts")]
+                span.set_attribute("health.hls_segments_count", len(files))
+
+            return HTMLResponse(status_code=200, content="Healthy: Database connection verified")
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            db_health_tracker.record_failure()
+            span.set_attribute("health.database_ok", False)
+            span.set_attribute("health.error", str(e))
+
+            # Only return unhealthy if failures have persisted
+            if db_health_tracker.is_failure_persistent():
+                span.set_attribute("health.status", "unhealthy")
+                span.set_attribute("health.persistent_failure", True)
+                return HTMLResponse(
+                    status_code=503,  # Service Unavailable
+                    content=f"Unhealthy: Database connection issues for over 5 minutes - {str(e)}",
+                )
+            else:
+                # Still return healthy if this is a temporary blip
+                span.set_attribute("health.status", "degraded")
+                span.set_attribute("health.persistent_failure", False)
+                return HTMLResponse(
+                    status_code=200,
+                    content="Healthy: Tolerating temporary database connectivity issue",
+                )
 
 
 def main():
