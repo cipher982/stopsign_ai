@@ -11,7 +11,10 @@ RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Install Python dependencies in the virtual environment
-RUN pip install --no-cache-dir redis numpy opencv-python-headless
+RUN pip install --no-cache-dir redis numpy opencv-python-headless \
+    opentelemetry-distro opentelemetry-exporter-otlp \
+    opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-sqlalchemy \
+    opentelemetry-instrumentation-redis opentelemetry-instrumentation-requests
 
 # Set work directory
 WORKDIR /app
