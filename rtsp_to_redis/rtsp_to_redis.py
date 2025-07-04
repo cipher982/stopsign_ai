@@ -27,7 +27,8 @@ from typing import Optional
 # ------------------ third-party ---------------------
 import cv2
 import redis
-from prometheus_client import Counter, Gauge, Histogram, start_http_server
+
+# Prometheus removed - using OpenTelemetry metrics instead
 from redis.exceptions import RedisError
 from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
 
@@ -66,37 +67,14 @@ class RTSPToRedis:
         self.processing_thread = None
         self.should_stop = threading.Event()
 
-        self.initialize_metrics()
+        # OpenTelemetry metrics and tracer (set from main)
+        self.metrics = None
+        self.tracer = None
 
-    def initialize_metrics(self):
-        self.frames_processed = Counter("frames_processed", "Number of frames processed")
-        self.rtsp_redis_buffer_size = Gauge("rtsp_redis_buffer_size", "Current size of the frame buffer")
-        self.retries = Counter("retries", "Number of retries for video capture initialization")
-        self.disconnects = Counter("disconnects", "Number of disconnects from Redis")
-        self.rtsp_connection_status = Gauge(
-            "rtsp_connection_status",
-            "RTSP connection status (1 for connected, 0 for disconnected)",
-        )
-        self.frame_processing_time = Histogram(
-            "frame_processing_time_seconds",
-            "Time taken to process each frame",
-            buckets=[0.01, 0.05, 0.1, 0.5, 1, 5],
-        )
-        self.redis_operation_latency = Histogram(
-            "redis_operation_latency_seconds",
-            "Latency of Redis operations",
-            buckets=[0.001, 0.005, 0.01, 0.05, 0.1],
-        )
-        self.actual_fps = Gauge("actual_fps", "Actual frames per second being processed")
-        self.rtsp_errors = Counter("rtsp_errors", "Number of RTSP-related errors")
-        self.redis_errors = Counter("redis_errors", "Number of Redis-related errors")
-        self.buffer_utilization = Gauge("buffer_utilization_percent", "Percentage of buffer utilized")
-
-        self.rtsp_input_fps = Gauge("rtsp_input_fps", "Frames per second received from the RTSP stream")
-        self.processed_fps = Gauge("rtsp_to_redis_fps", "Frames per second processed and stored in Redis")
-
-        self.queue_size = Gauge("rtsp_queue_size", "Current size of the RTSP frame processing queue")
-        self.frames_dropped = Counter("rtsp_frames_dropped", "Number of frames dropped due to full queue")
+    def set_telemetry(self, metrics, tracer):
+        """Set OpenTelemetry metrics and tracer instances."""
+        self.metrics = metrics
+        self.tracer = tracer
 
     def initialize_redis(self):
         logger.info(f"Attempting to connect to Redis at {self.redis_url}")
@@ -106,7 +84,8 @@ class RTSPToRedis:
             logger.info("Successfully connected to Redis")
         except RedisError as e:
             logger.error(f"Failed to connect to Redis: {str(e)}")
-            self.redis_errors.inc()
+            if self.metrics:
+                self.metrics.redis_operations.add(1, {"operation": "error", "service": "rtsp"})
             raise
 
     def initialize_capture(self):
@@ -118,7 +97,8 @@ class RTSPToRedis:
             if not cap.isOpened():
                 raise ValueError(f"Could not open video file: {file_path}")
             logger.info("Local video capture initialized successfully")
-            self.rtsp_connection_status.set(1)
+            if self.metrics:
+                self.metrics.redis_operations.add(1, {"operation": "rtsp_connected", "service": "rtsp"})
             return cap
 
         # Standard RTSP connection logic
@@ -133,14 +113,15 @@ class RTSPToRedis:
                     raise ValueError("Could not open video stream")
                 cap.set(cv2.CAP_PROP_FPS, self.fps)
                 logger.info("Video capture initialized successfully")
-                self.rtsp_connection_status.set(1)
+                if self.metrics:
+                    self.metrics.redis_operations.add(1, {"operation": "rtsp_connected", "service": "rtsp"})
                 return cap
             except Exception as e:
-                self.retries.inc()
-                self.rtsp_errors.inc()
+                # Retry tracked in OpenTelemetry spans
+                # RTSP errors tracked in OpenTelemetry
                 logger.error(f"Attempt {attempt + 1}/{max_attempts} failed: {str(e)}")
                 time.sleep(1)
-        self.rtsp_connection_status.set(0)
+        # Connection status tracked in OpenTelemetry
         raise ValueError("Failed to initialize video capture after multiple attempts")
 
     def process_frames(self):
@@ -169,10 +150,11 @@ class RTSPToRedis:
                 continue
             except Exception as e:
                 logger.error(f"Error processing frame: {str(e)}")
-                self.redis_errors.inc()
+                if self.metrics:
+                    self.metrics.redis_operations.add(1, {"operation": "error", "service": "rtsp"})
 
     def store_frame(self, frame):
-        with tracer.start_as_current_span("encode_frame") as span:
+        with self.tracer.start_as_current_span("encode_frame") as span:
             _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
             span.set_attribute("jpeg.quality", self.jpeg_quality)
             span.set_attribute("encoded.size_bytes", len(buffer))
@@ -182,8 +164,7 @@ class RTSPToRedis:
             return
 
         try:
-            start_time = time.time()
-            with tracer.start_as_current_span("redis_publish") as span:
+            with self.tracer.start_as_current_span("redis_publish") as span:
                 redis_start_time = time.time()
                 pipeline = self.redis_client.pipeline()
                 pipeline.lpush(RAW_FRAME_KEY, buffer.tobytes())
@@ -197,21 +178,24 @@ class RTSPToRedis:
                 span.set_attribute("redis.duration_seconds", redis_duration)
                 span.set_attribute("frame.buffer_size_bytes", len(buffer))
 
-                self.redis_operation_latency.observe(redis_duration)
+                # Redis latency now tracked in OpenTelemetry spans
 
-            self.frames_processed.inc()
-            self.rtsp_redis_buffer_size.set(float(current_buffer_size))
-            self.buffer_utilization.set((float(current_buffer_size) / self.frame_buffer_size) * 100)
+            # Record OpenTelemetry metrics
+            if self.metrics:
+                self.metrics.frames_processed.add(1, {"service": "rtsp"})
+                self.metrics.redis_operations.add(1, {"operation": "frame_publish", "service": "rtsp"})
+                self.metrics.db_operation_duration.record(redis_duration)
 
         except RedisError as e:
             logger.error(f"Redis operation failed: {str(e)}")
-            self.redis_errors.inc()
+            if self.metrics:
+                self.metrics.redis_operations.add(1, {"operation": "error", "service": "rtsp"})
             raise
 
-        self.frame_processing_time.observe(time.time() - start_time)
+        # Frame processing time tracked in OpenTelemetry spans
 
     def run(self):
-        start_http_server(self.prometheus_port)
+        # Prometheus removed - using OpenTelemetry instead
         self.processing_thread = threading.Thread(target=self.process_frames)
         self.processing_thread.daemon = True
         self.processing_thread.start()
@@ -246,11 +230,11 @@ class RTSPToRedis:
                                 ret, frame = cap.read()
                                 if not ret:
                                     logger.error("Failed to read frame after reset. Reinitializing capture.")
-                                    self.rtsp_errors.inc()
+                                    # RTSP errors tracked in OpenTelemetry
                                     break
                             else:
                                 logger.warning("Failed to read frame. Reinitializing capture.")
-                                self.rtsp_errors.inc()
+                                # RTSP errors tracked in OpenTelemetry
                                 break
 
                         rtsp_frames_count += 1
@@ -285,12 +269,12 @@ class RTSPToRedis:
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Error in RTSP to Redis service: {str(e)}")
-                self.rtsp_errors.inc()
+                # RTSP errors tracked in OpenTelemetry
                 time.sleep(1)
             finally:
                 if cap:
                     cap.release()
-                self.rtsp_connection_status.set(0)
+                # Connection status tracked in OpenTelemetry
                 logger.info("RTSP to Redis service restarting...")
 
     def stop(self):
@@ -327,11 +311,9 @@ if __name__ == "__main__":
     metrics = setup_rtsp_service_telemetry()
     tracer = get_tracer("stopsign.rtsp_service")
 
-    # Make telemetry available globally
-    globals()["metrics"] = metrics
-    globals()["tracer"] = tracer
-
+    # Create RTSP service and set telemetry
     rtsp_to_redis = RTSPToRedis()
+    rtsp_to_redis.set_telemetry(metrics, tracer)
 
     from http.server import BaseHTTPRequestHandler
     from http.server import HTTPServer
