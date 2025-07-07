@@ -75,10 +75,15 @@ body {
   font-family: "MS Sans Serif", "Tahoma", system-ui, sans-serif;
   font-size: var(--font-size-base);
   line-height: 1.4;
-  background-color: var(--color-win98-face);
+  background: 
+    radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+    radial-gradient(circle at 75% 75%, rgba(0, 0, 0, 0.1) 0%, transparent 50%),
+    linear-gradient(135deg, #018080 0%, #007373 25%, #018080 50%, #007373 75%, #018080 100%);
+  background-size: 8px 8px, 8px 8px, 4px 4px;
   color: var(--color-win98-text);
   margin: 0;
-  padding: var(--space-sm);
+  padding: var(--space-md);
+  min-height: 100vh;
 }
 
 /* Typography */
@@ -104,10 +109,26 @@ p {
    3. LAYOUT SYSTEM
    ============================================================================= */
 
-/* App Layout Container */
-.app-layout {
+/* Desktop Container - Main Windows 98 style desktop */
+.desktop-container {
   max-width: var(--content-max-width);
   margin: 0 auto;
+  background-color: var(--color-win98-face);
+  border: 4px solid;
+  border-color: var(--color-win98-highlight) var(--color-win98-shadow) var(--color-win98-shadow) var(--color-win98-highlight);
+  box-shadow: 
+    inset 1px 1px 0 var(--color-win98-highlight),
+    inset -1px -1px 0 var(--color-win98-shadow),
+    4px 4px 8px rgba(0, 0, 0, 0.3);
+  min-height: calc(100vh - 2 * var(--space-md) - 8px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* App Layout Container */
+.app-layout {
+  flex: 1;
+  padding: var(--space-sm);
 }
 
 /* Main Content Areas */
@@ -147,6 +168,22 @@ p {
   background-color: var(--color-win98-face);
   padding: var(--space-xs);
   margin-bottom: var(--space-sm);
+  box-shadow: 
+    inset 1px 1px 0 var(--color-win98-highlight),
+    inset -1px -1px 0 var(--color-win98-shadow),
+    1px 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Header and Footer specific styling */
+.desktop-container > header.window {
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.desktop-container > footer.window {
+  margin-top: auto;
+  margin-bottom: 0;
+  border-top: none;
 }
 
 .window--panel {
@@ -165,6 +202,11 @@ p {
   font-size: var(--font-size-md);
   padding: var(--space-xs) var(--space-sm);
   margin: calc(var(--space-xs) * -1) calc(var(--space-xs) * -1) var(--space-xs);
+  border: 1px solid;
+  border-color: var(--color-win98-highlight) var(--color-win98-shadow) var(--color-win98-shadow) var(--color-win98-highlight);
+  box-shadow: 
+    inset 1px 1px 0 rgba(255, 255, 255, 0.5),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.3);
 }
 
 /* Sunken Effect */
@@ -172,6 +214,10 @@ p {
   border: var(--border-win98-sunken);
   border-color: var(--color-win98-shadow) var(--color-win98-highlight) var(--color-win98-highlight) var(--color-win98-shadow);
   padding: var(--space-xs);
+  box-shadow: 
+    inset -1px -1px 0 var(--color-win98-highlight),
+    inset 1px 1px 0 var(--color-win98-shadow),
+    inset 1px 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 /* =============================================================================
@@ -192,11 +238,19 @@ p {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 
+    inset 1px 1px 0 var(--color-win98-highlight),
+    inset -1px -1px 0 var(--color-win98-shadow),
+    1px 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .button:active {
   border-color: var(--color-win98-shadow) var(--color-win98-highlight) var(--color-win98-highlight) var(--color-win98-shadow);
   background-color: #A9A9A9;
+  box-shadow: 
+    inset -1px -1px 0 var(--color-win98-highlight),
+    inset 1px 1px 0 var(--color-win98-shadow),
+    inset 1px 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 .button--zone {
@@ -226,11 +280,20 @@ p {
   font-size: var(--font-size-base);
   padding: var(--space-xs) var(--space-sm);
   display: inline-block;
+  border: 1px solid;
+  border-color: var(--color-win98-highlight) var(--color-win98-shadow) var(--color-win98-shadow) var(--color-win98-highlight);
+  background-color: var(--color-win98-face);
+  box-shadow: 
+    inset 1px 1px 0 var(--color-win98-highlight),
+    inset -1px -1px 0 var(--color-win98-shadow);
 }
 
 .navigation__link:hover {
   background-color: var(--color-win98-accent);
   color: var(--color-win98-accent-text);
+  box-shadow: 
+    inset 1px 1px 0 rgba(255, 255, 255, 0.5),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.3);
 }
 
 /* =============================================================================

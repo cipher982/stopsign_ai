@@ -227,9 +227,12 @@ def home():
     return Html(
         page_head_component("Stop Sign Nanny", include_video_deps=True, page_type="home"),
         Body(
-            common_header_component("Stop Sign Nanny"),
-            main_layout_component(),
-            common_footer_component(),
+            Div(
+                common_header_component("Stop Sign Nanny"),
+                main_layout_component(),
+                common_footer_component(),
+                cls="desktop-container",
+            ),
         ),
     )
 
