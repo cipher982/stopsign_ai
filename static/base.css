@@ -269,12 +269,19 @@ p {
 
 /* Navigation */
 .navigation {
-  text-align: right;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   padding: var(--space-sm) 0;
 }
 
+.navigation__group {
+  display: flex;
+  gap: var(--space-xs);
+}
+
 .navigation__link {
-  margin: 0 var(--space-sm);
+  margin: 0;
   color: var(--color-win98-text);
   text-decoration: none;
   font-size: var(--font-size-base);
@@ -314,7 +321,7 @@ p {
 .video-stream__player {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: fill;
 }
 
 .video-stream:empty::before {
