@@ -154,10 +154,16 @@ def common_header_component(title):
     return Header(
         Div(title, cls="title-bar"),
         Nav(
-            A("Home", href="/", cls="navigation__link"),
-            A("Records", href="/records", cls="navigation__link"),
-            A("About", href="/about", cls="navigation__link"),
-            A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank", cls="navigation__link"),
+            Div(
+                A("Home", href="/", cls="navigation__link"),
+                A("Records", href="/records", cls="navigation__link"),
+                A("About", href="/about", cls="navigation__link"),
+                cls="navigation__group",
+            ),
+            Div(
+                A("GitHub", href="https://github.com/cipher982/stopsign_ai", target="_blank", cls="navigation__link"),
+                cls="navigation__group navigation__group--right",
+            ),
             cls="navigation",
         ),
         cls="window",
