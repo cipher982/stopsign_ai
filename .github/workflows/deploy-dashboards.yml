@@ -1,0 +1,19 @@
+name: Deploy Dashboards
+
+# Triggered after Coolify successfully deploys the project.
+on:
+  repository_dispatch:
+    types: [coolify-deployed]
+
+jobs:
+  deploy-dashboards:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Re-use the central composite action hosted in the "datahouse" repo.
+      - uses: cipher982/datahouse@v1.0.0
+        with:
+          grafana-url: ${{ secrets.GRAFANA_URL }}
+          grafana-api-key: ${{ secrets.GRAFANA_API_KEY }}
