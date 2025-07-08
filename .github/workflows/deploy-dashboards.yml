@@ -22,7 +22,8 @@ jobs:
       # 🩺 TEMP DEBUG STEPS – remove once token confirmed working
       # ------------------------------------------------------------------
       - name: Debug – token length
-        run: echo "MONITORING_REPO_PAT length: ${#MONITORING_REPO_PAT}"
+        run: |
+          echo "MONITORING_REPO_PAT length: ${#MONITORING_REPO_PAT}"
         env:
           MONITORING_REPO_PAT: ${{ secrets.MONITORING_REPO_PAT }}
 
