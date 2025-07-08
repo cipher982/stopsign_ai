@@ -18,6 +18,23 @@ jobs:
       # Check out the current project (required by composite action).
       - uses: actions/checkout@v4
 
+      # ------------------------------------------------------------------
+      # 🩺 TEMP DEBUG STEPS – remove once token confirmed working
+      # ------------------------------------------------------------------
+      - name: Debug – token length
+        run: echo "MONITORING_REPO_PAT length: ${#MONITORING_REPO_PAT}"
+        env:
+          MONITORING_REPO_PAT: ${{ secrets.MONITORING_REPO_PAT }}
+
+      - name: Debug – can token access repo?
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $MONITORING_REPO_PAT" \
+            https://api.github.com/repos/cipher982/datahouse)
+          echo "GitHub API returned: $STATUS"
+        env:
+          MONITORING_REPO_PAT: ${{ secrets.MONITORING_REPO_PAT }}
+
       # Pull the central monitoring stack (dashboards live there).
       - name: Clone monitoring stack repo (private)
         uses: actions/checkout@v4
