@@ -19,11 +19,12 @@ jobs:
       - uses: actions/checkout@v4
 
       # Pull the central monitoring stack (dashboards live there).
-      - name: Clone monitoring stack repo
+      - name: Clone monitoring stack repo (private)
         uses: actions/checkout@v4
         with:
-          repository: cipher982/datahouse  # update if org/name differs
+          repository: cipher982/datahouse  # monitoring repo
           path: monitoring-stack
+          token: ${{ secrets.MONITORING_REPO_PAT }}  # PAT with repo read access
 
       # Deploy dashboards using the composite action that lives *inside* the
       # monitoring-stack repo we just cloned.
