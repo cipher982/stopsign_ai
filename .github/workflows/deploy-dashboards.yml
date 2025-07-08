@@ -1,19 +1,34 @@
 name: Deploy Dashboards
 
 # Triggered after Coolify successfully deploys the project.
+# Runs automatically after Coolify finishes a deploy **or** on demand.
 on:
+  # Sent from Coolify (project webhook) – see docs for setup.
   repository_dispatch:
     types: [coolify-deployed]
+
+  # Manual trigger in the GitHub UI – useful for testing.
+  workflow_dispatch:
 
 jobs:
   deploy-dashboards:
     runs-on: ubuntu-latest
 
     steps:
+      # Check out the current project (required by composite action).
       - uses: actions/checkout@v4
 
-      # Re-use the central composite action hosted in the "datahouse" repo.
-      - uses: cipher982/datahouse@v1.0.0
+      # Pull the central monitoring stack (dashboards live there).
+      - name: Clone monitoring stack repo
+        uses: actions/checkout@v4
+        with:
+          repository: cipher982/datahouse  # update if org/name differs
+          path: monitoring-stack
+
+      # Deploy dashboards that live in the monitoring stack directory.
+      - name: Deploy dashboards to Grafana
+        uses: cipher982/datahouse@v1.0.0
         with:
           grafana-url: ${{ secrets.GRAFANA_URL }}
           grafana-api-key: ${{ secrets.GRAFANA_API_KEY }}
+          dashboards-path: monitoring-stack/grafana/dashboards
