@@ -27,7 +27,7 @@ jobs:
 
       # Deploy dashboards that live in the monitoring stack directory.
       - name: Deploy dashboards to Grafana
-        uses: cipher982/datahouse@v1.0.0
+        uses: cipher982/datahouse@main
         with:
           grafana-url: ${{ secrets.GRAFANA_URL }}
           grafana-api-key: ${{ secrets.GRAFANA_API_KEY }}
