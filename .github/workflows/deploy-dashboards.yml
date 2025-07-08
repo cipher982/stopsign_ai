@@ -17,6 +17,8 @@ jobs:
     steps:
       # Check out the current project (required by composite action).
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # don't pollute git creds with GITHUB_TOKEN
 
       # ------------------------------------------------------------------
       # 🩺 TEMP DEBUG STEPS – remove once token confirmed working
