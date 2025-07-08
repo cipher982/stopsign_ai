@@ -38,6 +38,13 @@ jobs:
         env:
           MONITORING_REPO_PAT: ${{ secrets.MONITORING_REPO_PAT }}
 
+      - name: Debug – git ls-remote with PAT
+        run: |
+          echo "Attempting git ls-remote…"
+          git ls-remote https://x-access-token:${MONITORING_REPO_PAT}@github.com/cipher982/datahouse.git || true
+        env:
+          MONITORING_REPO_PAT: ${{ secrets.MONITORING_REPO_PAT }}
+
       # Pull the central monitoring stack (dashboards live there).
       - name: Clone monitoring stack repo (private)
         uses: actions/checkout@v4
