@@ -25,9 +25,10 @@ jobs:
           repository: cipher982/datahouse  # update if org/name differs
           path: monitoring-stack
 
-      # Deploy dashboards that live in the monitoring stack directory.
+      # Deploy dashboards using the composite action that lives *inside* the
+      # monitoring-stack repo we just cloned.
       - name: Deploy dashboards to Grafana
-        uses: cipher982/datahouse@main
+        uses: ./monitoring-stack
         with:
           grafana-url: ${{ secrets.GRAFANA_URL }}
           grafana-api-key: ${{ secrets.GRAFANA_API_KEY }}
