@@ -20,31 +20,6 @@ jobs:
         with:
           persist-credentials: false  # don't pollute git creds with GITHUB_TOKEN
 
-      # ------------------------------------------------------------------
-      # 🩺 TEMP DEBUG STEPS – remove once token confirmed working
-      # ------------------------------------------------------------------
-      - name: Debug – token length
-        run: |
-          echo "MONITORING_REPO_PAT length: ${#MONITORING_REPO_PAT}"
-        env:
-          MONITORING_REPO_PAT: ${{ secrets.MONITORING_REPO_PAT }}
-
-      - name: Debug – can token access repo?
-        run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $MONITORING_REPO_PAT" \
-            https://api.github.com/repos/cipher982/datahouse)
-          echo "GitHub API returned: $STATUS"
-        env:
-          MONITORING_REPO_PAT: ${{ secrets.MONITORING_REPO_PAT }}
-
-      - name: Debug – git ls-remote with PAT
-        run: |
-          echo "Attempting git ls-remote…"
-          git ls-remote https://x-access-token:${MONITORING_REPO_PAT}@github.com/cipher982/datahouse.git || true
-        env:
-          MONITORING_REPO_PAT: ${{ secrets.MONITORING_REPO_PAT }}
-
       # Pull the central monitoring stack (dashboards live there).
       - name: Clone monitoring stack repo (private)
         uses: actions/checkout@v4
@@ -53,8 +28,7 @@ jobs:
           path: monitoring-stack
           token: ${{ secrets.MONITORING_REPO_PAT }}  # PAT with repo read access
 
-      # Deploy dashboards using the composite action that lives *inside* the
-      # monitoring-stack repo we just cloned.
+      # Deploy dashboards to Grafana via the lightweight Python helper.
       - name: Deploy dashboards to Grafana
         run: |
           pip install --disable-pip-version-check --quiet requests
