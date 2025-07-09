@@ -56,8 +56,9 @@ jobs:
       # Deploy dashboards using the composite action that lives *inside* the
       # monitoring-stack repo we just cloned.
       - name: Deploy dashboards to Grafana
-        uses: ./monitoring-stack
-        with:
-          grafana-url: ${{ secrets.GRAFANA_URL }}
-          grafana-api-key: ${{ secrets.GRAFANA_API_KEY }}
-          dashboards-path: monitoring-stack/grafana/dashboards
+        run: |
+          pip install --disable-pip-version-check --quiet requests
+          python scripts/deploy_dashboards.py monitoring-stack/grafana/dashboards
+        env:
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
