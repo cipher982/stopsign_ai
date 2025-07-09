@@ -3,7 +3,13 @@ name: Deploy Dashboards
 # Triggered after Coolify successfully deploys the project.
 # Runs automatically after Coolify finishes a deploy **or** on demand.
 on:
-  # Sent from Coolify (project webhook) – see docs for setup.
+  # Auto-deploy whenever a dashboard JSON is changed in this repo
+  push:
+    branches: [main]
+    paths:
+      - 'monitoring/dashboards/**'
+
+  # Triggered externally (e.g., by Coolify) – kept for completeness
   repository_dispatch:
     types: [coolify-deployed]
 
@@ -20,19 +26,11 @@ jobs:
         with:
           persist-credentials: false  # don't pollute git creds with GITHUB_TOKEN
 
-      # Pull the central monitoring stack (dashboards live there).
-      - name: Clone monitoring stack repo (private)
-        uses: actions/checkout@v4
-        with:
-          repository: cipher982/datahouse  # monitoring repo
-          path: monitoring-stack
-          token: ${{ secrets.MONITORING_REPO_PAT }}  # PAT with repo read access
-
       # Deploy dashboards to Grafana via the lightweight Python helper.
       - name: Deploy dashboards to Grafana
         run: |
           pip install --disable-pip-version-check --quiet requests
-          python scripts/deploy_dashboards.py monitoring-stack/grafana/dashboards
+          python scripts/deploy_dashboards.py monitoring/dashboards
         env:
           GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
           GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
