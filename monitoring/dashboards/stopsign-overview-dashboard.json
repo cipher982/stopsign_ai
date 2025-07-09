@@ -1,7 +1,7 @@
 {
   "dashboard": {
     "id": null,
-    "title": "StopSign AI - System Overview",
+    "title": "StopSign AI - System Overview (Auto Update Test)",
     "tags": ["stopsign", "overview"],
     "timezone": "browser",
     "refresh": "5s",
