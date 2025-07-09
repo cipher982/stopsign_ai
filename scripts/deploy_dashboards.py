@@ -68,12 +68,20 @@ def upload_dashboards(directory: Path, grafana_url: str, api_key: str) -> None:
             failures += 1
             continue
 
-        payload = {
-            "dashboard": dashboard_def,
-            # Folder 0 = General.  Adjust if you use a different folder.
-            "folderId": 0,
-            "overwrite": True,
-        }
+        # Allow files to be stored either as raw dashboard JSON *or* already
+        # wrapped in the Grafana HTTP payload structure.  Detect by checking
+        # for a top-level "dashboard" key with a dict value.
+        if "dashboard" in dashboard_def and isinstance(dashboard_def["dashboard"], dict):
+            payload = dashboard_def
+            # Ensure we always overwrite so changes take effect.
+            payload.setdefault("overwrite", True)
+        else:
+            payload = {
+                "dashboard": dashboard_def,
+                # Folder 0 = General.  Adjust if you use a different folder.
+                "folderId": 0,
+                "overwrite": True,
+            }
 
         url = grafana_url.rstrip("/") + "/api/dashboards/db"
 
