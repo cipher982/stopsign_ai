@@ -34,11 +34,11 @@
       {
         "id": 2,
         "title": "🚗 Vehicles Detected Today", 
-        "description": "Actual vehicle detections from YOLO AI (not frame count)",
+        "description": "New vehicles tracked by the system (not raw YOLO detections)",
         "type": "stat",
         "targets": [
           {
-            "rawSql": "SELECT sum(toFloat64(SpanAttributes['objects.detected_count'])) as vehicles_detected FROM otel_traces WHERE SpanName = 'yolo_inference' AND Timestamp >= today()",
+            "rawSql": "SELECT sum(toFloat64(SpanAttributes['cars.new_count'])) as vehicles_detected FROM otel_traces WHERE SpanName = 'car_tracking' AND Timestamp >= today()",
             "refId": "A"
           }
         ],
