@@ -13,11 +13,11 @@
     "panels": [
       {
         "id": 1,
-        "title": "📽️ Frames Processed Today",
+        "title": "📽️ Total Frames Processed",
         "type": "stat",
         "targets": [
           {
-            "rawSql": "SELECT count() as frames_processed FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= today()",
+            "rawSql": "SELECT count() as frames_processed FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= $__fromTime AND Timestamp <= $__toTime",
             "refId": "A"
           }
         ],
@@ -33,12 +33,12 @@
       },
       {
         "id": 2,
-        "title": "🚗 Vehicles Detected Today", 
+        "title": "🚗 Total Vehicles Detected", 
         "description": "New vehicles tracked by the system (not raw YOLO detections)",
         "type": "stat",
         "targets": [
           {
-            "rawSql": "SELECT sum(toFloat64(SpanAttributes['cars.new_count'])) as vehicles_detected FROM otel_traces WHERE SpanName = 'car_tracking' AND Timestamp >= today()",
+            "rawSql": "SELECT sum(toFloat64(SpanAttributes['cars.new_count'])) as vehicles_detected FROM otel_traces WHERE SpanName = 'car_tracking' AND Timestamp >= $__fromTime AND Timestamp <= $__toTime",
             "refId": "A"
           }
         ],
@@ -82,12 +82,12 @@
       },
       {
         "id": 5,
-        "title": "💾 Data Volume Today",
+        "title": "💾 Total Data Volume",
         "description": "Total frame data processed in MB",
         "type": "stat",
         "targets": [
           {
-            "rawSql": "SELECT sum(toFloat64(SpanAttributes['encoded.size_bytes'])) / 1024 / 1024 as data_mb FROM otel_traces WHERE SpanName = 'encode_frame' AND Timestamp >= today()",
+            "rawSql": "SELECT sum(toFloat64(SpanAttributes['encoded.size_bytes'])) / 1024 / 1024 as data_mb FROM otel_traces WHERE SpanName = 'encode_frame' AND Timestamp >= $__fromTime AND Timestamp <= $__toTime",
             "refId": "A"
           }
         ],
