@@ -1,0 +1,189 @@
+{
+  "dashboard": {
+    "uid": "stopsign-system-health",
+    "id": null,
+    "title": "StopSign AI - System Health",
+    "tags": ["stopsign", "system", "infrastructure"],
+    "timezone": "browser",
+    "refresh": "5s",
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "🎥 Camera Feed Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "rawSql": "SELECT count() / 60 as fps_actual FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= now() - INTERVAL 1 MINUTE",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "fps",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "values": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 10 },
+                { "color": "green", "value": 14 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "📦 Redis Buffer Depth",
+        "type": "gauge",
+        "targets": [
+          {
+            "rawSql": "SELECT avg(toFloat64(SpanAttributes['redis.buffer_size'])) as buffer_depth FROM otel_traces WHERE SpanName = 'redis_publish' AND Timestamp >= now() - INTERVAL 1 MINUTE",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "min": 0,
+            "max": 20,
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "values": [
+                { "color": "red", "value": 0 },
+                { "color": "green", "value": 1 },
+                { "color": "yellow", "value": 10 },
+                { "color": "red", "value": 15 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "⚡ Processing Latency (P95)",
+        "type": "stat",
+        "targets": [
+          {
+            "rawSql": "SELECT quantile(0.95)(Duration / 1000000) as p95_latency FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= now() - INTERVAL 5 MINUTE",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "values": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 100 },
+                { "color": "red", "value": 500 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "❌ Error Count",
+        "type": "stat",
+        "targets": [
+          {
+            "rawSql": "SELECT count() as total_errors FROM otel_traces WHERE StatusCode = 2 AND Timestamp >= now() - INTERVAL 5 MINUTE",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "values": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 1 },
+                { "color": "red", "value": 5 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "📈 Buffer Depth Trend (Critical Monitoring)",
+        "description": "Watch for buffer going to 0 (camera issues) or >10 (processing bottleneck)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "rawSql": "SELECT toStartOfMinute(Timestamp) as time, avg(toFloat64(SpanAttributes['redis.buffer_size'])) as buffer_depth FROM otel_traces WHERE SpanName = 'redis_publish' AND Timestamp >= now() - INTERVAL 30 MINUTE GROUP BY time ORDER BY time",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 6,
+        "title": "⚡ End-to-End Processing Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "rawSql": "SELECT toStartOfMinute(Timestamp) as time, quantile(0.50)(Duration / 1000000) as p50_ms, quantile(0.95)(Duration / 1000000) as p95_ms FROM otel_traces WHERE SpanName IN ('store_frame', 'encode_frame') AND Timestamp >= now() - INTERVAL 30 MINUTE GROUP BY time ORDER BY time",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 7,
+        "title": "🔧 System Performance Matrix",
+        "type": "table",
+        "targets": [
+          {
+            "rawSql": "SELECT SpanName as Operation, count() as Total_Ops, quantile(0.50)(Duration / 1000000) as P50_ms, quantile(0.95)(Duration / 1000000) as P95_ms FROM otel_traces WHERE Timestamp >= now() - INTERVAL 30 MINUTE AND SpanName IN ('store_frame', 'encode_frame', 'redis_publish') GROUP BY SpanName ORDER BY Total_Ops DESC",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 }
+      }
+    ]
+  },
+  "folderId": 0,
+  "overwrite": true
+}
