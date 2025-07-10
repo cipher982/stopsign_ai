@@ -1,0 +1,167 @@
+{
+  "dashboard": {
+    "uid": "stopsign-business-analytics", 
+    "id": null,
+    "title": "StopSign AI - Business Analytics",
+    "tags": ["stopsign", "business", "analytics"],
+    "timezone": "browser", 
+    "refresh": "30s",
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "🚗 Vehicles Processed Today",
+        "type": "stat",
+        "targets": [
+          {
+            "rawSql": "SELECT count() as vehicles_processed FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= today()",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "📊 Processing Efficiency",
+        "description": "Frames processed per minute",
+        "type": "stat",
+        "targets": [
+          {
+            "rawSql": "SELECT count() / 60 as frames_per_minute FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= now() - INTERVAL 1 HOUR",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "values": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 600 },
+                { "color": "green", "value": 800 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "💾 Data Volume Today",
+        "description": "Total frame data processed in MB",
+        "type": "stat",
+        "targets": [
+          {
+            "rawSql": "SELECT sum(toFloat64(SpanAttributes['encoded.size_bytes'])) / 1024 / 1024 as data_mb FROM otel_traces WHERE SpanName = 'encode_frame' AND Timestamp >= today()",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "decmbytes",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+      },
+      {
+        "id": 4,
+        "title": "⚡ Average Frame Size",
+        "type": "stat",
+        "targets": [
+          {
+            "rawSql": "SELECT avg(toFloat64(SpanAttributes['encoded.size_bytes'])) / 1024 as avg_frame_kb FROM otel_traces WHERE SpanName = 'encode_frame' AND Timestamp >= now() - INTERVAL 1 HOUR",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "deckbytes",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 }
+      },
+      {
+        "id": 5,
+        "title": "📈 Traffic Volume - Hourly Patterns",
+        "description": "Frames processed per hour over the last 24 hours",
+        "type": "timeseries",
+        "targets": [
+          {
+            "rawSql": "SELECT toStartOfHour(Timestamp) as time, count() as frames_per_hour FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= now() - INTERVAL 24 HOUR GROUP BY time ORDER BY time",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 6,
+        "title": "💽 Data Processing Efficiency Trend",
+        "type": "timeseries",
+        "targets": [
+          {
+            "rawSql": "SELECT toStartOfHour(Timestamp) as time, avg(toFloat64(SpanAttributes['encoded.size_bytes'])) / 1024 as avg_frame_kb, sum(toFloat64(SpanAttributes['encoded.size_bytes'])) / 1024 / 1024 as total_mb_per_hour FROM otel_traces WHERE SpanName = 'encode_frame' AND Timestamp >= now() - INTERVAL 24 HOUR GROUP BY time ORDER BY time",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 7,
+        "title": "📊 Weekly Performance Summary",
+        "type": "table",
+        "targets": [
+          {
+            "rawSql": "SELECT toDate(Timestamp) as Date, count() as Frames_Processed, sum(toFloat64(SpanAttributes['encoded.size_bytes'])) / 1024 / 1024 as Data_MB, avg(toFloat64(SpanAttributes['encoded.size_bytes'])) / 1024 as Avg_Frame_KB FROM otel_traces WHERE SpanName = 'encode_frame' AND Timestamp >= now() - INTERVAL 7 DAY GROUP BY Date ORDER BY Date DESC",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 }
+      }
+    ]
+  },
+  "folderId": 0,
+  "overwrite": true
+}
