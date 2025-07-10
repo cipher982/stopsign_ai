@@ -13,11 +13,11 @@
     "panels": [
       {
         "id": 1,
-        "title": "🚗 Vehicles Processed Today",
+        "title": "📽️ Frames Processed Today",
         "type": "stat",
         "targets": [
           {
-            "rawSql": "SELECT count() as vehicles_processed FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= today()",
+            "rawSql": "SELECT count() as frames_processed FROM otel_traces WHERE SpanName = 'store_frame' AND Timestamp >= today()",
             "refId": "A"
           }
         ],
@@ -33,6 +33,27 @@
       },
       {
         "id": 2,
+        "title": "🚗 Vehicles Detected Today", 
+        "description": "Actual vehicle detections from YOLO AI (not frame count)",
+        "type": "stat",
+        "targets": [
+          {
+            "rawSql": "SELECT sum(toFloat64(SpanAttributes['objects.detected_count'])) as vehicles_detected FROM otel_traces WHERE SpanName = 'yolo_inference' AND Timestamp >= today()",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+      },
+      {
+        "id": 3,
         "title": "📊 Processing Efficiency",
         "description": "Frames processed per minute",
         "type": "stat",
@@ -57,10 +78,10 @@
             }
           }
         },
-        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 }
       },
       {
-        "id": 3,
+        "id": 5,
         "title": "💾 Data Volume Today",
         "description": "Total frame data processed in MB",
         "type": "stat",
@@ -101,7 +122,7 @@
         "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 }
       },
       {
-        "id": 5,
+        "id": 6,
         "title": "📈 Traffic Volume - Hourly Patterns",
         "description": "Frames processed per hour over the last 24 hours",
         "type": "timeseries",
@@ -122,7 +143,7 @@
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
       },
       {
-        "id": 6,
+        "id": 7,
         "title": "💽 Data Processing Efficiency Trend",
         "type": "timeseries",
         "targets": [
@@ -142,7 +163,7 @@
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
       },
       {
-        "id": 7,
+        "id": 8,
         "title": "📊 Weekly Performance Summary",
         "type": "table",
         "targets": [
