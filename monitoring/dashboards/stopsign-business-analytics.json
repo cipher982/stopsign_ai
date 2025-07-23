@@ -34,11 +34,11 @@
       {
         "id": 2,
         "title": "🚗 Total Vehicles Detected", 
-        "description": "New vehicles tracked by the system (not raw YOLO detections)",
+        "description": "Vehicles that completed their journey through the stop zone",
         "type": "stat",
         "targets": [
           {
-            "rawSql": "SELECT sum(toFloat64(SpanAttributes['cars.new_count'])) as vehicles_detected FROM otel_traces WHERE SpanName = 'car_tracking' AND Timestamp >= $__fromTime AND Timestamp <= $__toTime",
+            "rawSql": "SELECT count() as vehicles_detected FROM otel_traces WHERE SpanName = 'vehicle_pass_completed' AND Timestamp >= $__fromTime AND Timestamp <= $__toTime",
             "refId": "A"
           }
         ],
