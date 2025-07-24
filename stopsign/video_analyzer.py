@@ -342,22 +342,14 @@ class VideoAnalyzer:
                 time.sleep(1)
 
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, Dict]:
-        with tracer.start_as_current_span("process_frame_complete") as span:
-            span.set_attribute("frame.height", frame.shape[0])
-            span.set_attribute("frame.width", frame.shape[1])
-            span.set_attribute("frame.channels", frame.shape[2])
+        start_time = time.time()
 
-            start_time = time.time()
-
-            # Calculate average brightness
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            avg_brightness = np.mean(gray)  # type: ignore
-            contrast = np.std(gray)  # type: ignore
-            self.avg_brightness.set(float(avg_brightness))
-            self.contrast.set(float(contrast))
-
-            span.set_attribute("frame.brightness", float(avg_brightness))
-            span.set_attribute("frame.contrast", float(contrast))
+        # Calculate average brightness
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        avg_brightness = np.mean(gray)  # type: ignore
+        contrast = np.std(gray)  # type: ignore
+        self.avg_brightness.set(float(avg_brightness))
+        self.contrast.set(float(contrast))
 
         # Draw stop lines on raw frame BEFORE crop/scale
         # This allows direct mapping from browser coordinates to raw frame coordinates
@@ -456,11 +448,17 @@ class VideoAnalyzer:
         # Measure frame processing time
         total_time = time.time() - start_time
         self.frame_processing_time.observe(total_time)
-        span.set_attribute("processing.total_duration_seconds", total_time)
 
-        # Add high-level processing metrics to span
-        cars_detected = len(self.car_tracker.get_cars()) if hasattr(self, "car_tracker") else 0
-        span.set_attribute("processing.cars_detected", cars_detected)
+        # Create a single span for all frame processing telemetry
+        with tracer.start_as_current_span("process_frame_complete") as span:
+            span.set_attribute("frame.height", frame.shape[0])
+            span.set_attribute("frame.width", frame.shape[1])
+            span.set_attribute("frame.channels", frame.shape[2])
+            span.set_attribute("frame.brightness", float(avg_brightness))
+            span.set_attribute("frame.contrast", float(contrast))
+            span.set_attribute("processing.total_duration_seconds", total_time)
+            cars_detected = len(self.car_tracker.get_cars()) if hasattr(self, "car_tracker") else 0
+            span.set_attribute("processing.cars_detected", cars_detected)
 
         return annotated_frame, metadata
 
