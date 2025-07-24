@@ -203,7 +203,7 @@ class StopSignMetrics:
 def setup_web_server_telemetry(app):
     """Setup telemetry for the web server service."""
     setup_telemetry("stopsign-web-server")
-    setup_fastapi_telemetry(app, "stopsign-web-server")
+    # Note: Using FastHTML, not FastAPI, so no FastAPI instrumentation needed
 
     # SQLAlchemy instrumentation for web server
     try:

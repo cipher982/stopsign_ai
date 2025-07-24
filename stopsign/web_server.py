@@ -3,6 +3,12 @@ import logging
 import os
 import time
 
+# Debug telemetry issues in web server
+try:
+    from stopsign import debug_otel  # Patch OpenTelemetry for debugging  # noqa: F401
+except ImportError:
+    pass  # debug_otel.py not available, continue without debug
+
 import redis
 import uvicorn
 from fasthtml.common import H2
