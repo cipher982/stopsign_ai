@@ -90,20 +90,18 @@ def setup_telemetry(service_name: str, service_version: str = "1.0.0", enable_co
         _meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
         metrics.set_meter_provider(_meter_provider)
 
-        # Auto-instrument common libraries (conditional imports)
-        try:
-            from opentelemetry.instrumentation.redis import RedisInstrumentor
+        # TEMPORARILY DISABLED: Auto-instrument common libraries (debugging span warnings)
+        # try:
+        #     from opentelemetry.instrumentation.redis import RedisInstrumentor
+        #     RedisInstrumentor().instrument()
+        # except ImportError:
+        #     pass
 
-            RedisInstrumentor().instrument()
-        except ImportError:
-            pass
-
-        try:
-            from opentelemetry.instrumentation.requests import RequestsInstrumentor
-
-            RequestsInstrumentor().instrument()
-        except ImportError:
-            pass
+        # try:
+        #     from opentelemetry.instrumentation.requests import RequestsInstrumentor
+        #     RequestsInstrumentor().instrument()
+        # except ImportError:
+        #     pass
 
         _telemetry_initialized = True
         logger.info(f"OpenTelemetry initialized for {service_name} -> {otlp_endpoint}")
@@ -205,13 +203,12 @@ def setup_web_server_telemetry(app):
     setup_telemetry("stopsign-web-server")
     # Note: Using FastHTML, not FastAPI, so no FastAPI instrumentation needed
 
-    # SQLAlchemy instrumentation for web server
-    try:
-        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-
-        SQLAlchemyInstrumentor().instrument()
-    except ImportError:
-        pass
+    # TEMPORARILY DISABLED: SQLAlchemy instrumentation for web server (debugging span warnings)
+    # try:
+    #     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+    #     SQLAlchemyInstrumentor().instrument()
+    # except ImportError:
+    #     pass
 
     return StopSignMetrics("web-server")
 
