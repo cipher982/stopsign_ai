@@ -389,11 +389,13 @@ class VideoAnalyzer:
         stop_detection_start = time.time()
         active_cars = [car for car in self.car_tracker.get_cars().values() if not car.state.is_parked]
 
+        violations_detected = 0
+
         with tracer.start_as_current_span("stop_detection") as span:
+            # Set attributes before creating child spans to avoid lifecycle conflicts
             span.set_attribute("cars.active_count", len(active_cars))
             span.set_attribute("cars.total_count", len(self.car_tracker.get_cars()))
 
-            violations_detected = 0
             for car in active_cars:
                 # Check if car was violating before update
                 was_violating = getattr(car.state, "violating_stop", False)
@@ -405,11 +407,11 @@ class VideoAnalyzer:
                 if is_violating and not was_violating:
                     violations_detected += 1
 
+            # Set final attributes before span closes
+            span.set_attribute("violations.total_detected", violations_detected)
             if violations_detected > 0:
                 metrics.stop_violations.add(violations_detected)
                 span.set_attribute("violations.detected_count", violations_detected)
-
-            span.set_attribute("violations.total_detected", violations_detected)
 
         stop_detection_time = time.time() - stop_detection_start
         self.stop_detection_time.observe(stop_detection_time)
