@@ -27,7 +27,7 @@ from ultralytics import YOLO
 
 # Debug telemetry issues
 try:
-    import debug_otel  # This will patch OpenTelemetry for debugging  # noqa: F401
+    from stopsign import debug_otel  # This will patch OpenTelemetry for debugging  # noqa: F401
 except ImportError:
     pass  # debug_otel.py not available, continue without debug
 
