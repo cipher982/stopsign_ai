@@ -109,13 +109,13 @@ class ProductionConfig(BaseConfig):
     @property
     def REDIS_URL(self):
         if self._redis_url is None:
-            self._redis_url = get_env("REDIS_URL")
+            self._redis_url = get_env("REDIS_URL")  # Required in production
         return self._redis_url
 
     @property
     def DB_URL(self):
         if self._db_url is None:
-            self._db_url = get_env("DB_URL")
+            self._db_url = get_env("DB_URL")  # Required in production
         return self._db_url
 
     @property
@@ -181,6 +181,9 @@ FRAME_BUFFER_SIZE = get_env_int("FRAME_BUFFER_SIZE", 500, required=False)
 PROMETHEUS_PORT = get_env_int("PROMETHEUS_PORT", 9100, required=False)
 WEB_SERVER_PORT = get_env_int("WEB_SERVER_PORT", 8000, required=False)
 
+# Telemetry (required for observability)
+OTEL_EXPORTER_OTLP_ENDPOINT = get_env("OTEL_EXPORTER_OTLP_ENDPOINT")
+
 # Select configuration based on environment
 if ENV == "local":
     config = LocalConfig()
@@ -213,5 +216,7 @@ def __getattr__(name):
         return config.FFMPEG_ENCODER
     elif name == "FFMPEG_PRESET":
         return config.FFMPEG_PRESET
+    elif name == "OTEL_EXPORTER_OTLP_ENDPOINT":
+        return OTEL_EXPORTER_OTLP_ENDPOINT
     else:
         raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
