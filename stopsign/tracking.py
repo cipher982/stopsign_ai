@@ -189,6 +189,11 @@ class CarTracker:
         self.last_seen: Dict[int, float] = {}
         self.persistence_threshold = 10.0  # seconds
 
+        # Initialize tracer once for better performance
+        from stopsign.telemetry import get_tracer
+
+        self._tracer = get_tracer("stopsign.vehicle_tracking")
+
     def update_cars(self, boxes: List, timestamp: float, frame: np.ndarray) -> None:
         current_car_ids = set()
 
@@ -206,15 +211,15 @@ class CarTracker:
                     self.cars[car_id] = Car(id=car_id, config=self.config)
 
                     # Emit telemetry for new vehicle tracking started
-                    from stopsign.telemetry import get_tracer
-
-                    tracer = get_tracer("stopsign.vehicle_tracking")
-                    with tracer.start_as_current_span("vehicle_tracking_started") as span:
-                        span.set_attribute("vehicle.id", car_id)
-                        span.set_attribute("vehicle.initial_location_x", location[0])
-                        span.set_attribute("vehicle.initial_location_y", location[1])
-                        span.set_attribute("vehicle.bbox_width", bbox[2])
-                        span.set_attribute("vehicle.bbox_height", bbox[3])
+                    try:
+                        with self._tracer.start_as_current_span("vehicle_tracking_started") as span:
+                            span.set_attribute("vehicle.id", car_id)
+                            span.set_attribute("vehicle.initial_location_x", location[0])
+                            span.set_attribute("vehicle.initial_location_y", location[1])
+                            span.set_attribute("vehicle.bbox_width", bbox[2])
+                            span.set_attribute("vehicle.bbox_height", bbox[3])
+                    except Exception as e:
+                        logger.warning(f"Failed to emit vehicle_tracking_started telemetry: {e}")
 
                 self.cars[car_id].update(location, timestamp, bbox)
                 self.last_seen[car_id] = timestamp
@@ -248,6 +253,11 @@ class StopDetector:
         self.out_zone_frame_threshold = config.out_zone_frame_threshold
         self.stop_speed_threshold = config.stop_speed_threshold
         self._video_analyzer = None  # Will be set by video analyzer
+
+        # Initialize tracer once for better performance
+        from stopsign.telemetry import get_tracer
+
+        self._tracer = get_tracer("stopsign.vehicle_tracking")
 
     def set_video_analyzer(self, video_analyzer):
         """Set reference to video analyzer for coordinate conversion."""
@@ -370,15 +380,15 @@ class StopDetector:
                 logger.debug(f"Car {car.id} has entered the stop zone at {timestamp}")
 
                 # Emit telemetry for vehicle entering stop zone
-                from stopsign.telemetry import get_tracer
-
-                tracer = get_tracer("stopsign.vehicle_tracking")
-                with tracer.start_as_current_span("vehicle_zone_entered") as span:
-                    span.set_attribute("vehicle.id", car.id)
-                    span.set_attribute("vehicle.entry_time", timestamp)
-                    span.set_attribute("vehicle.speed_at_entry", car.state.raw_speed)
-                    span.set_attribute("vehicle.location_x", car.state.location[0])
-                    span.set_attribute("vehicle.location_y", car.state.location[1])
+                try:
+                    with self._tracer.start_as_current_span("vehicle_zone_entered") as span:
+                        span.set_attribute("vehicle.id", car.id)
+                        span.set_attribute("vehicle.entry_time", timestamp)
+                        span.set_attribute("vehicle.speed_at_entry", car.state.raw_speed)
+                        span.set_attribute("vehicle.location_x", car.state.location[0])
+                        span.set_attribute("vehicle.location_y", car.state.location[1])
+                except Exception as e:
+                    logger.warning(f"Failed to emit vehicle_zone_entered telemetry: {e}")
         elif car.state.consecutive_out_zone_frames >= self.out_zone_frame_threshold:
             if car.state.in_stop_zone:
                 car.state.in_stop_zone = False
@@ -387,17 +397,17 @@ class StopDetector:
                 logger.debug(f"Car {car.id} has exited the stop zone at {timestamp}")
 
                 # Emit business telemetry for completed vehicle pass
-                from stopsign.telemetry import get_tracer
-
-                tracer = get_tracer("stopsign.vehicle_tracking")
-                with tracer.start_as_current_span("vehicle_pass_completed") as span:
-                    span.set_attribute("vehicle.id", car.id)
-                    span.set_attribute("vehicle.time_in_zone", car.state.time_in_zone)
-                    span.set_attribute("vehicle.stop_duration", car.state.stop_duration)
-                    span.set_attribute("vehicle.min_speed", car.state.min_speed_in_zone)
-                    span.set_attribute("vehicle.has_image", bool(car.state.image_path))
-                    span.set_attribute("vehicle.entry_time", car.state.entry_time)
-                    span.set_attribute("vehicle.exit_time", car.state.exit_time)
+                try:
+                    with self._tracer.start_as_current_span("vehicle_pass_completed") as span:
+                        span.set_attribute("vehicle.id", car.id)
+                        span.set_attribute("vehicle.time_in_zone", car.state.time_in_zone)
+                        span.set_attribute("vehicle.stop_duration", car.state.stop_duration)
+                        span.set_attribute("vehicle.min_speed", car.state.min_speed_in_zone)
+                        span.set_attribute("vehicle.has_image", bool(car.state.image_path))
+                        span.set_attribute("vehicle.entry_time", car.state.entry_time)
+                        span.set_attribute("vehicle.exit_time", car.state.exit_time)
+                except Exception as e:
+                    logger.warning(f"Failed to emit vehicle_pass_completed telemetry: {e}")
 
                 # Save data to the database
                 self.db.add_vehicle_pass(
