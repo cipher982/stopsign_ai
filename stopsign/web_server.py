@@ -1338,15 +1338,19 @@ def main():
         # Depending on requirements, you might exit here or continue with limited functionality
         # For now, we'll continue and let endpoints handle the lack of a DB connection.
 
+    # Check if we're in production or development mode
+    env = os.getenv("ENV", "prod")
+    is_dev_mode = env == "local" or env == "dev"
+
     try:
         uvicorn.run(
             "stopsign.web_server:app",
             host="0.0.0.0",
             port=8000,
-            reload=True,
+            reload=is_dev_mode,  # Only reload in development
             log_level="warning",
-            reload_dirs=["./stopsign"],
-            reload_excludes=["./app/data/*"],
+            reload_dirs=["./stopsign"] if is_dev_mode else None,
+            reload_excludes=["./app/data/*"] if is_dev_mode else None,
         )
     except Exception as e:
         logger.error(f"Error in web server: {str(e)}")

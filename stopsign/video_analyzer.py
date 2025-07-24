@@ -25,6 +25,12 @@ from redis import Redis
 from redis import exceptions as redis_exceptions
 from ultralytics import YOLO
 
+# Debug telemetry issues
+try:
+    import debug_otel  # This will patch OpenTelemetry for debugging  # noqa: F401
+except ImportError:
+    pass  # debug_otel.py not available, continue without debug
+
 from stopsign.config import Config
 from stopsign.coordinate_transform import Resolution
 from stopsign.database import Database
