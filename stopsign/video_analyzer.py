@@ -366,25 +366,20 @@ class VideoAnalyzer:
         self.object_detection_time.observe(object_detection_time)
         self.object_detection_fps_count += 1  # Increment object detection FPS counter
 
-        # Car Tracking
+        # Car Tracking (removed wrapper span to prevent lifecycle conflicts with granular telemetry)
         car_tracking_start = time.time()
-        with tracer.start_as_current_span("car_tracking") as span:
-            # Get counts before update
-            cars_before = len(self.car_tracker.get_cars())
 
-            self.car_tracker.update_cars(boxes, time.time(), processed_frame)
+        # Get counts before update for metrics
+        cars_before = len(self.car_tracker.get_cars())
 
-            # Get counts after update
-            cars_after = len(self.car_tracker.get_cars())
-            new_cars = cars_after - cars_before
+        self.car_tracker.update_cars(boxes, time.time(), processed_frame)
 
-            span.set_attribute("cars.before_count", cars_before)
-            span.set_attribute("cars.after_count", cars_after)
-            span.set_attribute("cars.new_count", new_cars)
-            span.set_attribute("detections.input_count", len(boxes))
+        # Get counts after update for metrics
+        cars_after = len(self.car_tracker.get_cars())
+        new_cars = cars_after - cars_before
 
-            if new_cars > 0:
-                metrics.vehicles_tracked.add(new_cars)
+        if new_cars > 0:
+            metrics.vehicles_tracked.add(new_cars)
 
         car_tracking_time = time.time() - car_tracking_start
         self.car_tracking_time.observe(car_tracking_time)
