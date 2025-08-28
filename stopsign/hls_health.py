@@ -95,4 +95,13 @@ def parse_hls_playlist(path: str) -> Dict[str, Any]:
     else:
         out["threshold_sec"] = 60.0
 
+    # Also consider .ts files present in the same directory (best-effort)
+    try:
+        stream_dir = os.path.dirname(path)
+        if os.path.isdir(stream_dir):
+            ts_count = len([f for f in os.listdir(stream_dir) if f.endswith(".ts")])
+            out["segments_count"] = max(out.get("segments_count", 0) or 0, ts_count)
+    except Exception:
+        pass
+
     return out

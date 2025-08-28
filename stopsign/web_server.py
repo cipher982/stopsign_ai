@@ -89,6 +89,14 @@ def _parse_hls_playlist(path: str) -> dict:
             "segments_count": 0,
             "threshold_sec": 60.0,
         }
+        # Try to count TS segments in the same directory for visibility
+        try:
+            stream_dir = os.path.dirname(path)
+            if os.path.isdir(stream_dir):
+                ts_count = len([f for f in os.listdir(stream_dir) if f.endswith(".ts")])
+                info["segments_count"] = ts_count
+        except Exception:
+            pass
     return info
 
 
@@ -1245,10 +1253,10 @@ async def debug_performance():
 
 @app.get("/health/stream")  # type: ignore
 async def health_stream():
-    """Dedicated stream freshness health endpoint.
+    """Dedicated stream freshness health endpoint (JSON).
 
-    Returns 200 if the HLS playlist exists and has been modified
-    within HLS_STALE_THRESHOLD_SEC; otherwise returns 503.
+    Returns 200 if the HLS playlist exists and is fresh. Includes fields:
+    fresh, exists, age_seconds, threshold_sec, segments_count.
     """
     with tracer.start_as_current_span("health_stream") as span:
         info = _parse_hls_playlist(STREAM_FS_PATH)
@@ -1266,13 +1274,18 @@ async def health_stream():
         span.set_attribute("hls.fresh", fresh)
 
         status = 200 if fresh else 503
-        msg = (
-            f"fresh={fresh} exists={exists} age_seconds={age} "
-            f"segments_count={info.get('segments_count', 0)} threshold={threshold}"
-        )
-        resp = HTMLResponse(status_code=status, content=msg)
+        payload = {
+            "fresh": bool(fresh),
+            "exists": bool(exists),
+            "age_seconds": age,
+            "threshold_sec": threshold,
+            "segments_count": info.get("segments_count", 0),
+        }
+        import json
+
+        resp = HTMLResponse(status_code=status, content=json.dumps(payload))
         resp.headers["Cache-Control"] = "no-store"
-        resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+        resp.headers["Content-Type"] = "application/json"
         return resp
 
 
