@@ -77,13 +77,6 @@ def get_hls_freshness() -> dict:
       - threshold_sec: float, derived from playlist window
     """
     info = _parse_hls_playlist(HLS_PLAYLIST)
-    # Also count .ts files on disk (best-effort), though playlist is authoritative
-    try:
-        if os.path.isdir(STREAM_DIR):
-            ts_count = len([f for f in os.listdir(STREAM_DIR) if f.endswith(".ts")])
-            info["segments_count"] = max(info.get("segments_count", 0), ts_count)
-    except Exception:
-        pass
     return info
 
 
