@@ -109,6 +109,35 @@ Every custom service exposes a Prometheus `/metrics` endpoint.  Mount a Promethe
 
 Grafana dashboards are provided in `static/`.
 
+### Robust Stream Health Monitoring
+
+Silent failures in HLS segment generation can be hard to catch with simple HTTP liveness checks. This repo now includes freshness-aware health endpoints and restart policies:
+
+- `ffmpeg_service` health: `http://localhost:8080/health` returns 200 only when the HLS manifest is being updated; returns 503 if stale. Liveness is still available at `/healthz`.
+- `web_server` stream health: `http://localhost:8000/health/stream` returns 200 when fresh and 503 when stale. Use this for external monitoring/alerting without coupling to DB availability.
+
+How it determines freshness (no extra config):
+
+- The services parse the HLS playlist (`stream.m3u8`) and compute a dynamic threshold from the manifest itself (target duration and the window of segments, via `#EXTINF`/`#EXT-X-PROGRAM-DATE-TIME`).
+- A stream is considered healthy if the last segment timestamp is newer than ~3× the playlist window, with a safe floor of ~60 seconds. This adapts automatically to your HLS settings and avoids tuning env vars.
+
+Defaults and resilience:
+
+- `restart: always` added to core services for automatic recovery.
+- Optional auto-restart watchdog is available in the encoder service code (disabled by default); it can be enabled by changing a constant if you want the container to self-restart after persistent stalls.
+
+Examples
+
+- Encoder readiness: `curl -i http://localhost:8080/health`
+- Encoder liveness:  `curl -i http://localhost:8080/healthz`
+- Web stream health: `curl -i http://localhost:8000/health/stream`
+
+Notes
+
+- Health endpoints set `Cache-Control: no-store` to avoid caching by proxies.
+- Docker `restart: always` restarts containers only when the process exits. If you want automatic recovery on stalls, pair it with the encoder watchdog (which exits on persistent staleness).
+- `/health` on the encoder is readiness-like; use `/healthz` for pure liveness probes.
+
 ---
 
 ## 5. Production Deployment
@@ -142,4 +171,3 @@ Ensure the following external services are reachable:
 ├── sample_data/        # Sample video used in local mode
 ├── DEVELOPMENT.md      # Deep-dive developer guide
 └── README.md           # You are here 💁
-

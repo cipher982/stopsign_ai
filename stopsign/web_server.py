@@ -3,6 +3,8 @@ import logging
 import os
 import time
 
+from stopsign.hls_health import parse_hls_playlist
+
 # Debug telemetry issues in web server
 try:
     from stopsign import debug_otel  # Patch OpenTelemetry for debugging  # noqa: F401
@@ -60,6 +62,34 @@ ORIGINAL_HEIGHT = 1080
 
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"  # filesystem path
 STREAM_URL = "/stream/stream.m3u8"  # URL path
+GRACE_STARTUP_SEC = 120  # aligns with ffmpeg_service
+WEB_START_TIME = time.time()
+
+
+_HLS_PARSE_WARN_LAST_TS = 0.0
+
+
+def _parse_hls_playlist(path: str) -> dict:
+    """Wrapper to parse playlist; rate-limit noisy warnings."""
+    global _HLS_PARSE_WARN_LAST_TS
+    try:
+        info = parse_hls_playlist(path)
+    except Exception as e:
+        now = time.time()
+        if now - _HLS_PARSE_WARN_LAST_TS > 60:
+            logger.warning(f"HLS playlist parse failed: {e}")
+            _HLS_PARSE_WARN_LAST_TS = now
+        else:
+            logger.debug(f"HLS playlist parse failed: {e}")
+        # Best-effort fallback
+        info = {
+            "exists": os.path.exists(path),
+            "playlist_mtime": os.path.getmtime(path) if os.path.exists(path) else None,
+            "age_seconds": None,
+            "segments_count": 0,
+            "threshold_sec": 60.0,
+        }
+    return info
 
 
 def get_minio_client():
@@ -124,7 +154,7 @@ async def add_cache_headers(request, call_next):
 
     # Full telemetry for streaming and API requests
     is_streaming = request.url.path.startswith("/stream/")
-    is_api = request.url.path.startswith("/api/") or request.url.path in ["/health", "/check-stream"]
+    is_api = request.url.path.startswith("/api/") or request.url.path in ["/health", "/health/stream", "/check-stream"]
 
     if is_streaming or is_api:
         with tracer.start_as_current_span("http_request") as span:
@@ -1213,6 +1243,39 @@ async def debug_performance():
     return results
 
 
+@app.get("/health/stream")  # type: ignore
+async def health_stream():
+    """Dedicated stream freshness health endpoint.
+
+    Returns 200 if the HLS playlist exists and has been modified
+    within HLS_STALE_THRESHOLD_SEC; otherwise returns 503.
+    """
+    with tracer.start_as_current_span("health_stream") as span:
+        info = _parse_hls_playlist(STREAM_FS_PATH)
+        age = info.get("age_seconds")
+        exists = bool(info.get("exists"))
+        threshold = info.get("threshold_sec", 60.0)
+        warming_up = (time.time() - WEB_START_TIME) <= GRACE_STARTUP_SEC
+        fresh = (exists and age is not None and age <= threshold) or warming_up
+
+        span.set_attribute("hls.exists", exists)
+        if age is not None:
+            span.set_attribute("hls.age_seconds", float(age))
+        span.set_attribute("hls.segments_count", info.get("segments_count", 0))
+        span.set_attribute("hls.threshold_sec", threshold)
+        span.set_attribute("hls.fresh", fresh)
+
+        status = 200 if fresh else 503
+        msg = (
+            f"fresh={fresh} exists={exists} age_seconds={age} "
+            f"segments_count={info.get('segments_count', 0)} threshold={threshold}"
+        )
+        resp = HTMLResponse(status_code=status, content=msg)
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+        return resp
+
+
 @app.get("/load-video")  # type: ignore
 def load_video():
     return Div(
@@ -1289,7 +1352,9 @@ async def health():
                 files = [f for f in os.listdir(stream_dir) if f.endswith(".ts")]
                 span.set_attribute("health.hls_segments_count", len(files))
 
-            return HTMLResponse(status_code=200, content="Healthy: Database connection verified")
+            resp = HTMLResponse(status_code=200, content="Healthy: Database connection verified")
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             db_health_tracker.record_failure()
@@ -1300,18 +1365,21 @@ async def health():
             if db_health_tracker.is_failure_persistent():
                 span.set_attribute("health.status", "unhealthy")
                 span.set_attribute("health.persistent_failure", True)
-                return HTMLResponse(
+                resp = HTMLResponse(
                     status_code=503,  # Service Unavailable
                     content=f"Unhealthy: Database connection issues for over 5 minutes - {str(e)}",
                 )
+                resp.headers["Cache-Control"] = "no-store"
+                return resp
             else:
                 # Still return healthy if this is a temporary blip
                 span.set_attribute("health.status", "degraded")
                 span.set_attribute("health.persistent_failure", False)
-                return HTMLResponse(
-                    status_code=200,
-                    content="Healthy: Tolerating temporary database connectivity issue",
+                resp = HTMLResponse(
+                    status_code=200, content="Healthy: Tolerating temporary database connectivity issue"
                 )
+                resp.headers["Cache-Control"] = "no-store"
+                return resp
 
 
 def main():

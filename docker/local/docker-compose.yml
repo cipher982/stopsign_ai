@@ -15,6 +15,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    restart: always
 
   # Local PostgreSQL
   postgres:
@@ -32,6 +33,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: always
 
   # MinIO (S3-compatible storage)
   minio:
@@ -50,6 +52,7 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    restart: always
 
   # RTSP to Redis (with file:// support)
   rtsp_to_redis:
@@ -73,6 +76,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: always
 
   # Video Analyzer (CPU-only)
   video_analyzer:
@@ -106,6 +110,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: always
 
   # FFmpeg Service (CPU encoding)
   ffmpeg_service:
@@ -118,6 +123,7 @@ services:
       - PROCESSED_FRAME_KEY=${PROCESSED_FRAME_KEY}
       - FFMPEG_ENCODER=${FFMPEG_ENCODER}
       - FFMPEG_PRESET=${FFMPEG_PRESET}
+      # HLS staleness threshold and watchdog are baked into the service code
     depends_on:
       - video_analyzer
     volumes:
@@ -129,6 +135,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: always
 
   # Web Server
   web_server:
@@ -145,6 +152,7 @@ services:
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_BUCKET=${MINIO_BUCKET}
       - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL}
+      # HLS staleness threshold is baked into the service code
     depends_on:
       - postgres
       - video_analyzer
@@ -159,6 +167,7 @@ services:
       timeout: 20s
       retries: 5
       start_period: 60s
+    restart: always
 
 # Simple local networking
 networks:

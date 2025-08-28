@@ -29,6 +29,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: always
 
   ffmpeg_service:
     build:
@@ -41,6 +42,7 @@ services:
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
       FFMPEG_ENCODER: ${FFMPEG_ENCODER}
       FFMPEG_PRESET: ${FFMPEG_PRESET}
+      # HLS staleness threshold and watchdog are baked into the service code
     volumes:
       - storage-dir:/app/data
     depends_on:
@@ -63,6 +65,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: always
 
   web_server:
     build:
@@ -74,6 +77,7 @@ services:
       - .env
     environment:
       DB_URL: ${DB_URL}
+      # HLS staleness threshold is baked into the service code
     depends_on:
       - video_analyzer
     volumes:
@@ -88,6 +92,7 @@ services:
       timeout: 20s
       retries: 5
       start_period: 60s
+    restart: always
 
 networks:
   default:
