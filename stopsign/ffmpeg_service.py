@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 import redis
 
+from stopsign.hls_health import parse_hls_playlist
 from stopsign.telemetry import get_tracer
 from stopsign.telemetry import setup_ffmpeg_service_telemetry
 
@@ -49,19 +50,86 @@ RESOLUTION = "1920x1080"
 
 ENCODER = os.getenv("FFMPEG_ENCODER", "libx264")
 PRESET = os.getenv("FFMPEG_PRESET", "veryfast")
+PIPELINE_WATCHDOG_SEC = 0  # disabled by default; change constant to enable
 
 # FFmpeg Configuration
 HLS_PLAYLIST = os.path.join(STREAM_DIR, "stream.m3u8")
+GRACE_STARTUP_SEC = 120  # tolerate startup warmup without flapping health
 
 # For monitoring
 frames_processed = 0
+START_TIME = time.time()
+
+
+def _parse_hls_playlist(path: str) -> dict:
+    # Deprecated local parser; delegate to shared helper
+    return parse_hls_playlist(path)
+
+
+def get_hls_freshness() -> dict:
+    """Return current HLS freshness information.
+
+    Keys:
+      - exists: bool, whether playlist exists
+      - playlist_mtime: float|None, last modification epoch seconds
+      - age_seconds: float|None, seconds since last update
+      - segments_count: int, number of .ts files present (best-effort)
+      - threshold_sec: float, derived from playlist window
+    """
+    info = _parse_hls_playlist(HLS_PLAYLIST)
+    # Also count .ts files on disk (best-effort), though playlist is authoritative
+    try:
+        if os.path.isdir(STREAM_DIR):
+            ts_count = len([f for f in os.listdir(STREAM_DIR) if f.endswith(".ts")])
+            info["segments_count"] = max(info.get("segments_count", 0), ts_count)
+    except Exception:
+        pass
+    return info
 
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
+            info = get_hls_freshness()
+            # Healthy only if playlist exists and is fresh (or during startup grace)
+            now = time.time()
+            warming_up = (now - START_TIME) <= GRACE_STARTUP_SEC
+            age = info.get("age_seconds")
+            threshold = info.get("threshold_sec", 60.0)
+            fresh = bool(info.get("exists")) and (age is not None and age <= threshold)
+            fresh = fresh or warming_up
+
+            body = (
+                f"status={'ok' if fresh else 'stale'}\n"
+                f"playlist_exists={info.get('exists')}\n"
+                f"age_seconds={info.get('age_seconds')}\n"
+                f"threshold_sec={info.get('threshold_sec')}\n"
+                f"segments_count={info.get('segments_count')}\n"
+            ).encode()
+
+            self.send_response(200 if fresh else 503)
+            self.send_header("Content-type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                import json
+
+                payload = {
+                    "status": "ok" if fresh else "stale",
+                    "exists": bool(info.get("exists")),
+                    "age_seconds": info.get("age_seconds"),
+                    "threshold_sec": info.get("threshold_sec"),
+                    "segments_count": info.get("segments_count"),
+                    "note": "readiness-like; use /healthz for liveness",
+                }
+                self.wfile.write(json.dumps(payload).encode())
+            except Exception:
+                self.wfile.write(body)
+        elif self.path == "/healthz":
+            # Simple liveness probe
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(b"OK")
         else:
@@ -73,6 +141,46 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", HEALTH_PORT), HealthHandler)
     logger.info(f"Starting health check server on port {HEALTH_PORT}")
     server.serve_forever()
+
+
+def start_watchdog_thread():
+    if PIPELINE_WATCHDOG_SEC <= 0:
+        logger.info("Pipeline watchdog disabled (PIPELINE_WATCHDOG_SEC <= 0)")
+        return
+
+    def watchdog_loop():
+        logger.info(
+            "Starting pipeline watchdog: will terminate if HLS is stale for > %ss",
+            PIPELINE_WATCHDOG_SEC,
+        )
+        last_fresh_ts = time.monotonic()
+        while True:
+            try:
+                info = get_hls_freshness()
+                age = info.get("age_seconds")
+                threshold = info.get("threshold_sec", 60.0)
+                fresh = bool(info.get("exists")) and (age is not None and age <= threshold)
+                if fresh:
+                    last_fresh_ts = time.monotonic()
+                else:
+                    stalled_for = time.monotonic() - last_fresh_ts
+                    if stalled_for > PIPELINE_WATCHDOG_SEC:
+                        logger.error(
+                            "Watchdog trip: age=%.1fs threshold=%.1fs stalled_for=%.1fs segments=%s target_dur=%s",
+                            (age or -1),
+                            threshold,
+                            stalled_for,
+                            info.get("segments_count"),
+                            info.get("target_duration_sec"),
+                        )
+                        os._exit(1)  # ensure container restart
+                time.sleep(10)
+            except Exception as e:
+                logger.warning(f"Watchdog error: {e}")
+                time.sleep(10)
+
+    t = threading.Thread(target=watchdog_loop, daemon=True)
+    t.start()
 
 
 def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
@@ -185,6 +293,9 @@ def main():
     except Exception as e:
         logger.error(f"Failed to start health check server: {e}")
 
+    # Start watchdog if configured
+    start_watchdog_thread()
+
     r = redis.from_url(REDIS_URL)
     logger.info(f"Connected to Redis at {REDIS_URL}")
     frame_shape = get_frame_shape(r)
@@ -214,6 +325,9 @@ def main():
                             # Decode frame
                             nparr = np.frombuffer(data, np.uint8)
                             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                            if frame is None:
+                                logger.warning("cv2.imdecode returned None; skipping corrupt frame")
+                                raise ValueError("decode_failed")
 
                             # Resize frame
                             resized_frame = cv2.resize(frame, (frame_shape[0], frame_shape[1]))
@@ -233,6 +347,11 @@ def main():
                         logger.error("FFmpeg process closed unexpectedly. Restarting...")
                         with tracer.start_as_current_span("restart_ffmpeg_process"):
                             ffmpeg_process = start_ffmpeg_process(frame_shape)
+                            if not ffmpeg_process or not ffmpeg_process.stdin:
+                                logger.error("FFmpeg restart failed: stdin is None")
+                    except ValueError as e:
+                        if str(e) != "decode_failed":
+                            logger.warning(f"Processing error: {e}")
 
             if ffmpeg_process.poll() is not None:
                 logger.error("FFmpeg process terminated. Restarting...")
