@@ -10,8 +10,9 @@ WORKDIR /app
 # Copy the RTSP service files
 COPY rtsp_to_redis/ ./rtsp_to_redis/
 
-# Copy the telemetry module from stopsign directory
+# Copy the telemetry module and settings from stopsign directory
 COPY stopsign/telemetry.py ./stopsign/
+COPY stopsign/settings/ ./stopsign/settings/
 RUN touch ./stopsign/__init__.py
 
 # Add /app to Python path so stopsign module can be imported
