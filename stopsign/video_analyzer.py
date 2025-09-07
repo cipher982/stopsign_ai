@@ -34,6 +34,7 @@ except ImportError:
 from stopsign.config import Config
 from stopsign.coordinate_transform import Resolution
 from stopsign.database import Database
+from stopsign.service_status import VideoAnalyzerStatusMixin
 from stopsign.settings import DB_URL
 from stopsign.settings import PROCESSED_FRAME_KEY
 from stopsign.settings import PROMETHEUS_PORT
@@ -56,8 +57,12 @@ MAX_ERRORS = 100
 YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
 
 
-class VideoAnalyzer:
+class VideoAnalyzer(VideoAnalyzerStatusMixin):
     def __init__(self, config: Config, db: Database):
+        # Initialize status tracking first
+        super().__init__()
+
+        # Service dependencies
         self.config = config
         self.db = db
         self.redis_client: Redis = redis.from_url(REDIS_URL)

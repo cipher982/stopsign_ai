@@ -31,6 +31,7 @@ import redis
 # Prometheus removed - using OpenTelemetry metrics instead
 from redis.exceptions import RedisError
 from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
+from stopsign.service_status import RTSPServiceStatusMixin
 
 
 # ----------------- logging setup --------------------
@@ -53,8 +54,12 @@ RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
 FRAME_BUFFER_SIZE: int = int(get_env("FRAME_BUFFER_SIZE"))
 
 
-class RTSPToRedis:
+class RTSPToRedis(RTSPServiceStatusMixin):
     def __init__(self):
+        # Initialize status tracking first
+        super().__init__()
+
+        # Service configuration
         self.rtsp_url = RTSP_URL
         self.redis_url = REDIS_URL
         self.prometheus_port = PROMETHEUS_PORT
@@ -62,6 +67,7 @@ class RTSPToRedis:
         self.fps = 15
         self.jpeg_quality = 85
 
+        # Service state
         self.redis_client: Optional[redis.Redis] = None
         self.frame_queue = Queue(maxsize=1000)
         self.processing_thread = None
@@ -70,14 +76,6 @@ class RTSPToRedis:
         # OpenTelemetry metrics and tracer (set from main)
         self.metrics = None
         self.tracer = None
-
-        # Runtime metrics tracking
-        self.actual_fps = 0.0
-        self.frames_processed = 0
-        self.frames_dropped = 0
-        self.rtsp_errors = 0
-        self.redis_errors = 0
-        self.disconnects = 0
 
     def set_telemetry(self, metrics, tracer):
         """Set OpenTelemetry metrics and tracer instances."""
@@ -90,10 +88,14 @@ class RTSPToRedis:
             self.redis_client = redis.from_url(self.redis_url, socket_timeout=5)
             self.redis_client.ping()
             logger.info("Successfully connected to Redis")
+            # Update connection status
+            self.update_status_metric("redis_connected", True)
         except RedisError as e:
             logger.error(f"Failed to connect to Redis: {str(e)}")
+            self.update_status_metric("redis_connected", False)
             if self.metrics:
                 self.metrics.redis_operations.add(1, {"operation": "error", "service": "rtsp"})
+                self.metrics.service_errors.add(1, {"error_type": "redis_connection", "service": "rtsp"})
             raise
 
     def initialize_capture(self):
@@ -105,6 +107,7 @@ class RTSPToRedis:
             if not cap.isOpened():
                 raise ValueError(f"Could not open video file: {file_path}")
             logger.info("Local video capture initialized successfully")
+            self.update_status_metric("rtsp_connected", True)
             if self.metrics:
                 self.metrics.redis_operations.add(1, {"operation": "rtsp_connected", "service": "rtsp"})
             return cap
@@ -121,6 +124,7 @@ class RTSPToRedis:
                     raise ValueError("Could not open video stream")
                 cap.set(cv2.CAP_PROP_FPS, self.fps)
                 logger.info("Video capture initialized successfully")
+                self.update_status_metric("rtsp_connected", True)
                 if self.metrics:
                     self.metrics.redis_operations.add(1, {"operation": "rtsp_connected", "service": "rtsp"})
                 return cap
@@ -145,14 +149,16 @@ class RTSPToRedis:
                     span.set_attribute("frame.channels", frame.shape[2])
                     self.store_frame(frame)
                 self.frame_queue.task_done()
-                # Track queue size via telemetry
+
+                # Update runtime status
+                self.update_status_metric("queue_size", self.frame_queue.qsize())
+                self.increment_counter("processed_count", 1)
+
+                # Record OpenTelemetry business event
                 if self.metrics:
-                    self.metrics.redis_operations.add(
-                        1, {"operation": "queue_update", "service": "rtsp", "queue_size": str(self.frame_queue.qsize())}
-                    )
+                    self.metrics.frames_processed.add(1, {"service": "rtsp"})
 
                 frames_processed += 1
-                self.frames_processed += 1
                 current_time = time.time()
                 if current_time - last_fps_update >= 1:
                     # Update processed fps tracking
@@ -217,7 +223,7 @@ class RTSPToRedis:
         log_interval = 60
 
         logger.info("RTSP to Redis service starting...")
-        self.log_status()
+        self.log_status_summary()
 
         while not self.should_stop.is_set():
             cap = None
@@ -256,20 +262,21 @@ class RTSPToRedis:
                             self.frame_queue.put(frame)
                         else:
                             logger.warning("Frame queue is full. Dropping frame.")
-                            self.frames_dropped += 1
+                            self.record_frame_drop()
 
                         last_frame_time = current_time
 
                         # Update FPS every second
                         if current_time - fps_update_time >= 1:
                             elapsed_fps_time = current_time - fps_update_time
-                            self.actual_fps = rtsp_frames_count / elapsed_fps_time
+                            calculated_fps = rtsp_frames_count / elapsed_fps_time
+                            self.update_rtsp_fps(calculated_fps)
                             rtsp_frames_count = 0
                             fps_update_time = current_time
 
                         # Log status periodically
                         if current_time - last_log_time >= log_interval:
-                            self.log_status()
+                            self.log_status_summary()
                             last_log_time = current_time
 
                     else:
@@ -277,12 +284,18 @@ class RTSPToRedis:
 
             except RedisError as e:
                 logger.error(f"Redis error: {str(e)}")
-                self.redis_errors += 1
-                self.disconnects += 1
+                self.record_redis_error()
+                self.increment_counter("disconnects", 1)
+                self.update_status_metric("redis_connected", False)
+                if self.metrics:
+                    self.metrics.service_errors.add(1, {"error_type": "redis", "service": "rtsp"})
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Error in RTSP to Redis service: {str(e)}")
-                self.rtsp_errors += 1
+                self.increment_counter("error_count", 1)
+                self.update_status_metric("rtsp_connected", False)
+                if self.metrics:
+                    self.metrics.service_errors.add(1, {"error_type": "rtsp", "service": "rtsp"})
                 time.sleep(1)
             finally:
                 if cap:
@@ -296,27 +309,32 @@ class RTSPToRedis:
             self.processing_thread.join()
         logger.info("RTSP to Redis service stopped.")
 
-    def log_status(self):
-        buffer_utilization = (self.frame_queue.qsize() / 1000.0) * 100  # Queue maxsize is 1000
-        logger.info(
-            f"Status Update: "
-            f"FPS: {self.actual_fps:.2f}, "
-            f"Queue Size: {self.frame_queue.qsize()}, "
-            f"Frames Processed: {self.frames_processed}, "
-            f"Frames Dropped: {self.frames_dropped}, "
-            f"Buffer Utilization: {buffer_utilization:.2f}%, "
-            f"RTSP Errors: {self.rtsp_errors}, "
-            f"Redis Errors: {self.redis_errors}"
-        )
-
     def health_check(self):
+        """Enhanced health check using runtime status."""
         try:
-            if self.redis_client and self.redis_client.ping():
-                if self.processing_thread and self.processing_thread.is_alive():
-                    return True
-            return False
+            # Update buffer utilization
+            buffer_util = (self.frame_queue.qsize() / 1000.0) * 100
+            self.update_status_metric("buffer_utilization_percent", buffer_util)
+
+            # Basic connectivity checks
+            redis_ok = self.redis_client and self.redis_client.ping() if self.redis_client else False
+            thread_ok = (
+                self.processing_thread and self.processing_thread.is_alive() if self.processing_thread else False
+            )
+
+            # Update connection status
+            self.update_status_metric("redis_connected", redis_ok)
+
+            # Use mixin's health status logic
+            health_status = self.get_health_status()
+
+            # Additional RTSP-specific health criteria
+            rtsp_healthy = health_status["healthy"] and redis_ok and thread_ok
+
+            return rtsp_healthy
         except Exception as e:
             logger.error(f"Health check failed: {str(e)}")
+            self.increment_counter("error_count", 1)
             return False
 
 

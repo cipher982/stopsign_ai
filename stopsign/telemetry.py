@@ -143,7 +143,42 @@ def create_custom_span(tracer, operation_name: str, **attributes):
 
 # Common metric instruments for StopSign AI
 class StopSignMetrics:
-    """Common metrics used across StopSign AI services."""
+    """Common metrics used across StopSign AI services.
+
+    ARCHITECTURE: Two-Domain Telemetry Pattern
+    ==========================================
+
+    This class handles the "EVENT RECORDING DOMAIN" for business intelligence and monitoring.
+    Services should use ServiceStatusMixin for the "RUNTIME STATUS DOMAIN" for logging/debugging.
+
+    EVENT RECORDING DOMAIN (OpenTelemetry - This Class):
+    - Business events: "X happened" - frames processed, objects detected, etc.
+    - Performance measurements: "X took Y time" - inference duration, DB operations
+    - Exported to: Grafana, monitoring dashboards, alerting systems
+    - Data flow: Service -> OpenTelemetry -> OTLP -> Monitoring backend
+
+    RUNTIME STATUS DOMAIN (ServiceStatusMixin - stopsign.service_status):
+    - Current state: "X is Y right now" - current FPS, queue size, connection status
+    - Human-readable: Debug logs, status summaries, health checks
+    - Data flow: Service -> Logs/Health endpoints -> Human operators
+
+    Usage Examples:
+    --------------
+    # EVENT RECORDING (use this class):
+    metrics.frames_processed.add(1, {"service": "rtsp"})           # Counter: increment
+    metrics.yolo_inference_duration.record(0.025)                 # Histogram: record duration
+    metrics.redis_operations.add(1, {"operation": "publish"})     # Counter: business event
+
+    # RUNTIME STATUS (use ServiceStatusMixin):
+    self.update_status_metric('current_fps', 15.2)                # Current state
+    self.increment_counter('error_count', 1)                      # Error tracking
+    self.log_status_summary()                                     # Human logs
+
+    DO NOT MIX DOMAINS:
+    - Don't use OpenTelemetry counters for "current state" (use ServiceStatusMixin)
+    - Don't log business events without telemetry recording (use both)
+    - Don't create gauges in OpenTelemetry (that's Prometheus thinking)
+    """
 
     def __init__(self, service_name: str):
         self.meter = get_meter(f"stopsign.{service_name}")
@@ -196,6 +231,15 @@ class StopSignMetrics:
 
         self.stop_violations = self.meter.create_counter(
             "stop_violations_total", description="Total stop sign violations detected"
+        )
+
+        # Error and health metrics (business events, not current state)
+        self.service_errors = self.meter.create_counter(
+            "service_errors_total", description="Total service errors occurred"
+        )
+
+        self.service_restarts = self.meter.create_counter(
+            "service_restarts_total", description="Total service restart events"
         )
 
 
