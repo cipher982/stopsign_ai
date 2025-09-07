@@ -71,6 +71,14 @@ class RTSPToRedis:
         self.metrics = None
         self.tracer = None
 
+        # Runtime metrics tracking
+        self.actual_fps = 0.0
+        self.frames_processed = 0
+        self.frames_dropped = 0
+        self.rtsp_errors = 0
+        self.redis_errors = 0
+        self.disconnects = 0
+
     def set_telemetry(self, metrics, tracer):
         """Set OpenTelemetry metrics and tracer instances."""
         self.metrics = metrics
@@ -131,18 +139,23 @@ class RTSPToRedis:
         while not self.should_stop.is_set():
             try:
                 frame = self.frame_queue.get(timeout=1)
-                with tracer.start_as_current_span("store_frame") as span:
+                with self.tracer.start_as_current_span("store_frame") as span:
                     span.set_attribute("frame.height", frame.shape[0])
                     span.set_attribute("frame.width", frame.shape[1])
                     span.set_attribute("frame.channels", frame.shape[2])
                     self.store_frame(frame)
                 self.frame_queue.task_done()
-                self.queue_size.set(self.frame_queue.qsize())
+                # Track queue size via telemetry
+                if self.metrics:
+                    self.metrics.redis_operations.add(
+                        1, {"operation": "queue_update", "service": "rtsp", "queue_size": str(self.frame_queue.qsize())}
+                    )
 
                 frames_processed += 1
+                self.frames_processed += 1
                 current_time = time.time()
                 if current_time - last_fps_update >= 1:
-                    self.processed_fps.set(frames_processed / (current_time - last_fps_update))
+                    # Update processed fps tracking
                     frames_processed = 0
                     last_fps_update = current_time
 
@@ -243,15 +256,14 @@ class RTSPToRedis:
                             self.frame_queue.put(frame)
                         else:
                             logger.warning("Frame queue is full. Dropping frame.")
-                            self.frames_dropped.inc()
+                            self.frames_dropped += 1
 
                         last_frame_time = current_time
 
                         # Update FPS every second
                         if current_time - fps_update_time >= 1:
                             elapsed_fps_time = current_time - fps_update_time
-                            self.actual_fps.set(rtsp_frames_count / elapsed_fps_time)
-                            self.rtsp_input_fps.set(rtsp_frames_count / elapsed_fps_time)
+                            self.actual_fps = rtsp_frames_count / elapsed_fps_time
                             rtsp_frames_count = 0
                             fps_update_time = current_time
 
@@ -265,11 +277,12 @@ class RTSPToRedis:
 
             except RedisError as e:
                 logger.error(f"Redis error: {str(e)}")
-                self.disconnects.inc()
+                self.redis_errors += 1
+                self.disconnects += 1
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Error in RTSP to Redis service: {str(e)}")
-                # RTSP errors tracked in OpenTelemetry
+                self.rtsp_errors += 1
                 time.sleep(1)
             finally:
                 if cap:
@@ -284,15 +297,16 @@ class RTSPToRedis:
         logger.info("RTSP to Redis service stopped.")
 
     def log_status(self):
+        buffer_utilization = (self.frame_queue.qsize() / 1000.0) * 100  # Queue maxsize is 1000
         logger.info(
             f"Status Update: "
-            f"FPS: {self.actual_fps._value.get():.2f}, "
+            f"FPS: {self.actual_fps:.2f}, "
             f"Queue Size: {self.frame_queue.qsize()}, "
-            f"Frames Processed: {self.frames_processed._value.get()}, "
-            f"Frames Dropped: {self.frames_dropped._value.get()}, "
-            f"Buffer Utilization: {self.buffer_utilization._value.get():.2f}%, "
-            f"RTSP Errors: {self.rtsp_errors._value.get()}, "
-            f"Redis Errors: {self.redis_errors._value.get()}"
+            f"Frames Processed: {self.frames_processed}, "
+            f"Frames Dropped: {self.frames_dropped}, "
+            f"Buffer Utilization: {buffer_utilization:.2f}%, "
+            f"RTSP Errors: {self.rtsp_errors}, "
+            f"Redis Errors: {self.redis_errors}"
         )
 
     def health_check(self):
