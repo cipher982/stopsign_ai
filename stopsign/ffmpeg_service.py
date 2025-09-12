@@ -11,8 +11,10 @@ from http.server import HTTPServer
 import cv2
 import numpy as np
 import redis
+from redis import exceptions as redis_exceptions
 
 from stopsign.hls_health import parse_hls_playlist
+from stopsign.service_status import FFmpegServiceStatusMixin
 from stopsign.telemetry import get_tracer
 from stopsign.telemetry import setup_ffmpeg_service_telemetry
 
@@ -36,7 +38,7 @@ def get_env(key: str) -> str:
 # Environment Variables
 REDIS_URL = get_env("REDIS_URL")
 PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
-HEALTH_PORT = 8080
+HEALTH_PORT = int(os.getenv("FFMPEG_HEALTH_PORT", "8080"))
 
 STREAM_DIR = "/app/data/stream"
 FRAME_RATE = "15"
@@ -50,7 +52,18 @@ RESOLUTION = "1920x1080"
 
 ENCODER = os.getenv("FFMPEG_ENCODER", "libx264")
 PRESET = os.getenv("FFMPEG_PRESET", "veryfast")
-PIPELINE_WATCHDOG_SEC = 0  # disabled by default; change constant to enable
+
+# Watchdog: if no fresh HLS for this period, exit(1) to let the
+# orchestrator restart the container. 0 disables.
+PIPELINE_WATCHDOG_SEC = float(os.getenv("PIPELINE_WATCHDOG_SEC", "0"))
+
+# Frame consumption stall detector: if we don't process any frames for this
+# many seconds, we mark readiness false (and optionally the watchdog may fire)
+FRAME_STALL_SEC = float(os.getenv("FRAME_STALL_SEC", "120"))
+
+# Redis reconnect/backoff
+REDIS_MAX_BACKOFF_SEC = float(os.getenv("REDIS_MAX_BACKOFF_SEC", "30"))
+REDIS_INITIAL_BACKOFF_SEC = float(os.getenv("REDIS_INITIAL_BACKOFF_SEC", "0.5"))
 
 # FFmpeg Configuration
 HLS_PLAYLIST = os.path.join(STREAM_DIR, "stream.m3u8")
@@ -59,6 +72,13 @@ GRACE_STARTUP_SEC = 120  # tolerate startup warmup without flapping health
 # For monitoring
 frames_processed = 0
 START_TIME = time.time()
+LAST_FRAME_TS = START_TIME
+CONSEC_EMPTY_POLLS = 0
+REDIS_CLIENT: redis.Redis | None = None
+
+# Runtime status (human/debug domain)
+status = FFmpegServiceStatusMixin()
+status.update_status_metric("service_name", "FFmpegService")
 
 
 def _parse_hls_playlist(path: str) -> dict:
@@ -113,18 +133,56 @@ class HealthHandler(BaseHTTPRequestHandler):
                     "age_seconds": info.get("age_seconds"),
                     "threshold_sec": info.get("threshold_sec"),
                     "segments_count": info.get("segments_count"),
-                    "note": "readiness-like; use /healthz for liveness",
+                    "redis_connected": status.get_status_snapshot().get("redis_connected", False),
+                    "last_frame_age_sec": max(0.0, time.time() - LAST_FRAME_TS),
+                    "note": "readiness-like; use /healthz for liveness; /ready for composite readiness",
                 }
                 self.wfile.write(json.dumps(payload).encode())
             except Exception:
                 self.wfile.write(body)
         elif self.path == "/healthz":
             # Simple liveness probe
+            # Consider process live if the thread is running. We do NOT
+            # gate liveness on HLS freshness. Watchdog handles hard restarts.
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(b"OK")
+        elif self.path == "/ready":
+            # Composite readiness: HLS fresh AND recent frame processing AND Redis connected
+            info = get_hls_freshness()
+            age = info.get("age_seconds")
+            threshold = info.get("threshold_sec", 60.0)
+            hls_ok = bool(info.get("exists")) and (age is not None and age <= threshold)
+            redis_ok = status.get_status_snapshot().get("redis_connected", False)
+            recent_frame_ok = (time.time() - LAST_FRAME_TS) <= FRAME_STALL_SEC
+
+            ready = hls_ok and redis_ok and recent_frame_ok
+
+            self.send_response(200 if ready else 503)
+            self.send_header("Content-type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                import json
+
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "ready": ready,
+                            "hls_ok": hls_ok,
+                            "redis_ok": redis_ok,
+                            "recent_frame_ok": recent_frame_ok,
+                            "hls_age_seconds": age,
+                            "hls_threshold_seconds": threshold,
+                            "last_frame_age_seconds": max(0.0, time.time() - LAST_FRAME_TS),
+                            "consec_empty_polls": CONSEC_EMPTY_POLLS,
+                        }
+                    ).encode()
+                )
+            except Exception:
+                self.wfile.write(b"ready check error")
         else:
             self.send_response(404)
             self.end_headers()
@@ -234,12 +292,61 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
 def get_frame_shape(r: redis.Redis) -> tuple[int, int] | None:
     """Get the shape of the first frame from Redis."""
     while True:
-        task = r.blpop([PROCESSED_FRAME_KEY], timeout=5)
-        if task:
-            _, data = task  # type: ignore
-            nparr = np.frombuffer(data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            return (frame.shape[1], frame.shape[0])
+        task = safe_brpop(PROCESSED_FRAME_KEY, timeout=5)
+        if task is None:
+            continue
+        _, data = task  # type: ignore
+        nparr = np.frombuffer(data, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if frame is None:
+            logger.warning("Initial frame decode failed; waiting for next frame")
+            continue
+        return (frame.shape[1], frame.shape[0])
+
+
+def connect_redis_with_backoff(url: str) -> redis.Redis:
+    """Connect to Redis with exponential backoff and status updates."""
+    backoff = REDIS_INITIAL_BACKOFF_SEC
+    while True:
+        try:
+            client = redis.from_url(url, socket_timeout=5, socket_connect_timeout=5)
+            client.ping()
+            status.update_status_metric("redis_connected", True)
+            logger.info("Connected to Redis at %s", url)
+            global REDIS_CLIENT
+            REDIS_CLIENT = client
+            return client
+        except redis_exceptions.RedisError as e:
+            status.update_status_metric("redis_connected", False)
+            logger.error("Redis connection failed: %s (retrying in %.1fs)", e, backoff)
+            if "metrics" in globals():
+                globals()["metrics"].service_errors.add(1, {"error_type": "redis_connection", "service": "ffmpeg"})
+            time.sleep(backoff)
+            backoff = min(REDIS_MAX_BACKOFF_SEC, backoff * 2)
+
+
+def safe_brpop(key: str, timeout: int = 5):
+    """BRPOP wrapper with reconnect/backoff and empty poll tracking.
+
+    Returns (key, data) on success or None on timeout.
+    """
+    global CONSEC_EMPTY_POLLS
+    global REDIS_CLIENT
+    try:
+        if REDIS_CLIENT is None:
+            REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
+        item = REDIS_CLIENT.brpop([key], timeout=timeout)
+        if item is None:
+            CONSEC_EMPTY_POLLS += 1
+        else:
+            CONSEC_EMPTY_POLLS = 0
+        return item
+    except redis_exceptions.RedisError as e:
+        logger.warning("Redis BRPOP error: %s", e)
+        status.update_status_metric("redis_connected", False)
+        # Attempt reconnect
+        REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
+        return None
 
 
 def start_ffmpeg_process(frame_shape):
@@ -289,8 +396,7 @@ def main():
     # Start watchdog if configured
     start_watchdog_thread()
 
-    r = redis.from_url(REDIS_URL)
-    logger.info(f"Connected to Redis at {REDIS_URL}")
+    r = connect_redis_with_backoff(REDIS_URL)
     frame_shape = get_frame_shape(r)
     if frame_shape is None:
         logger.error("Failed to get frame shape")
@@ -307,7 +413,7 @@ def main():
         logger.info("Starting main loop")
         global frames_processed
         while True:
-            task = r.blpop([PROCESSED_FRAME_KEY], timeout=5)
+            task = safe_brpop(PROCESSED_FRAME_KEY, timeout=5)
             if task:
                 _, data = task  # type: ignore
                 if ffmpeg_process.stdin:
@@ -333,6 +439,11 @@ def main():
                             ffmpeg_process.stdin.flush()
 
                             frames_processed += 1
+                            # Heartbeat and status updates
+                            global LAST_FRAME_TS
+                            LAST_FRAME_TS = time.time()
+                            status.update_status_metric("current_fps", float(FRAME_RATE))
+                            status.increment_counter("processed_count", 1)
                             metrics.frames_processed.add(1, {"service": "ffmpeg"})
                             span.set_attribute("frames.total_processed", frames_processed)
 
@@ -346,6 +457,7 @@ def main():
                         if str(e) != "decode_failed":
                             logger.warning(f"Processing error: {e}")
 
+            # If FFmpeg died, restart it
             if ffmpeg_process.poll() is not None:
                 logger.error("FFmpeg process terminated. Restarting...")
                 ffmpeg_process = start_ffmpeg_process(frame_shape)

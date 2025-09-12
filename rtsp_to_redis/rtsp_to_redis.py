@@ -120,6 +120,9 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                 raise ValueError("RTSP URL is not set")
             try:
                 cap = cv2.VideoCapture(self.rtsp_url)
+                # Increase timeout for slow network connections (Tailscale routing)
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 60000)  # 60 second timeout
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 10000)  # 10 second read timeout
                 if not cap.isOpened():
                     raise ValueError("Could not open video stream")
                 cap.set(cv2.CAP_PROP_FPS, self.fps)
