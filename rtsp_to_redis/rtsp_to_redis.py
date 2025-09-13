@@ -23,6 +23,7 @@ from queue import Empty, Queue
 import threading
 import time
 from typing import Optional
+import json
 
 # ------------------ third-party ---------------------
 import cv2
@@ -139,18 +140,37 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         # Connection status tracked in OpenTelemetry
         raise ValueError("Failed to initialize video capture after multiple attempts")
 
+    # Frame wire format (for RAW_FRAME_KEY)
+    #   magic: 4 bytes 'SSFM' (StopSign Frame Metadata)
+    #   version: 1 byte (currently 1)
+    #   json_len: 4 bytes big-endian unsigned
+    #   json_payload: UTF-8 JSON (e.g., {"ts": 1690000000.123, "w": 1920, "h": 1080})
+    #   jpeg_bytes: remaining bytes (cv2.imencode output)
+    HEADER_MAGIC = b"SSFM"
+    HEADER_VERSION = 1
+
+    def _pack_frame(self, jpeg_bytes: bytes, capture_ts: float, width: int, height: int) -> bytes:
+        meta = {"ts": float(capture_ts), "w": int(width), "h": int(height), "src": "rtsp_to_redis"}
+        meta_bytes = json.dumps(meta, separators=(",", ":")).encode("utf-8")
+        header = self.HEADER_MAGIC + bytes([self.HEADER_VERSION]) + len(meta_bytes).to_bytes(4, "big")
+        return header + meta_bytes + jpeg_bytes
+
     def process_frames(self):
         frames_processed = 0
         last_fps_update = time.time()
 
         while not self.should_stop.is_set():
             try:
-                frame = self.frame_queue.get(timeout=1)
+                item = self.frame_queue.get(timeout=1)
+                if isinstance(item, tuple):
+                    frame, capture_ts = item
+                else:
+                    frame, capture_ts = item, time.time()  # backward safety
                 with self.tracer.start_as_current_span("store_frame") as span:
                     span.set_attribute("frame.height", frame.shape[0])
                     span.set_attribute("frame.width", frame.shape[1])
                     span.set_attribute("frame.channels", frame.shape[2])
-                    self.store_frame(frame)
+                    self.store_frame(frame, capture_ts)
                 self.frame_queue.task_done()
 
                 # Update runtime status
@@ -175,7 +195,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                 if self.metrics:
                     self.metrics.redis_operations.add(1, {"operation": "error", "service": "rtsp"})
 
-    def store_frame(self, frame):
+    def store_frame(self, frame, capture_ts: float):
         with self.tracer.start_as_current_span("encode_frame") as span:
             _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
             span.set_attribute("jpeg.quality", self.jpeg_quality)
@@ -189,7 +209,10 @@ class RTSPToRedis(RTSPServiceStatusMixin):
             with self.tracer.start_as_current_span("redis_publish") as span:
                 redis_start_time = time.time()
                 pipeline = self.redis_client.pipeline()
-                pipeline.lpush(RAW_FRAME_KEY, buffer.tobytes())
+                packed = self._pack_frame(
+                    buffer.tobytes(), capture_ts=capture_ts, width=frame.shape[1], height=frame.shape[0]
+                )
+                pipeline.lpush(RAW_FRAME_KEY, packed)
                 pipeline.ltrim(RAW_FRAME_KEY, 0, self.frame_buffer_size - 1)
                 pipeline.llen(RAW_FRAME_KEY)
                 _, _, current_buffer_size = pipeline.execute()
@@ -261,8 +284,11 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
                         rtsp_frames_count += 1
 
+                        # Stamp capture moment as close to cap.read() as possible
+                        capture_ts = time.time()
+
                         if not self.frame_queue.full():
-                            self.frame_queue.put(frame)
+                            self.frame_queue.put((frame, capture_ts))
                         else:
                             logger.warning("Frame queue is full. Dropping frame.")
                             self.record_frame_drop()
