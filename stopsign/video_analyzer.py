@@ -56,6 +56,15 @@ MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
 YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
 
+# RAW frame wire format header (when produced by rtsp_to_redis)
+#   magic: 4 bytes 'SSFM'
+#   version: 1 byte (1)
+#   json_len: 4 bytes big-endian length
+#   json: UTF-8 JSON (at least {"ts": <float>})
+#   jpeg: remaining bytes
+RAW_HEADER_MAGIC = b"SSFM"
+RAW_HEADER_MIN_LEN = 9  # 4 + 1 + 4
+
 
 class VideoAnalyzer(VideoAnalyzerStatusMixin):
     def __init__(self, config: Config, db: Database):
@@ -261,14 +270,46 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         logger.info("Model ready on device: %s", device)
         return model
 
+    def _parse_raw_frame(self, data: bytes) -> Tuple[Optional[np.ndarray], Optional[float]]:
+        """Parse packed RAW frame with optional metadata header.
+
+        Returns (frame, capture_ts). If header missing/invalid, returns (frame, None).
+        """
+        capture_ts: Optional[float] = None
+        jpeg_bytes = data
+        try:
+            if len(data) >= RAW_HEADER_MIN_LEN and data[0:4] == RAW_HEADER_MAGIC:
+                _version = data[4]
+                meta_len = int.from_bytes(data[5:9], "big")
+                meta_start = 9
+                meta_end = meta_start + meta_len
+                if 0 <= meta_len <= len(data) - meta_start:
+                    meta_bytes = data[meta_start:meta_end]
+                    meta = json.loads(meta_bytes.decode("utf-8"))
+                    if isinstance(meta, dict) and "ts" in meta:
+                        capture_ts = float(meta.get("ts"))
+                        jpeg_bytes = data[meta_end:]
+                    else:
+                        # Missing required ts field -> invalid
+                        return None, None
+                else:
+                    return None, None
+            else:
+                return None, None
+        except Exception:
+            return None, None
+
+        nparr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        return frame, capture_ts
+
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
         try:
             # Use BLPOP to block until a frame is available or timeout after 1 second
             frame_data = self.redis_client.blpop([key], timeout=1)
             if frame_data:
                 _, data = frame_data  # type: ignore
-                nparr = np.frombuffer(data, dtype=np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                frame, _ = self._parse_raw_frame(data)
                 if frame is None:
                     logger.error("Failed to decode frame data")
                 return frame
@@ -276,6 +317,22 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 return None
         except Exception as e:
             logger.error(f"Error retrieving frame from Redis: {str(e)}")
+            return None
+
+    def get_frame_with_meta(self, key: str) -> Optional[Tuple[np.ndarray, float]]:
+        """Pop a frame and return (ndarray, capture_ts)."""
+        try:
+            frame_data = self.redis_client.blpop([key], timeout=1)
+            if frame_data:
+                _, data = frame_data  # type: ignore
+                frame, capture_ts = self._parse_raw_frame(data)
+                if frame is None or capture_ts is None:
+                    logger.error("Discarding frame without valid capture timestamp metadata")
+                    return None
+                return frame, capture_ts
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving frame+meta from Redis: {str(e)}")
             return None
 
     def process_stream(self):
@@ -300,12 +357,12 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         while True:
             try:
-                frame = self.get_frame_from_redis(RAW_FRAME_KEY)
-
-                if frame is None:
+                item = self.get_frame_with_meta(RAW_FRAME_KEY)
+                if item is None:
                     logger.warning("No frame available in Redis. Waiting...")
                     time.sleep(1)
                     continue
+                frame, capture_ts = item
 
                 frame_start_time = time.time()
 
@@ -314,7 +371,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
                 # Timing for frame processing
                 start_time = time.time()
-                processed_frame, metadata = self.process_frame(frame)
+                processed_frame, metadata = self.process_frame(frame, capture_ts=capture_ts)
                 processing_time = time.time() - start_time
                 self.frame_processing_time.observe(processing_time)
 
@@ -346,8 +403,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 self.increment_exception_counter(type(e).__name__, "process_stream")
                 time.sleep(1)
 
-    def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, Dict]:
+    def process_frame(self, frame: np.ndarray, capture_ts: float) -> Tuple[np.ndarray, Dict]:
         start_time = time.time()
+        ts_for_logic = capture_ts
 
         # Calculate average brightness
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -375,7 +433,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         # Get counts before update for metrics
         cars_before = len(self.car_tracker.get_cars())
 
-        self.car_tracker.update_cars(boxes, time.time(), processed_frame)
+        self.car_tracker.update_cars(boxes, ts_for_logic, processed_frame)
 
         # Get counts after update for metrics
         cars_after = len(self.car_tracker.get_cars())
@@ -403,7 +461,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 # Check if car was violating before update
                 was_violating = getattr(car.state, "violating_stop", False)
 
-                self.stop_detector.update_car_stop_status(car, time.time(), processed_frame)
+                self.stop_detector.update_car_stop_status(car, ts_for_logic, processed_frame)
 
                 # Check if car is now violating (new violation)
                 is_violating = getattr(car.state, "violating_stop", False)
@@ -431,6 +489,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             self.car_tracker.cars,
             boxes,
             self.stop_detector,
+            timestamp=ts_for_logic,
         )
         visualization_time = time.time() - visualization_start
         self.visualization_time.observe(visualization_time)
@@ -441,7 +500,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         # Metadata
         metadata_start = time.time()
-        metadata = self.create_metadata()
+        metadata = self.create_metadata(capture_ts=capture_ts)
         self.metadata_creation_time.observe(time.time() - metadata_start)
 
         self.cars_tracked.set(len(self.car_tracker.get_cars()))
@@ -604,7 +663,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             self.increment_exception_counter(type(e).__name__, "detect_objects")
             raise
 
-    def visualize(self, frame, cars: Dict[int, Car], boxes: List, stop_detector: StopDetector) -> np.ndarray:
+    def visualize(
+        self,
+        frame,
+        cars: Dict[int, Car],
+        boxes: List,
+        stop_detector: StopDetector,
+        timestamp: float,
+    ) -> np.ndarray:
         overlay = frame.copy()
 
         car_in_stop_zone = any(car.state.in_stop_zone for car in cars.values() if not car.state.is_parked)
@@ -637,7 +703,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 logger.error(f"Error processing box in visualize function: {str(e)}")
                 self.increment_exception_counter(type(e).__name__, "visualize")
 
-        current_time = time.time()
+        current_time = timestamp
         for car in cars.values():
             if car.state.is_parked:
                 continue
@@ -648,9 +714,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         cv2.putText(frame, f"Frame: {self.frame_count}", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-        # Add timestamp in top-right corner
+        # Add capture timestamp in top-right corner
         tz = pytz.timezone("America/Chicago")
-        utc_dt = datetime.fromtimestamp(time.time(), pytz.UTC)
+        utc_dt = datetime.fromtimestamp(timestamp, pytz.UTC)
         local_dt = utc_dt.astimezone(tz)
         current_time = local_dt.strftime("%Y-%m-%d %H:%M:%S")
         text_size, _ = cv2.getTextSize(current_time, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
@@ -716,9 +782,11 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         for y in range(0, height, self.config.grid_size):
             cv2.line(frame, (0, y), (width, y), (128, 128, 128), 1)
 
-    def create_metadata(self) -> Dict:
+    def create_metadata(self, capture_ts: float) -> Dict:
+        now_ts = time.time()
         return {
-            "timestamp": time.time(),
+            "capture_timestamp": capture_ts,
+            "latency_sec": max(0.0, now_ts - capture_ts),
             "frame_count": self.frame_count,
             "cars": [
                 {
@@ -769,7 +837,8 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         time.sleep(3)
         max_attempts = 3
         for _ in range(max_attempts):
-            frame = self.get_frame_from_redis(RAW_FRAME_KEY)
+            item = self.get_frame_with_meta(RAW_FRAME_KEY)
+            frame = item[0] if item is not None else None
             if frame is not None:
                 return frame.shape[1], frame.shape[0]  # width, height
             time.sleep(0.5)
