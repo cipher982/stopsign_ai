@@ -27,10 +27,11 @@ Runs end-to-end from an RTSP camera to a web dashboard with nothing more than Do
 1. Quick Start (local development)
 2. Project Architecture
 3. Configuration
-4. Monitoring & Metrics
-5. Production Deployment
-6. Directory Layout
-7. Contributing & Development
+4. Frame Format & Timestamp Accuracy
+5. Monitoring & Metrics
+6. Production Deployment
+7. Directory Layout
+8. Contributing & Development
 
 ---
 
@@ -66,9 +67,9 @@ make dev-clean    # wipe everything (volumes, images, containers)
 
 Service | Purpose | Code | Docker image (local)
 ---|---|---|---
-RTSP → Redis | Grabs frames from an RTSP feed (or sample .mp4) and publishes JPEGs to Redis | `rtsp_to_redis/rtsp_to_redis.py` | `Dockerfile.rtsp.local`
-Video Analyzer | YOLOv8 inference + object tracking + stop-sign logic. Stores metadata in Postgres and images in MinIO. Publishes annotated frames. | `stopsign/video_analyzer.py` | `Dockerfile.processor.local`
-FFmpeg Service | Converts annotated frames → HLS stream (m3u8 + .ts) | `stopsign/ffmpeg_service.py` | `Dockerfile.ffmpeg.local`
+RTSP → Redis | Grabs frames from an RTSP feed (or sample .mp4) and publishes JPEGs to Redis with SSFM frame headers containing capture timestamps | `rtsp_to_redis/rtsp_to_redis.py` | `Dockerfile.rtsp.local`
+Video Analyzer | YOLOv8 inference + object tracking + stop-sign logic. Uses capture timestamps for accurate timing. Stores metadata in Postgres and images in MinIO. Publishes annotated frames. | `stopsign/video_analyzer.py` | `Dockerfile.processor.local`
+FFmpeg Service | Converts annotated frames → HLS stream (m3u8 + .ts) with Redis resilience and auto-recovery watchdog | `stopsign/ffmpeg_service.py` | `Dockerfile.ffmpeg.local`
 Web Server | Simple FastAPI + FastHTML UI that shows the live stream & recent violations | `stopsign/web_server.py` | `Dockerfile.web.local`
 Infrastructure | Redis, Postgres, MinIO (+ console) | Official upstream images | –
 
@@ -98,7 +99,42 @@ Some advanced vision parameters (stop-line coordinates, buffer sizes, etc.) live
 
 ---
 
-## 4. Monitoring & Metrics
+## 4. Frame Format & Timestamp Accuracy
+
+### SSFM Wire Format
+
+The pipeline uses a custom SSFM (StopSign Frame Message) format to ensure timestamp accuracy throughout the video processing chain:
+
+**Frame Structure:**
+- Bytes 0-3: `b'SSFM'` (magic header)
+- Byte 4: Version (currently `1`)
+- Bytes 5-8: Big-endian uint32 JSON metadata length
+- Bytes 9+: JSON metadata + JPEG frame data
+
+**JSON Metadata:**
+```json
+{
+  "ts": 1694621234.567,  // Capture timestamp (epoch float)
+  "w": 1920,             // Frame width
+  "h": 1080,             // Frame height
+  "src": "rtsp"          // Source identifier
+}
+```
+
+**Benefits:**
+- **Accurate timestamps**: Video overlay shows actual frame capture time, not processing time
+- **Pipeline visibility**: Metadata includes `latency_sec` showing capture-to-processing delay
+- **Backward compatibility**: Falls back gracefully for frames without SSFM headers
+
+### Timestamp Sources
+
+- **Capture timestamp**: Set at RTSP ingestion (`cap.read()` time) and preserved throughout pipeline
+- **Processing timestamp**: Available in metadata for latency calculation
+- **Video overlay**: Now displays capture timestamp in America/Chicago timezone for accuracy
+
+---
+
+## 5. Monitoring & Metrics
 
 Every custom service exposes a Prometheus `/metrics` endpoint.  Mount a Prometheus/Grafana stack (or use the included Grafana data-source) to get:
 
@@ -111,10 +147,15 @@ Grafana dashboards are provided in `static/`.
 
 ### Robust Stream Health Monitoring
 
-Silent failures in HLS segment generation can be hard to catch with simple HTTP liveness checks. This repo now includes freshness-aware health endpoints and restart policies:
+Silent failures in HLS segment generation can be hard to catch with simple HTTP liveness checks. This repo includes comprehensive health endpoints and auto-recovery:
 
-- `ffmpeg_service` health: `http://localhost:8080/health` returns 200 only when the HLS manifest is being updated; returns 503 if stale. Liveness is still available at `/healthz`.
-- `web_server` stream health: `http://localhost:8000/health/stream` returns 200 when fresh and 503 when stale. Use this for external monitoring/alerting without coupling to DB availability.
+**Health Endpoints:**
+- `ffmpeg_service` readiness: `http://localhost:8080/ready` - Composite health (HLS fresh + Redis connected + recent frames)
+- `ffmpeg_service` stream health: `http://localhost:8080/health` - HLS freshness only (legacy)
+- `ffmpeg_service` liveness: `http://localhost:8080/healthz` - Simple process health
+- `web_server` stream health: `http://localhost:8000/health/stream` - Stream availability for external monitoring
+
+**Auto-Recovery:** FFmpeg service includes a configurable watchdog that automatically restarts the container when HLS generation stalls, eliminating the need for manual intervention during network hiccups.
 
 How it determines freshness (no extra config):
 
@@ -123,24 +164,29 @@ How it determines freshness (no extra config):
 
 Defaults and resilience:
 
-- `restart: always` added to core services for automatic recovery.
-- Optional auto-restart watchdog is available in the encoder service code (disabled by default); it can be enabled by changing a constant if you want the container to self-restart after persistent stalls.
+- `restart: always` added to core services for automatic recovery
+- **Redis resilience**: Exponential backoff reconnection logic handles network interruptions gracefully
+- **Auto-restart watchdog**: Configurable via `PIPELINE_WATCHDOG_SEC` environment variable (e.g., 180 for 3-minute timeout)
+- **FIFO frame processing**: Proper queue semantics ensure frames are processed in correct order
 
 Examples
 
-- Encoder readiness: `curl -i http://localhost:8080/health`
-- Encoder liveness:  `curl -i http://localhost:8080/healthz`
+- Encoder composite health: `curl -i http://localhost:8080/ready`
+- Encoder stream freshness: `curl -i http://localhost:8080/health`
+- Encoder liveness: `curl -i http://localhost:8080/healthz`
 - Web stream health: `curl -i http://localhost:8000/health/stream`
 
 Notes
 
-- Health endpoints set `Cache-Control: no-store` to avoid caching by proxies.
-- Docker `restart: always` restarts containers only when the process exits. If you want automatic recovery on stalls, pair it with the encoder watchdog (which exits on persistent staleness).
-- `/health` on the encoder is readiness-like; use `/healthz` for pure liveness probes.
+- Health endpoints set `Cache-Control: no-store` to avoid caching by proxies
+- **Watchdog configuration**: Set `PIPELINE_WATCHDOG_SEC=180` to enable 3-minute auto-restart on HLS staleness
+- **Redis configuration**: Optional `REDIS_MAX_BACKOFF_SEC=30` and `FRAME_STALL_SEC=120` for fine-tuning
+- Use `/ready` for comprehensive readiness checks, `/healthz` for simple liveness, `/health` for stream-specific monitoring
+- All services include exponential backoff Redis reconnection to handle network instability
 
 ---
 
-## 5. Production Deployment
+## 6. Production Deployment
 
 The legacy production setup is preserved in `docker/production/`.  Images are CUDA-enabled, use external managed databases, and **do not rely on .env files** – instead configure via environment variables / secrets.
 
@@ -159,7 +205,7 @@ Ensure the following external services are reachable:
 
 ---
 
-## 6. Directory Layout (top-level)
+## 7. Directory Layout (top-level)
 
 ```
 .
