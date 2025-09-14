@@ -56,6 +56,13 @@ MIN_BUFFER_LENGTH = 30
 MAX_ERRORS = 100
 YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
 
+# Analyzer catch-up policy: if the popped frame is too old compared
+# to wall-clock (capture_ts), skip ahead by trimming the raw queue so that
+# we process the most recent frames. This prevents long "time-to-fresh"
+# after upstream stalls.
+ANALYZER_CATCHUP_SEC = float(os.getenv("ANALYZER_CATCHUP_SEC", "15"))
+ANALYZER_CATCHUP_KEEP_N = int(os.getenv("ANALYZER_CATCHUP_KEEP_N", "30"))  # keep last N newest frames
+
 # RAW frame wire format header (when produced by rtsp_to_redis)
 #   magic: 4 bytes 'SSFM'
 #   version: 1 byte (1)
@@ -305,8 +312,8 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
         try:
-            # Use BLPOP to block until a frame is available or timeout after 1 second
-            frame_data = self.redis_client.blpop([key], timeout=1)
+            # Use BRPOP so LPUSH/BRPOP forms a FIFO queue (oldest first)
+            frame_data = self.redis_client.brpop([key], timeout=1)
             if frame_data:
                 _, data = frame_data  # type: ignore
                 frame, _ = self._parse_raw_frame(data)
@@ -322,13 +329,32 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
     def get_frame_with_meta(self, key: str) -> Optional[Tuple[np.ndarray, float]]:
         """Pop a frame and return (ndarray, capture_ts)."""
         try:
-            frame_data = self.redis_client.blpop([key], timeout=1)
+            # Use BRPOP so LPUSH/BRPOP forms a FIFO queue (oldest first)
+            frame_data = self.redis_client.brpop([key], timeout=1)
             if frame_data:
                 _, data = frame_data  # type: ignore
                 frame, capture_ts = self._parse_raw_frame(data)
                 if frame is None or capture_ts is None:
                     logger.error("Discarding frame without valid capture timestamp metadata")
                     return None
+
+                # Catch-up policy: if this frame is too old (pipeline latency high),
+                # trim the raw queue to keep only the newest N frames and skip this one.
+                if ANALYZER_CATCHUP_SEC > 0:
+                    try:
+                        lag = time.time() - float(capture_ts)
+                        if lag > ANALYZER_CATCHUP_SEC:
+                            keep_n = max(1, ANALYZER_CATCHUP_KEEP_N)
+                            self.redis_client.ltrim(RAW_FRAME_KEY, 0, keep_n - 1)
+                            logger.warning(
+                                "Analyzer catch-up: lag=%.2fs > %.2fs, trimmed RAW queue to last %d frames",
+                                lag,
+                                ANALYZER_CATCHUP_SEC,
+                                keep_n,
+                            )
+                            return None  # skip this stale frame; fetch again
+                    except Exception as e:
+                        logger.debug(f"Catch-up check failed: {e}")
                 return frame, capture_ts
             return None
         except Exception as e:
