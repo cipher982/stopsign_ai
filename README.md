@@ -24,46 +24,49 @@ Runs end-to-end from an RTSP camera to a web dashboard with nothing more than Do
 
 ## Table of Contents
 
-1. Quick Start (local development)
-2. Project Architecture
+1. What’s Interesting
+2. Architecture
 3. Configuration
 4. Frame Format & Timestamp Accuracy
-5. Monitoring & Metrics
-6. Production Deployment
-7. Directory Layout
-8. Contributing & Development
+5. Health Model & Metrics
+6. Resilience Knobs
+7. Production Deployment
+8. Directory Layout
 
 ---
 
-## 1. Quick Start
+## 1. What’s Interesting
 
-The entire stack (camera simulator, AI pipeline, databases, web UI) can be launched locally with **one command**:
+- Capture‑time correctness end‑to‑end via SSFM headers (actual camera capture time used for all logic/overlays).
+- Deterministic FIFO across both legs of the pipeline (producer `LPUSH` + consumer `BRPOP`).
+- Clear health separation: liveness (`/healthz`) vs readiness (`/ready`) vs HLS freshness (`/health`, `/health/stream`).
+- Dynamic HLS freshness threshold derived from playlist window (no brittle hard‑coded timers).
+- Analyzer catch‑up mode that trims backlog after stalls to minimize time‑to‑fresh.
+- Observability triad: capture_age, process_age, hls_age to pinpoint where staleness originates.
 
-```bash
-# 1️⃣ Install prerequisites (Docker + Make)
-# 2️⃣ Run the setup script once – creates volumes, a sample video, and .env
-make setup
-
-# 3️⃣ Spin everything up
-make dev
-
-# 4️⃣ Open the UI ➜  http://localhost:8000
-```
-
-Need to stop or rebuild?
-
-```bash
-make dev-down     # stop containers
-make dev-logs     # follow logs
-make dev-build    # rebuild images
-make dev-clean    # wipe everything (volumes, images, containers)
-```
-
-👉 For detailed developer docs see [DEVELOPMENT.md](DEVELOPMENT.md).
+For setup and development details, see the docs/ directory (e.g., `docs/architecture/first-principles-streaming.md`).
 
 ---
 
 ## 2. Project Architecture
+
+### Architecture at a Glance
+
+```mermaid
+graph LR
+  C[RTSP Camera] -->|RTSP| I[rtsp_to_redis]
+  I -->|SSFM JPEG LPUSH RAW| R[(Redis)]
+  R -->|BRPOP RAW| A[video_analyzer]
+  A -->|LPUSH PROCESSED| R
+  R -->|BRPOP PROCESSED| F[ffmpeg_service]
+  F -->|HLS .m3u8/.ts| W[web_server]
+  W -->|HTTP| B[(Browser)]
+
+  subgraph Health & Telemetry
+    F -.->|/healthz /ready /health| M[Monitoring]
+    W -.->|/health/stream| M
+  end
+```
 
 Service | Purpose | Code | Docker image (local)
 ---|---|---|---
@@ -74,6 +77,12 @@ Web Server | Simple FastAPI + FastHTML UI that shows the live stream & recent vi
 Infrastructure | Redis, Postgres, MinIO (+ console) | Official upstream images | –
 
 All of the above are declared in `docker/local/docker-compose.yml` and wired together with environment variables in `docker/local/.env` (created by `make setup`).
+
+### Queue Semantics & Backlog Policy
+
+- Raw → Analyzer: `LPUSH` (producer) + `BRPOP` (consumer) on `RAW_FRAME_KEY` = FIFO; buffer bounded via `LTRIM`.
+- Analyzer → FFmpeg: `LPUSH` + `BRPOP` on `PROCESSED_FRAME_KEY` = FIFO.
+- Catch‑up policy: if a raw frame’s capture timestamp is older than `ANALYZER_CATCHUP_SEC`, trim RAW to last `ANALYZER_CATCHUP_KEEP_N` frames to jump back to near‑live.
 
 ---
 
@@ -134,9 +143,9 @@ The pipeline uses a custom SSFM (StopSign Frame Message) format to ensure timest
 
 ---
 
-## 5. Monitoring & Metrics
+## 5. Health Model & Metrics
 
-Every custom service exposes a Prometheus `/metrics` endpoint.  Mount a Prometheus/Grafana stack (or use the included Grafana data-source) to get:
+Every custom service exposes a Prometheus `/metrics` endpoint. Mount a Prometheus/Grafana stack (or use the included Grafana data-source) to get:
 
 * FPS, processing latency, dropped frames
 * YOLO inference time, device utilisation (CPU/GPU)
@@ -144,6 +153,22 @@ Every custom service exposes a Prometheus `/metrics` endpoint.  Mount a Promethe
 * FFmpeg encoder throughput
 
 Grafana dashboards are provided in `static/`.
+
+### Health endpoints and semantics
+
+- Liveness (for orchestrator): `ffmpeg_service` `/healthz` → process responsive only.
+- Readiness (composite): `ffmpeg_service` `/ready` → HLS fresh AND Redis connected AND recent frames.
+- External freshness: `ffmpeg_service` `/health` and `web_server` `/health/stream` → HLS freshness only with startup grace.
+
+Docker healthchecks point to `/healthz` to avoid flapping on short upstream stalls; alert on sustained readiness failures via your monitoring system.
+
+### Freshness and the “three ages”
+
+- `capture_age` = now − SSFM.capture_ts (ingest health)
+- `process_age` = now − last frame processed in ffmpeg_service (pipeline health)
+- `hls_age` = now − last `#EXT-X-PROGRAM-DATE-TIME` in playlist (edge/player health)
+
+Freshness threshold is derived from the playlist window (~3× window, floored at 60s) from `#EXTINF` and PDT.
 
 ### Robust Stream Health Monitoring
 
@@ -186,7 +211,17 @@ Notes
 
 ---
 
-## 6. Production Deployment
+## 6. Resilience Knobs
+
+- `ANALYZER_CATCHUP_SEC` (default 15): skip/trim stale raw frames older than this age to jump back to live.
+- `ANALYZER_CATCHUP_KEEP_N` (default 30): how many newest raw frames to retain when trimming.
+- `FRAME_STALL_SEC` (default 120): readiness requires frames newer than this.
+- `PIPELINE_WATCHDOG_SEC` (disabled by default): restart ffmpeg_service on sustained staleness.
+- `REDIS_MAX_BACKOFF_SEC` (default 30) and `REDIS_INITIAL_BACKOFF_SEC` (default 0.5): reconnect strategy.
+
+---
+
+## 7. Production Deployment
 
 The legacy production setup is preserved in `docker/production/`.  Images are CUDA-enabled, use external managed databases, and **do not rely on .env files** – instead configure via environment variables / secrets.
 
@@ -205,7 +240,7 @@ Ensure the following external services are reachable:
 
 ---
 
-## 7. Directory Layout (top-level)
+## 8. Directory Layout (top-level)
 
 ```
 .
@@ -215,5 +250,5 @@ Ensure the following external services are reachable:
 ├── volumes/            # Bind-mounted data for local development
 ├── static/             # UI assets, screenshots, Grafana dashboards
 ├── sample_data/        # Sample video used in local mode
-├── DEVELOPMENT.md      # Deep-dive developer guide
+├── docs/               # Design/architecture notes
 └── README.md           # You are here 💁
