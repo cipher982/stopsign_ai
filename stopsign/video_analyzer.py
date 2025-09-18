@@ -7,6 +7,8 @@ import queue
 import threading
 import time
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler
+from http.server import HTTPServer
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -62,6 +64,8 @@ YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
 # after upstream stalls.
 ANALYZER_CATCHUP_SEC = float(os.getenv("ANALYZER_CATCHUP_SEC", "15"))
 ANALYZER_CATCHUP_KEEP_N = int(os.getenv("ANALYZER_CATCHUP_KEEP_N", "30"))  # keep last N newest frames
+ANALYZER_HEALTH_PORT = int(os.getenv("ANALYZER_HEALTH_PORT", "8081"))
+ANALYZER_STALL_SEC = float(os.getenv("ANALYZER_STALL_SEC", "120"))
 
 # RAW frame wire format header (when produced by rtsp_to_redis)
 #   magic: 4 bytes 'SSFM'
@@ -124,6 +128,8 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self._start_stats_update_thread()
         self._start_fps_logging_thread()  # Start FPS logging thread
         start_http_server(PROMETHEUS_PORT)
+        self._start_health_server()
+        self._start_stall_watchdog()
 
     def _start_stats_update_thread(self):
         def schedule_stats_update():
@@ -402,6 +408,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 self.frame_processing_time.observe(processing_time)
 
                 self.store_frame_data(processed_frame, metadata)
+                now_ts = time.time()
+                self.last_processed_time = now_ts
+                self.update_status_metric("last_frame_ts", now_ts)
 
                 self.processed_buffer_size.set(self.redis_client.llen(PROCESSED_FRAME_KEY))  # type: ignore
 
@@ -428,6 +437,74 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 logger.error(f"Error in stream processing: {str(e)}")
                 self.increment_exception_counter(type(e).__name__, "process_stream")
                 time.sleep(1)
+
+    def _start_health_server(self):
+        analyzer = self
+
+        class HealthHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/healthz":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(b'{"status":"ok"}')
+                elif self.path == "/ready":
+                    lag = time.time() - analyzer.last_processed_time
+                    ready = lag <= ANALYZER_STALL_SEC
+                    status_code = 200 if ready else 503
+                    payload = json.dumps(
+                        {
+                            "ready": ready,
+                            "frame_lag_seconds": lag,
+                            "stall_threshold_seconds": ANALYZER_STALL_SEC,
+                        }
+                    ).encode()
+                    self.send_response(status_code)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(payload)
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def log_message(self, format, *args):  # noqa: A003
+                return  # suppress default logging
+
+        try:
+            server = HTTPServer(("0.0.0.0", ANALYZER_HEALTH_PORT), HealthHandler)
+        except OSError as e:
+            logger.error(f"Failed to start analyzer health server: {e}")
+            return
+
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info(f"Analyzer health server listening on port {ANALYZER_HEALTH_PORT}")
+
+    def _start_stall_watchdog(self):
+        if ANALYZER_STALL_SEC <= 0:
+            logger.info("Analyzer stall watchdog disabled (ANALYZER_STALL_SEC <= 0)")
+            return
+
+        def watchdog_loop():
+            logger.info(
+                "Analyzer stall watchdog active: will terminate if no frames processed for > %.0fs",
+                ANALYZER_STALL_SEC,
+            )
+            while True:
+                time.sleep(5)
+                lag = time.time() - self.last_processed_time
+                if lag > ANALYZER_STALL_SEC:
+                    logger.error(
+                        "Analyzer watchdog trip: no frames processed for %.1fs (threshold %.1fs)",
+                        lag,
+                        ANALYZER_STALL_SEC,
+                    )
+                    os._exit(1)
+
+        thread = threading.Thread(target=watchdog_loop, daemon=True)
+        thread.start()
 
     def process_frame(self, frame: np.ndarray, capture_ts: float) -> Tuple[np.ndarray, Dict]:
         start_time = time.time()
