@@ -156,11 +156,22 @@ Grafana dashboards are provided in `static/`.
 
 ### Health endpoints and semantics
 
-- Liveness (for orchestrator): `ffmpeg_service` `/healthz` → process responsive only.
-- Readiness (composite): `ffmpeg_service` `/ready` → HLS fresh AND Redis connected AND recent frames.
-- External freshness: `ffmpeg_service` `/health` and `web_server` `/health/stream` → HLS freshness only with startup grace.
+- **video_analyzer** — `/healthz` (liveness) and `/ready` (frame gap ≤ `ANALYZER_STALL_SEC`).
+- **ffmpeg_service** — `/healthz` (liveness) and `/ready` (fresh HLS + Redis + recent frame).
+- **web_server** — `/healthz` (process up) and `/health/stream` (HLS freshness for external monitors).
+- Legacy `/health` on ffmpeg_service remains for backwards compatibility.
 
-Docker healthchecks point to `/healthz` to avoid flapping on short upstream stalls; alert on sustained readiness failures via your monitoring system.
+Docker healthchecks now target the liveness endpoints (`/healthz`) so short upstream hiccups don’t flip container health; alerting systems should watch `/ready` and treat `/health/stream` as an external freshness signal.
+
+### Netdata alert tuning
+
+Netdata ships with aggressive defaults that page on any short-lived HTTP failure. With the new readiness split:
+
+1. Monitor `video_analyzer` `/ready` and `ffmpeg_service` `/ready` with a **warning** threshold at ~2 minutes and a **critical** alert only after ≥10 minutes of failure. This filters transient Wi-Fi drops while still paging on real outages.
+2. Optionally keep `web_server` `/health/stream` as an informational alarm; set `delay: up`/`delay: down` to a few minutes so the recovered notification isn’t spammy.
+3. Use the new OTEL metrics `frame_queue_depth`, `frame_pipeline_lag_seconds`, and `redis_empty_polls_total` to build dashboards that show where the stall originated (camera ingest, analyzer, or encoder) before escalating.
+
+These thresholds ensure operators see sustained issues without the “unhealthy/recovered” churn that previously flooded email.
 
 ### Freshness and the “three ages”
 
@@ -175,10 +186,12 @@ Freshness threshold is derived from the playlist window (~3× window, floored at
 Silent failures in HLS segment generation can be hard to catch with simple HTTP liveness checks. This repo includes comprehensive health endpoints and auto-recovery:
 
 **Health Endpoints:**
-- `ffmpeg_service` readiness: `http://localhost:8080/ready` - Composite health (HLS fresh + Redis connected + recent frames)
-- `ffmpeg_service` stream health: `http://localhost:8080/health` - HLS freshness only (legacy)
-- `ffmpeg_service` liveness: `http://localhost:8080/healthz` - Simple process health
-- `web_server` stream health: `http://localhost:8000/health/stream` - Stream availability for external monitoring
+- `video_analyzer` readiness: `http://localhost:${ANALYZER_HEALTH_PORT:-8081}/ready` – frame pipeline (“can I serve fresh frames?”)
+- `video_analyzer` liveness: `http://localhost:${ANALYZER_HEALTH_PORT:-8081}/healthz`
+- `ffmpeg_service` readiness: `http://localhost:8080/ready` – HLS + Redis + recent frames
+- `ffmpeg_service` liveness: `http://localhost:8080/healthz`
+- `web_server` liveness: `http://localhost:8000/healthz`
+- `web_server` stream freshness: `http://localhost:8000/health/stream`
 
 **Auto-Recovery:** FFmpeg service includes a configurable watchdog that automatically restarts the container when HLS generation stalls, eliminating the need for manual intervention during network hiccups.
 
