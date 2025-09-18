@@ -1289,6 +1289,12 @@ async def health_stream():
         return resp
 
 
+@app.get("/healthz")  # type: ignore
+async def healthz():
+    """Process liveness check."""
+    return {"status": "ok"}
+
+
 @app.get("/load-video")  # type: ignore
 def load_video():
     return Div(

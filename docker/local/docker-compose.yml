@@ -166,9 +166,9 @@ services:
       - ../../static:/app/static:ro # Mount static files
       - ../../config.yaml:/app/config.yaml:rw  # Live config mounting
     healthcheck:
-      test: ["CMD", "curl", "-f", "--max-time", "20", "http://localhost:8000/health/stream"]
+      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:8000/healthz"]
       interval: 60s
-      timeout: 20s
+      timeout: 5s
       retries: 5
       start_period: 60s
     restart: always
