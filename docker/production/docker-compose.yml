@@ -13,6 +13,8 @@ services:
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
       YOLO_MODEL_NAME: ${YOLO_MODEL_NAME}
       DB_URL: ${DB_URL}
+      ANALYZER_HEALTH_PORT: ${ANALYZER_HEALTH_PORT:-8081}
+      ANALYZER_STALL_SEC: ${ANALYZER_STALL_SEC:-120}
     networks:
       - default
       - monitoring
@@ -25,7 +27,7 @@ services:
               device_ids: ['0']
               capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:${PROMETHEUS_PORT}/metrics"]
+      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:${ANALYZER_HEALTH_PORT:-8081}/ready"]
       interval: 30s
       timeout: 10s
       retries: 3
