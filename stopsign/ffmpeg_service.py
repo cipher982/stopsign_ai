@@ -339,15 +339,31 @@ def safe_brpop(key: str, timeout: int = 5):
         if REDIS_CLIENT is None:
             REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
         item = REDIS_CLIENT.brpop([key], timeout=timeout)
+        metrics_obj = globals().get("metrics")
+
         if item is None:
             CONSEC_EMPTY_POLLS += 1
+            status.update_custom_metric("consec_empty_polls", CONSEC_EMPTY_POLLS)
+            if metrics_obj is not None:
+                metrics_obj.redis_empty_polls.add(1, {"service": "ffmpeg"})
+                metrics_obj.queue_depth.record(0, {"queue": key})
         else:
             CONSEC_EMPTY_POLLS = 0
+            status.update_custom_metric("consec_empty_polls", CONSEC_EMPTY_POLLS)
+            queue_depth = REDIS_CLIENT.llen(key)
+            status.update_custom_metric("queue_depth", queue_depth)
+            if metrics_obj is not None:
+                metrics_obj.queue_depth.record(queue_depth, {"queue": key})
         return item
     except redis_exceptions.TimeoutError:
         # Idle queues trigger TimeoutError when socket_timeout is set. Treat this
         # as an empty poll instead of a connection failure so the service stays up.
         CONSEC_EMPTY_POLLS += 1
+        status.update_custom_metric("consec_empty_polls", CONSEC_EMPTY_POLLS)
+        metrics_obj = globals().get("metrics")
+        if metrics_obj is not None:
+            metrics_obj.redis_empty_polls.add(1, {"service": "ffmpeg"})
+            metrics_obj.queue_depth.record(0, {"queue": key})
         return None
     except redis_exceptions.RedisError as e:
         logger.warning("Redis BRPOP error: %s", e)

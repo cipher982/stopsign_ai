@@ -199,6 +199,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.total_frame_time = Gauge("total_frame_time_seconds", "Total time taken for each frame")
         self.fps = Gauge("fps", "Frames processed per second")
         self.processed_buffer_size = Gauge("processed_frame_buffer_size", "Current size of the processed frame buffer")
+        self.raw_buffer_size = Gauge("raw_frame_buffer_size", "Current size of the raw frame buffer")
+        self.capture_lag_seconds = Gauge(
+            "frame_capture_lag_seconds", "Lag between frame capture and analyzer processing"
+        )
 
         # Error and performance metrics
         self.exception_counter = Counter("exceptions_total", "Total number of exceptions", ["type", "method"])
@@ -412,7 +416,11 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 self.last_processed_time = now_ts
                 self.update_status_metric("last_frame_ts", now_ts)
 
-                self.processed_buffer_size.set(self.redis_client.llen(PROCESSED_FRAME_KEY))  # type: ignore
+                raw_queue_depth = self.redis_client.llen(RAW_FRAME_KEY)  # type: ignore
+                processed_queue_depth = self.redis_client.llen(PROCESSED_FRAME_KEY)  # type: ignore
+
+                self.raw_buffer_size.set(raw_queue_depth)
+                self.processed_buffer_size.set(processed_queue_depth)
 
                 # Increment output FPS counter
                 self.output_fps_count += 1
@@ -420,6 +428,15 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 self.frame_count += 1
                 self.fps_frame_count += 1
                 self.frames_processed.inc()
+
+                capture_lag = max(0.0, now_ts - float(capture_ts))
+                self.capture_lag_seconds.set(capture_lag)
+
+                metrics_obj = globals().get("metrics")
+                if metrics_obj is not None:
+                    metrics_obj.queue_depth.record(raw_queue_depth, {"queue": "raw"})
+                    metrics_obj.queue_depth.record(processed_queue_depth, {"queue": "processed"})
+                    metrics_obj.pipeline_lag.record(capture_lag, {"stage": "analyzer"})
 
                 # Update usage metrics less frequently
                 current_time = time.time()

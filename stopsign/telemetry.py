@@ -219,6 +219,15 @@ class StopSignMetrics:
             "database_operation_duration_seconds", description="Time spent on database operations"
         )
 
+        # Queue/backpressure metrics
+        self.queue_depth = self.meter.create_histogram("frame_queue_depth", description="Observed frame queue depth")
+        self.pipeline_lag = self.meter.create_histogram(
+            "frame_pipeline_lag_seconds", description="Observed frame lag within the pipeline"
+        )
+        self.redis_empty_polls = self.meter.create_counter(
+            "redis_empty_polls_total", description="Redis BRPOP/BLPOP calls that returned no data"
+        )
+
         # Redis metrics
         self.redis_operations = self.meter.create_counter(
             "redis_operations_total", description="Total Redis operations"
