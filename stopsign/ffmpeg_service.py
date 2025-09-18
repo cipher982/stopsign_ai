@@ -309,7 +309,10 @@ def connect_redis_with_backoff(url: str) -> redis.Redis:
     backoff = REDIS_INITIAL_BACKOFF_SEC
     while True:
         try:
-            client = redis.from_url(url, socket_timeout=5, socket_connect_timeout=5)
+            # Allow blocking operations (e.g., BRPOP) to manage their own timeout.
+            # Using socket_timeout here causes redis-py to raise TimeoutError even when
+            # the BRPOP call is behaving normally, which leads to noisy reconnects.
+            client = redis.from_url(url, socket_timeout=None, socket_connect_timeout=5)
             client.ping()
             status.update_status_metric("redis_connected", True)
             logger.info("Connected to Redis at %s", url)
@@ -341,6 +344,11 @@ def safe_brpop(key: str, timeout: int = 5):
         else:
             CONSEC_EMPTY_POLLS = 0
         return item
+    except redis_exceptions.TimeoutError:
+        # Idle queues trigger TimeoutError when socket_timeout is set. Treat this
+        # as an empty poll instead of a connection failure so the service stays up.
+        CONSEC_EMPTY_POLLS += 1
+        return None
     except redis_exceptions.RedisError as e:
         logger.warning("Redis BRPOP error: %s", e)
         status.update_status_metric("redis_connected", False)
