@@ -91,6 +91,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.car_tracker = CarTracker(config, self.db)
         self.stop_detector = StopDetector(config, db)
         self._stop_line_processing_coords = None  # Cache for converted coordinates
+        self._last_config_mtime = self.config.get_file_mtime()  # Track config file modification time
         self.frame_rate = 15
         self.frame_count = 0
         self.fps_frame_count = 0
@@ -181,14 +182,24 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             self.debug_mode = False
 
     def check_config_updates(self):
-        """Check if config has been updated via Redis flag."""
+        """Check if config has been updated via Redis flag or file mtime."""
         try:
+            # Check Redis flag for immediate updates
             update_flag = self.redis_client.get("config_updated")
             if update_flag == b"1":
-                logger.info("Config update detected, reloading...")
+                logger.info("Config update detected via Redis flag, reloading...")
                 self.on_config_updated()
                 # Clear the flag
                 self.redis_client.set("config_updated", "0")
+                self._last_config_mtime = self.config.get_file_mtime()
+                return
+
+            # Also check file mtime as backup (in case Redis flag was missed)
+            current_mtime = self.config.get_file_mtime()
+            if current_mtime > self._last_config_mtime:
+                logger.info(f"Config file changed (mtime: {current_mtime}), reloading...")
+                self.on_config_updated()
+                self._last_config_mtime = current_mtime
         except Exception as e:
             logger.debug(f"Could not check config updates: {e}")
 
@@ -597,10 +608,12 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         stop_detection_time = time.time() - stop_detection_start
         self.stop_detection_time.observe(stop_detection_time)
 
-        # Check debug mode and config updates periodically
-        if self.frame_count % 30 == 0:  # Check every 30 frames
+        # Check debug mode periodically, config updates every frame for instant feedback
+        if self.frame_count % 30 == 0:  # Check debug mode every 30 frames
             self.check_debug_mode()
-            self.check_config_updates()
+
+        # Check config updates every frame for near-instant reload
+        self.check_config_updates()
 
         # Visualization
         visualization_start = time.time()
@@ -728,6 +741,11 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self._stop_line_processing_coords = None
         # Reload config
         self.config.load_config()
+        # Log the new version and stop line coordinates
+        logger.info(f"✅ Config reloaded to version {self.config.version}")
+        self._last_config_mtime = self.config.get_file_mtime()
+        if self.config.stop_line:
+            logger.info(f"New stop line coordinates: {self.config.stop_line}")
         # Recreate stop zone if dimensions are available
         if self.raw_width is not None and self.raw_height is not None:
             self.stop_detector.set_video_analyzer(self)
@@ -1051,7 +1069,7 @@ if __name__ == "__main__":
     globals()["metrics"] = metrics
     globals()["tracer"] = tracer
 
-    config = Config("./config.yaml")
+    config = Config("/app/config/config.yaml")
     db = Database(db_url=DB_URL)
     processor = VideoAnalyzer(config, db)
     processor.run()

@@ -15,6 +15,8 @@ services:
       DB_URL: ${DB_URL}
       ANALYZER_HEALTH_PORT: ${ANALYZER_HEALTH_PORT:-8081}
       ANALYZER_STALL_SEC: ${ANALYZER_STALL_SEC:-120}
+    volumes:
+      - config-dir:/app/config
     networks:
       - default
       - monitoring
@@ -86,6 +88,7 @@ services:
       - video_analyzer
     volumes:
       - storage-dir:/app/data
+      - config-dir:/app/config
     networks:
       - default
       - monitoring
@@ -109,3 +112,4 @@ networks:
 
 volumes:
   storage-dir:
+  config-dir:

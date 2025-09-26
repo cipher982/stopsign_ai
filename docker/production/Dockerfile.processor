@@ -24,7 +24,8 @@ RUN mkdir -p /app/models && \
     curl -L https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt -o /app/models/yolo11x.pt
 
 # Copy application code last (changes most frequently)
-COPY config.yaml ./
 COPY stopsign ./stopsign/
+# Copy example config (actual config will be in mounted volume)
+COPY config/config.example.yaml /app/config.example.yaml
 
 CMD ["uv", "run", "python", "-m", "stopsign.video_analyzer"]

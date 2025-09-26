@@ -296,7 +296,7 @@ async def update_stop_zone(request):
     }
 
     # Update config file directly - video analyzer will pick up changes
-    config = Config("./config.yaml")
+    config = Config("/app/config/config.yaml")
     config.update_stop_zone(new_config)
 
     return {"status": "success"}
@@ -307,7 +307,7 @@ async def get_coordinate_info():
     """Get current coordinate system information for coordinate transformations."""
     try:
         # Read config directly since we're in separate containers
-        config = Config("./config.yaml")
+        config = Config("/app/config/config.yaml")
 
         # Get actual video dimensions from Redis metadata
         redis_client = redis.from_url(REDIS_URL)
@@ -393,7 +393,7 @@ async def update_stop_zone_from_display(request):
         # the client-supplied value and instead look it up from the metadata
         # that the analyzer publishes to Redis.
 
-        config = Config("./config.yaml")
+        config = Config("/app/config/config.yaml")
 
         # Must get raw dimensions from Redis metadata – this guarantees that we
         # are using the same numbers as the analyzer.
@@ -460,7 +460,7 @@ async def update_stop_zone_from_display(request):
             for i, point in enumerate(stop_line):
                 logger.info(f"Point {i}: {point}, type: {type(point)}")
 
-            config.update_stop_zone(
+            result = config.update_stop_zone(
                 {
                     "stop_line": stop_line,
                     "stop_box_tolerance": [10, 10],
@@ -471,10 +471,16 @@ async def update_stop_zone_from_display(request):
             logger.error(f"Error in update_stop_zone: {str(e)}")
             return {"error": f"Config update failed: {str(e)}"}
 
+        # Signal analyzer to reload config
+        redis_client.set("config_updated", "1")
+
         # Respond with details that might be useful to the frontend for
         # confirmation or debugging.
         return {
             "status": "success",
+            "version": result["version"],
+            "stop_line": result["stop_line"],
+            "raw_points": result["raw_points"],
             "display_coordinates": display_points,
             "raw_coordinates": raw_points,
             "video_element_size": video_element_size,
@@ -501,7 +507,7 @@ async def debug_coordinates(request):
         display_points = data.get("display_points", [])
         video_element_size = data.get("video_element_size", {})
 
-        config = Config("./config.yaml")
+        config = Config("/app/config/config.yaml")
 
         # Get actual dimensions from Redis - no fallbacks
         redis_client = redis.from_url(REDIS_URL)
@@ -602,7 +608,7 @@ async def update_zone_from_display(request):
         display_points = data["display_points"]
         video_element_size = data["video_element_size"]
 
-        config = Config("./config.yaml")
+        config = Config("/app/config/config.yaml")
 
         # Get raw dimensions from Redis metadata
         redis_client = redis.from_url(REDIS_URL)
@@ -649,7 +655,7 @@ async def update_zone_from_display(request):
                 raw_points.append((raw_x, raw_y))
 
             stop_line = tuple(raw_points)
-            config.update_stop_zone(
+            result = config.update_stop_zone(
                 {
                     "stop_line": stop_line,
                     "stop_box_tolerance": config.stop_box_tolerance,
@@ -689,9 +695,9 @@ async def update_zone_from_display(request):
 
             # Update the appropriate zone using the new method
             if zone_type == "pre-stop":
-                config.update_zone("pre_stop", x_range)
+                result = config.update_zone("pre_stop", x_range)
             elif zone_type == "capture":
-                config.update_zone("capture", x_range)
+                result = config.update_zone("capture", x_range)
 
         # Signal video analyzer to reload config
         try:
@@ -701,7 +707,9 @@ async def update_zone_from_display(request):
 
         return {
             "status": "success",
+            "version": result.get("version", "unknown"),
             "zone_type": zone_type,
+            "zone_data": result,
             "display_coordinates": display_points,
             "video_element_size": video_element_size,
             "message": f"{zone_type} zone updated successfully",

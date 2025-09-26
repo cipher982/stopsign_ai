@@ -241,6 +241,7 @@ def debug_controls_component():
         # Status
         Div(
             H3("4. Status"),
+            Div(id="config-version", cls="terminal terminal--version"),
             Div(id="status", cls="terminal terminal--status"),
             Div(
                 P(
