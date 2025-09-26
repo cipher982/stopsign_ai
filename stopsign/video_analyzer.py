@@ -877,9 +877,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 )
 
         # Image capture zone (green vertical band)
-        cap_start, cap_end = self.config.image_capture_zone
-        cv2.rectangle(frame, (int(cap_start), 0), (int(cap_end), height), (0, 255, 0), 2)
-        cv2.putText(frame, "CAPTURE", (int(cap_start) + 5, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        if self.config.image_capture_zone is not None:
+            cap_start, cap_end = self.config.image_capture_zone
+            cv2.rectangle(frame, (int(cap_start), 0), (int(cap_end), height), (0, 255, 0), 2)
+            cv2.putText(frame, "CAPTURE", (int(cap_start) + 5, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         # Stop zone buffer (semi-transparent overlay)
         if self.stop_detector.stop_zone is not None:
