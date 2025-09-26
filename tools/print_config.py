@@ -32,19 +32,23 @@ def main():
         else:
             print("\nStop Zone: Not configured")
 
-        # Pre-stop zone
-        if config.pre_stop_zone:
-            print("\nPre-Stop Zone:")
-            print(f"  X-Range: {config.pre_stop_zone[0]:.2f} to {config.pre_stop_zone[1]:.2f}")
+        # Pre-stop line
+        if getattr(config, "pre_stop_line", None):
+            print("\nPre-Stop Line:")
+            (p1x, p1y), (p2x, p2y) = config.pre_stop_line
+            print(f"  Point 1: ({p1x:.2f}, {p1y:.2f})")
+            print(f"  Point 2: ({p2x:.2f}, {p2y:.2f})")
         else:
-            print("\nPre-Stop Zone: Not configured")
+            print("\nPre-Stop Line: Not configured")
 
-        # Image capture zone
-        if config.image_capture_zone:
-            print("\nImage Capture Zone:")
-            print(f"  X-Range: {config.image_capture_zone[0]:.2f} to {config.image_capture_zone[1]:.2f}")
+        # Image capture line
+        if getattr(config, "capture_line", None):
+            print("\nCapture Line:")
+            (c1x, c1y), (c2x, c2y) = config.capture_line
+            print(f"  Point 1: ({c1x:.2f}, {c1y:.2f})")
+            print(f"  Point 2: ({c2x:.2f}, {c2y:.2f})")
         else:
-            print("\nImage Capture Zone: Not configured")
+            print("\nCapture Line: Not configured")
 
         # Detection parameters
         print("\nDetection Parameters:")

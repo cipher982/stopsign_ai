@@ -6,6 +6,7 @@ from dataclasses import field
 from datetime import datetime
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import cv2
@@ -246,9 +247,9 @@ class StopDetector:
     def __init__(self, config: Config, db: Database):
         self.config = config
         self.db = db
-        self.stop_zone = None  # Will be set when dimensions are known
-        self.pre_stop_zone = self.config.pre_stop_zone
-        self.image_capture_zone = self.config.image_capture_zone
+        self.stop_zone: Optional[np.ndarray] = None  # Will be set when dimensions are known
+        self.pre_stop_line_proc: Optional[np.ndarray] = None
+        self.capture_line_proc: Optional[np.ndarray] = None
         self.in_zone_frame_threshold = config.in_zone_frame_threshold
         self.out_zone_frame_threshold = config.out_zone_frame_threshold
         self.stop_speed_threshold = config.stop_speed_threshold
@@ -263,11 +264,12 @@ class StopDetector:
         """Set reference to video analyzer for coordinate conversion."""
         self._video_analyzer = video_analyzer
         try:
-            self.stop_zone = self._create_stop_zone()
+            self._initialize_geometry()
+            print(f"Stop geometry initialized with {len(self.config.stop_zone)} points")
         except ValueError as e:
             # Video dimensions not available yet - will be created when first frame is processed
-            print(f"Stop zone creation deferred: {e}")
-            self.stop_zone = None
+            print(f"Stop geometry initialization deferred: {e}")
+            self._reset_geometry()
 
     def _create_stop_zone(self) -> np.ndarray:
         # Get processing coordinates from video analyzer
@@ -297,6 +299,36 @@ class StopDetector:
             stop_zone_polygon.append([proc_x, proc_y])
 
         return np.array(stop_zone_polygon, dtype=np.float32)
+
+    def _initialize_geometry(self) -> None:
+        if self._video_analyzer is None:
+            raise ValueError("Video analyzer not set. Call set_video_analyzer first.")
+
+        self.stop_zone = self._create_stop_zone()
+        self.pre_stop_line_proc = self._convert_line_to_processing(self.config.pre_stop_line)
+        self.capture_line_proc = self._convert_line_to_processing(self.config.capture_line)
+
+    def _reset_geometry(self) -> None:
+        self.stop_zone = None
+        self.pre_stop_line_proc = None
+        self.capture_line_proc = None
+
+    def _convert_line_to_processing(self, raw_line: List[Point]) -> np.ndarray:
+        if self._video_analyzer is None:
+            raise ValueError("Video analyzer not set. Cannot convert line to processing coordinates.")
+
+        if self._video_analyzer.raw_width is None or self._video_analyzer.raw_height is None:
+            raise ValueError("Video dimensions not yet detected. Line conversion deferred.")
+
+        processed: list[list[float]] = []
+        for raw_x, raw_y in raw_line:
+            proc_x, proc_y = self._video_analyzer.raw_to_processing_coordinates(raw_x, raw_y)
+            processed.append([proc_x, proc_y])
+
+        if processed[0] == processed[1]:
+            raise ValueError("Detection line points collapse to zero length after coordinate conversion")
+
+        return np.array(processed, dtype=np.float32)
 
     def _get_car_polygon(self, bbox: Tuple[float, float, float, float]) -> np.ndarray:
         x, y, w, h = bbox
@@ -332,6 +364,32 @@ class StopDetector:
             logger.debug(f"poly2: {poly2}")
             return False
 
+    @staticmethod
+    def _polygon_crosses_line(polygon: np.ndarray, line: Optional[np.ndarray]) -> bool:
+        if line is None:
+            return False
+
+        reshaped = polygon.reshape(-1, 2)
+        if reshaped.size == 0:
+            return False
+
+        (x1, y1), (x2, y2) = line
+        dx = x2 - x1
+        dy = y2 - y1
+
+        sides: list[float] = []
+        for vx, vy in reshaped:
+            value = dx * (vy - y1) - dy * (vx - x1)
+            if abs(value) < 1e-6:
+                # Treat touching the line as a crossing
+                return True
+            sides.append(value)
+
+        has_positive = any(value > 0 for value in sides)
+        has_negative = any(value < 0 for value in sides)
+
+        return has_positive and has_negative
+
     def _update_stop_duration(self, car: Car, timestamp: float) -> None:
         if car.state.raw_speed <= self.stop_speed_threshold:
             if car.state.stop_position == (0.0, 0.0):
@@ -341,41 +399,38 @@ class StopDetector:
             car.state.stop_position = (0.0, 0.0)
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
-        # Lazy initialization of stop zone once video dimensions are available
-        if self.stop_zone is None and self._video_analyzer is not None:
+        # Lazy initialization of geometry once video dimensions are available
+        if self._video_analyzer is not None and (
+            self.stop_zone is None or self.pre_stop_line_proc is None or self.capture_line_proc is None
+        ):
             if self._video_analyzer.raw_width is not None and self._video_analyzer.raw_height is not None:
                 try:
-                    self.stop_zone = self._create_stop_zone()
-                    print(f"Stop zone initialized with {len(self.config.stop_zone)} points")
+                    self._initialize_geometry()
+                    print(f"Stop geometry initialized with {len(self.config.stop_zone)} points and detection lines")
                 except ValueError as e:
-                    print(f"Failed to create stop zone: {e}")
+                    print(f"Failed to initialize stop geometry: {e}")
+                    self._reset_geometry()
                     return
             else:
                 return  # Still waiting for video dimensions
 
-        # Skip if stop zone still not available
-        if self.stop_zone is None:
+        # Skip if geometry still not available
+        if self.stop_zone is None or self.pre_stop_line_proc is None or self.capture_line_proc is None:
             return
 
         car_polygon = self._get_car_polygon(car.state.bbox)
-        car_x = car.state.location[0]
 
-        # Check if car is in pre-stop zone
-        if self.pre_stop_zone is not None:
-            in_pre_stop_zone = self.pre_stop_zone[0] <= car_x <= self.pre_stop_zone[1]
-        else:
-            in_pre_stop_zone = False
+        crossed_pre_stop_line = self._polygon_crosses_line(car_polygon, self.pre_stop_line_proc)
 
         # Check if car is in stop zone
         in_stop_zone = self._check_polygon_intersection(car_polygon, self.stop_zone)
 
         # Update pre-stop zone flag only if not already in stop zone
-        if in_pre_stop_zone and not in_stop_zone and not car.state.passed_pre_stop_zone:
+        if crossed_pre_stop_line and not in_stop_zone and not car.state.passed_pre_stop_zone:
             car.state.passed_pre_stop_zone = True
 
-        # Check if car is in image capture zone
-        in_image_capture_zone = self.image_capture_zone[0] <= car_x <= self.image_capture_zone[1]
-        if not car.state.image_captured and in_image_capture_zone:
+        # Check if car crosses the capture line
+        if not car.state.image_captured and self._polygon_crosses_line(car_polygon, self.capture_line_proc):
             self.capture_car_image(car, timestamp, frame)
 
         # Only proceed with stop zone logic if pre-stop zone was passed
@@ -472,8 +527,12 @@ class StopDetector:
 
         logger.debug(f"Reset state for Car {car.id}")
 
-    def is_in_capture_zone(self, x: float) -> bool:
-        return self.image_capture_zone[0] <= x <= self.image_capture_zone[1]
+    def is_in_capture_zone(self, bbox: Tuple[float, float, float, float]) -> bool:
+        if self.capture_line_proc is None:
+            return False
+
+        car_polygon = self._get_car_polygon(bbox)
+        return self._polygon_crosses_line(car_polygon, self.capture_line_proc)
 
     def capture_car_image(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
         image_path = save_vehicle_image(
