@@ -32,43 +32,6 @@ from redis.exceptions import RedisError
 from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
 from stopsign.service_status import RTSPServiceStatusMixin
 
-# Suppress ffmpeg SEI warnings at the source using FFmpeg's av_log system
-import ctypes
-import sys
-
-
-def suppress_ffmpeg_sei_warnings():
-    """Suppress FFmpeg WARNING messages (including SEI spam) while preserving ERROR messages."""
-    try:
-        # Load FFmpeg's libavutil shared library
-        if sys.platform == "darwin":
-            libavutil = ctypes.CDLL("libavutil.dylib")
-        elif sys.platform == "linux":
-            libavutil = ctypes.CDLL("libavutil.so")
-        else:
-            # Windows or other platforms
-            libavutil = ctypes.CDLL("avutil.dll")
-
-        print(f"DEBUG: Successfully loaded FFmpeg library: {libavutil}")
-
-        # FFmpeg logging levels (from libavutil/log.h)
-        AV_LOG_ERROR = 16  # Error messages - keep these
-
-        # Set FFmpeg to only show ERROR and above (suppresses WARNING SEI messages)
-        libavutil.av_log_set_level.argtypes = [ctypes.c_int]
-        libavutil.av_log_set_level.restype = None
-        libavutil.av_log_set_level(AV_LOG_ERROR)
-
-        print(f"DEBUG: Successfully set FFmpeg log level to ERROR ({AV_LOG_ERROR})")
-
-    except (OSError, AttributeError) as e:
-        # If we can't load the library or function, just log and continue
-        print(f"DEBUG: FAILED to set FFmpeg log level: {e}")
-        logging.getLogger(__name__).warning(f"Could not set FFmpeg log level: {e}")
-
-
-suppress_ffmpeg_sei_warnings()
-
 
 # ----------------- logging setup --------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
