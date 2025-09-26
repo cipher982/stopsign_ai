@@ -12,7 +12,7 @@ services:
       - RAW_FRAME_KEY=${RAW_FRAME_KEY}
       - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE}
     command: >
-      sh -c "python rtsp_to_redis.py 2>&1 | grep -v 'SEI type 764'"
+      sh -c "stdbuf -oL -eL python rtsp_to_redis.py 2>&1 | stdbuf -oL -eL grep -vE '\\[h264 @ 0x[0-9a-f]+\\] SEI type 764 size [0-9]+ truncated at [0-9]+'"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
