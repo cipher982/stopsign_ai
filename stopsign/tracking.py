@@ -262,48 +262,36 @@ class StopDetector:
     def set_video_analyzer(self, video_analyzer):
         """Set reference to video analyzer for coordinate conversion."""
         self._video_analyzer = video_analyzer
-        self.stop_zone = self._create_stop_zone()
+        try:
+            self.stop_zone = self._create_stop_zone()
+        except ValueError as e:
+            # Video dimensions not available yet - will be created when first frame is processed
+            print(f"Stop zone creation deferred: {e}")
+            self.stop_zone = None
 
     def _create_stop_zone(self) -> np.ndarray:
         # Get processing coordinates from video analyzer
         if self._video_analyzer is None:
             raise ValueError("Video analyzer not set. Call set_video_analyzer first.")
 
-        # Check if we have the new 4-point stop zone format
-        if hasattr(self.config, "stop_zone") and self.config.stop_zone:
-            # Convert 4 raw points to processing coordinates
-            stop_zone_polygon = []
-            for x, y in self.config.stop_zone:
-                proc_x, proc_y = self._video_analyzer.raw_to_processing_coordinates(x, y)
-                stop_zone_polygon.append([proc_x, proc_y])
-            return np.array(stop_zone_polygon, dtype=np.float32)
+        if not self.config.stop_zone:
+            raise ValueError("No stop zone configured in config")
 
-        # Legacy 2-point format with tolerances
-        (x1, y1), (x2, y2) = self._video_analyzer.get_stop_line_processing_coords()
-        stop_box_tolerance = self.config.stop_box_tolerance or (0, 0)
+        if len(self.config.stop_zone) != 4:
+            raise ValueError(f"Stop zone must have exactly four points, got {len(self.config.stop_zone)}")
 
-        # Calculate tolerances
-        left_tolerance = stop_box_tolerance[0]
-        right_tolerance = stop_box_tolerance[1]
+        # Check if video analyzer has dimensions set yet
+        if self._video_analyzer.raw_width is None or self._video_analyzer.raw_height is None:
+            raise ValueError(
+                "Video dimensions not yet detected. Stop zone will be created after video dimensions are available."
+            )
 
-        # Extend the stop line on the x-axis
-        left_x1 = x1 - left_tolerance
-        left_x2 = x2 - left_tolerance
-        right_x1 = x1 + right_tolerance
-        right_x2 = x2 + right_tolerance
+        stop_zone_polygon = []
+        for x, y in self.config.stop_zone:
+            proc_x, proc_y = self._video_analyzer.raw_to_processing_coordinates(x, y)
+            stop_zone_polygon.append([proc_x, proc_y])
 
-        # Create the polygon corners
-        stop_zone_polygon = np.array(
-            [
-                [left_x1, y1],  # Top-left
-                [right_x1, y1],  # Top-right
-                [right_x2, y2],  # Bottom-right
-                [left_x2, y2],  # Bottom-left
-            ],
-            dtype=np.float32,
-        )
-
-        return stop_zone_polygon
+        return np.array(stop_zone_polygon, dtype=np.float32)
 
     def _get_car_polygon(self, bbox: Tuple[float, float, float, float]) -> np.ndarray:
         x, y, w, h = bbox
@@ -348,7 +336,19 @@ class StopDetector:
             car.state.stop_position = (0.0, 0.0)
 
     def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
-        # Skip if stop zone not initialized yet
+        # Lazy initialization of stop zone once video dimensions are available
+        if self.stop_zone is None and self._video_analyzer is not None:
+            if self._video_analyzer.raw_width is not None and self._video_analyzer.raw_height is not None:
+                try:
+                    self.stop_zone = self._create_stop_zone()
+                    print(f"Stop zone initialized with {len(self.config.stop_zone)} points")
+                except ValueError as e:
+                    print(f"Failed to create stop zone: {e}")
+                    return
+            else:
+                return  # Still waiting for video dimensions
+
+        # Skip if stop zone still not available
         if self.stop_zone is None:
             return
 
