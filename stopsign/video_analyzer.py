@@ -90,7 +90,6 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.model = self.initialize_model()
         self.car_tracker = CarTracker(config, self.db)
         self.stop_detector = StopDetector(config, db)
-        self._stop_line_processing_coords = None  # Cache for converted coordinates
         self._last_config_mtime = self.config.get_file_mtime()  # Track config file modification time
         self.frame_rate = 15
         self.frame_count = 0
@@ -545,11 +544,11 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.avg_brightness.set(float(avg_brightness))
         self.contrast.set(float(contrast))
 
-        # Draw stop lines on raw frame BEFORE crop/scale
+        # Draw stop zone on raw frame BEFORE crop/scale
         # This allows direct mapping from browser coordinates to raw frame coordinates
-        frame_with_stop_lines = self.draw_stop_lines_on_raw_frame(frame)
+        frame_with_stop_zone = self.draw_stop_zone_on_raw_frame(frame)
 
-        frame = self.crop_scale_frame(frame_with_stop_lines)
+        frame = self.crop_scale_frame(frame_with_stop_zone)
 
         # Object Detection
         object_detection_start = time.time()
@@ -659,9 +658,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         return annotated_frame, metadata
 
-    def draw_stop_lines_on_raw_frame(self, frame: np.ndarray) -> np.ndarray:
+    def draw_stop_zone_on_raw_frame(self, frame: np.ndarray) -> np.ndarray:
         """
-        Draw stop lines on raw frame before crop/scale operations.
+        Draw stop zone on raw frame before crop/scale operations.
         This allows direct mapping from browser coordinates to raw frame coordinates.
         """
         # Create a copy to avoid modifying the original frame
@@ -673,21 +672,20 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             logger.info(f"Detected raw video dimensions: {self.raw_width}x{self.raw_height}")
             # Now that we have dimensions, initialize the stop detector's stop zone
             self.stop_detector.set_video_analyzer(self)
-            # Clear cache to force recalculation
-            self._stop_line_processing_coords = None
 
-        # Stop line coordinates are in raw frame coordinate system
-        stop_line = self.config.stop_line  # [(x1, y1), (x2, y2)]
+        # Stop zone coordinates are in raw frame coordinate system
+        stop_zone = self.config.stop_zone
 
-        if len(stop_line) >= 2:
-            # Draw stop line in red
-            pt1 = (int(stop_line[0][0]), int(stop_line[0][1]))
-            pt2 = (int(stop_line[1][0]), int(stop_line[1][1]))
-            cv2.line(frame_copy, pt1, pt2, (0, 0, 255), 3)  # Red line, thickness 3
+        if stop_zone:
+            if len(stop_zone) != 4:
+                raise ValueError(f"Expected stop zone to contain four points, found {len(stop_zone)}")
 
-            # Draw end points as circles for visibility
-            cv2.circle(frame_copy, pt1, 8, (0, 0, 255), -1)  # Red filled circle
-            cv2.circle(frame_copy, pt2, 8, (0, 0, 255), -1)  # Red filled circle
+            points = np.array([(int(p[0]), int(p[1])) for p in stop_zone], dtype=np.int32)
+            cv2.polylines(frame_copy, [points], True, (0, 0, 255), 3)
+
+            # Draw corner points for visibility
+            for point in points:
+                cv2.circle(frame_copy, tuple(point), 8, (0, 0, 255), -1)
 
         return frame_copy
 
@@ -713,39 +711,15 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         return processing_x, processing_y
 
-    def get_stop_line_processing_coords(self) -> tuple[tuple[float, float], tuple[float, float]]:
-        """Get stop line coordinates in processing coordinate system."""
-        if self.raw_width is None or self.raw_height is None:
-            raise ValueError("Video dimensions not yet detected. Cannot get stop line coordinates.")
-
-        # Convert if not cached or config changed
-        if self._stop_line_processing_coords is None:
-            coords = []
-            for point in self.config.stop_line:
-                if isinstance(point, (list, tuple)) and len(point) == 2:
-                    raw_x, raw_y = point
-                    proc_x, proc_y = self.raw_to_processing_coordinates(raw_x, raw_y)
-                    coords.append((proc_x, proc_y))
-                else:
-                    raise ValueError(f"Invalid stop line point: {point}")
-
-            if len(coords) != 2:
-                raise ValueError(f"Stop line must have exactly 2 points, got {len(coords)}")
-
-            self._stop_line_processing_coords = tuple(coords)
-
-        return self._stop_line_processing_coords
-
     def on_config_updated(self):
         """Called when config is updated to clear caches."""
-        self._stop_line_processing_coords = None
         # Reload config
         self.config.load_config()
-        # Log the new version and stop line coordinates
+        # Log the new version and stop zone coordinates
         logger.info(f"✅ Config reloaded to version {self.config.version}")
         self._last_config_mtime = self.config.get_file_mtime()
-        if self.config.stop_line:
-            logger.info(f"New stop line coordinates: {self.config.stop_line}")
+        if self.config.stop_zone:
+            logger.info(f"New stop zone corners: {self.config.stop_zone}")
         # Recreate stop zone if dimensions are available
         if self.raw_width is not None and self.raw_height is not None:
             self.stop_detector.set_video_analyzer(self)
@@ -1040,7 +1014,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 "crop_side": self.config.crop_side,
                 "scale_factor": self.config.scale,
             },
-            "current_stop_line": {"coordinates": list(self.config.stop_line), "coordinate_system": "scaled_resolution"},
+            "current_stop_zone": {
+                "coordinates": [list(point) for point in self.config.stop_zone] if self.config.stop_zone else [],
+                "coordinate_system": "scaled_resolution",
+            },
         }
 
     def update_stream_resolution(self, width: int, height: int):

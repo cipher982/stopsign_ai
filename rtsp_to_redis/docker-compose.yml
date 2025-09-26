@@ -11,6 +11,7 @@ services:
       - REDIS_URL=${REDIS_URL}
       - RAW_FRAME_KEY=${RAW_FRAME_KEY}
       - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE}
+      - FFREPORT=level=error
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

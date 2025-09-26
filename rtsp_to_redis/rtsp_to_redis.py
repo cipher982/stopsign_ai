@@ -28,11 +28,12 @@ import json
 # ------------------ third-party ---------------------
 import cv2
 import redis
-
-# Prometheus removed - using OpenTelemetry metrics instead
 from redis.exceptions import RedisError
 from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
 from stopsign.service_status import RTSPServiceStatusMixin
+
+# Suppress ffmpeg SEI warnings from OpenCV
+cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
 
 
 # ----------------- logging setup --------------------

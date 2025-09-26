@@ -184,13 +184,16 @@ function updateZoneFromClicks() {
                 statusText += ` (v${data.version})`;
             }
 
-            // Show coordinates if available
-            if (data.stop_line || data.raw_points) {
-                const coords = data.stop_line || data.raw_points;
-                if (coords && coords.length >= 2) {
-                    const p1 = coords[0];
-                    const p2 = coords[1];
-                    statusText += `\nStop line: (${Math.round(p1[0])}, ${Math.round(p1[1])}) to (${Math.round(p2[0])}, ${Math.round(p2[1])})`;
+            if (currentZoneType === 'stop-line' && Array.isArray(data.stop_zone)) {
+                const formatted = data.stop_zone
+                    .map((point, index) => `Corner ${index + 1}: (${Math.round(point[0])}, ${Math.round(point[1])})`)
+                    .join('\n');
+                statusText += `\n${formatted}`;
+            } else if (data.zone_data) {
+                const linePoints = data.zone_data.pre_stop_line || data.zone_data.capture_line;
+                if (Array.isArray(linePoints) && linePoints.length === 2) {
+                    const [p1, p2] = linePoints;
+                    statusText += `\nLine: (${Math.round(p1[0])}, ${Math.round(p1[1])}) → (${Math.round(p2[0])}, ${Math.round(p2[1])})`;
                 }
             }
 
@@ -210,7 +213,8 @@ function updateZoneFromClicks() {
     .catch((error) => {
         console.error('Error:', error);
         const status = document.getElementById('status');
-        status.innerText = '❌ NETWORK ERROR: Could not update stop line.';
+        const zoneName = zoneConfig[currentZoneType].name;
+        status.innerText = `❌ NETWORK ERROR: Could not update ${zoneName}.`;
     });
 }
 
@@ -219,7 +223,9 @@ function resetPoints() {
     clearClickMarkers();
     const status = document.getElementById('status');
     const submitBtn = document.getElementById('submitBtn');
-    status.innerText = 'Points cleared. Click two new points on the video.';
+    const zoneName = zoneConfig[currentZoneType].name;
+    const clicksRequired = zoneConfig[currentZoneType].clicksRequired;
+    status.innerText = `Points cleared. Click ${clicksRequired} new point(s) to update the ${zoneName}.`;
     submitBtn.style.display = 'none';
     submitBtn.disabled = true;
 }

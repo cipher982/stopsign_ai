@@ -1,3 +1,4 @@
+import math
 import os
 import tempfile
 import threading
@@ -88,28 +89,26 @@ class Config:
             # Stop sign detection zones
             detection = self._yaml_config.get("stopsign_detection", {})
 
-            # Stop zone (4-point rectangle) or legacy stop line (2 points)
+            # Stop zone - must be defined as 4 corner points
             stop_zone_raw = detection.get("stop_zone")
-            if stop_zone_raw:
-                # New 4-point format
-                self.stop_zone = [tuple(point) for point in stop_zone_raw]
-                self.stop_line = None
-                self.stop_box_tolerance = None
-            else:
-                # Legacy 2-point format
-                stop_line_raw = detection.get("stop_line")
-                self.stop_line = tuple(tuple(i) for i in stop_line_raw) if stop_line_raw else None
-                self.stop_zone = None
+            if stop_zone_raw is None:
+                raise ValueError(
+                    "stopsign_detection.stop_zone is required and must contain four corner points. "
+                    "Update your configuration via the debug UI to record the new polygon."
+                )
 
-                # Stop box tolerance (only for legacy format)
-                stop_box_tolerance_raw = detection.get("stop_box_tolerance")
-                if stop_box_tolerance_raw:
-                    if isinstance(stop_box_tolerance_raw, (list, tuple)):
-                        self.stop_box_tolerance = tuple(stop_box_tolerance_raw)
-                    else:
-                        self.stop_box_tolerance = (stop_box_tolerance_raw, stop_box_tolerance_raw)
-                else:
-                    self.stop_box_tolerance = None
+            self.stop_zone = self._normalize_stop_zone(stop_zone_raw)
+
+            if detection.get("stop_line") is not None:
+                raise ValueError(
+                    "Legacy stopsign_detection.stop_line detected. Remove the stop_line field and define "
+                    "stopsign_detection.stop_zone with four corner points."
+                )
+
+            if detection.get("stop_box_tolerance") is not None:
+                raise ValueError(
+                    "stopsign_detection.stop_box_tolerance is no longer supported. Remove it from the config."
+                )
 
             # Pre-stop zone/line
             pre_stop_line_raw = detection.get("pre_stop_line")
@@ -169,15 +168,20 @@ class Config:
             if section not in self._yaml_config:
                 raise ValueError(f"Missing required config section: {section}")
 
-        # Validate stop_line has exactly 2 points if present
         detection = self._yaml_config.get("stopsign_detection", {})
-        stop_line = detection.get("stop_line")
-        if stop_line:
-            if not isinstance(stop_line, list) or len(stop_line) != 2:
-                raise ValueError("stop_line must have exactly 2 points")
-            for point in stop_line:
-                if not isinstance(point, list) or len(point) != 2:
-                    raise ValueError("Each stop_line point must have [x, y] coordinates")
+
+        stop_zone = detection.get("stop_zone")
+        if stop_zone is None:
+            raise ValueError("stopsign_detection.stop_zone section is missing from config")
+
+        if not isinstance(stop_zone, list) or len(stop_zone) != 4:
+            raise ValueError(
+                "stopsign_detection.stop_zone must be a list of four [x, y] points " "defining the polygon corners"
+            )
+
+        for point in stop_zone:
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                raise ValueError("Each stop_zone point must have [x, y] coordinates")
 
     def _increment_version(self):
         """Increment the version number."""
@@ -210,28 +214,69 @@ class Config:
         print(f"✅ Config saved atomically. New version: {new_version}")
         return new_version
 
+    @staticmethod
+    def _normalize_stop_zone(points: Any) -> list[tuple[float, float]]:
+        if not isinstance(points, (list, tuple)):
+            raise ValueError("stop_zone must be a list of four [x, y] points")
+
+        if len(points) != 4:
+            raise ValueError(
+                f"stop_zone requires exactly four points, received {len(points)}. "
+                "Re-record the stop zone via the debug interface."
+            )
+
+        normalized = []
+        for idx, point in enumerate(points):
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                raise ValueError(f"stop_zone point {idx + 1} must be a [x, y] pair")
+            try:
+                x = float(point[0])
+                y = float(point[1])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"stop_zone point {idx + 1} must contain numeric coordinates") from exc
+            normalized.append((x, y))
+
+        # Sort points around centroid to guarantee a consistent winding order
+        centroid_x = sum(x for x, _ in normalized) / 4.0
+        centroid_y = sum(y for _, y in normalized) / 4.0
+
+        def angle(point: tuple[float, float]) -> float:
+            return math.atan2(point[1] - centroid_y, point[0] - centroid_x)
+
+        sorted_points = sorted(normalized, key=angle)
+
+        area = Config._polygon_area(sorted_points)
+        if abs(area) < 1e-6:
+            raise ValueError(
+                "stop_zone points collapse to zero area. Ensure the four clicks are distinct corners "
+                "of the stop zone rectangle."
+            )
+
+        # Use clockwise winding for consistency
+        if area < 0:
+            sorted_points.reverse()
+
+        return sorted_points
+
+    @staticmethod
+    def _polygon_area(points: list[tuple[float, float]]) -> float:
+        area = 0.0
+        for (x1, y1), (x2, y2) in zip(points, points[1:] + points[:1]):
+            area += x1 * y2 - x2 * y1
+        return 0.5 * area
+
     def update_stop_zone(self, new_config: dict) -> dict:
         """Update stop zone configuration.
 
         Args:
-            new_config: Dictionary with stop_zone (4 points) and min_stop_duration
+            new_config: Dictionary with stop_zone (4 points) and optional min_stop_duration
 
         Returns:
             Dictionary with version and stop_zone
         """
         with self._lock:
-            # Update in-memory state
-            if "stop_zone" in new_config:
-                # New 4-point stop zone
-                self.stop_zone = new_config["stop_zone"]
-                # Clear old stop_line format
-                self.stop_line = None
-                self.stop_box_tolerance = None
-            elif "stop_line" in new_config:
-                # Legacy 2-point format (backwards compatibility)
-                self.stop_line = new_config["stop_line"]
-                self.stop_box_tolerance = new_config.get("stop_box_tolerance", [10, 10])
-                self.stop_zone = None
+            normalized_stop_zone = self._normalize_stop_zone(new_config["stop_zone"])
+            self.stop_zone = normalized_stop_zone
 
             self.min_stop_time = new_config.get("min_stop_duration", self.min_stop_time)
 
@@ -239,37 +284,24 @@ class Config:
             with open(self.config_path, "r") as file:
                 config = yaml.safe_load(file)
 
-            # Update config based on format
-            if self.stop_zone:
-                # Store as 4-point zone
-                stop_zone_lists = [list(point) for point in self.stop_zone]
-                config["stopsign_detection"]["stop_zone"] = stop_zone_lists
-                # Remove legacy fields
-                config["stopsign_detection"].pop("stop_line", None)
-                config["stopsign_detection"].pop("stop_box_tolerance", None)
-            else:
-                # Legacy format
-                stop_line_lists = [list(point) for point in self.stop_line]
-                config["stopsign_detection"]["stop_line"] = stop_line_lists
-                config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
-                config["stopsign_detection"].pop("stop_zone", None)
-
-            config["stopsign_detection"]["min_stop_time"] = self.min_stop_time
+            stop_zone_lists = [list(point) for point in self.stop_zone]
+            detection = config["stopsign_detection"]
+            detection["stop_zone"] = stop_zone_lists
+            detection.pop("stop_line", None)
+            detection.pop("stop_box_tolerance", None)
+            detection["min_stop_time"] = self.min_stop_time
 
             # Save atomically
             new_version = self._save_atomic(config)
 
             # Return response data
-            if self.stop_zone:
-                return {"version": new_version, "stop_zone": self.stop_zone}
-            else:
-                return {"version": new_version, "stop_line": self.stop_line, "raw_points": stop_line_lists}
+            return {"version": new_version, "stop_zone": self.stop_zone}
 
     def update_zone(self, zone_type: str, zone_data: Any) -> dict:
-        """Update a specific zone type and save to config.
+        """Update a specific zone type (lines) and save to config.
 
         Args:
-            zone_type: Type of zone ('stop_line', 'pre_stop', 'capture')
+            zone_type: Type of zone ('pre_stop', 'capture')
             zone_data: Zone configuration data
 
         Returns:
@@ -281,30 +313,7 @@ class Config:
                 config = yaml.safe_load(file)
 
             # Update based on zone type
-            if zone_type == "stop_line":
-                self.stop_line = zone_data["stop_line"]
-                self.stop_box_tolerance = zone_data.get("stop_box_tolerance", self.stop_box_tolerance)
-                if "min_stop_duration" in zone_data:
-                    self.min_stop_time = zone_data["min_stop_duration"]
-
-                stop_line_lists = [list(point) for point in self.stop_line]
-                config["stopsign_detection"]["stop_line"] = stop_line_lists
-
-                if isinstance(self.stop_box_tolerance, (list, tuple)):
-                    config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
-                else:
-                    config["stopsign_detection"]["stop_box_tolerance"] = [
-                        self.stop_box_tolerance,
-                        self.stop_box_tolerance,
-                    ]
-
-                config["stopsign_detection"]["min_stop_time"] = self.min_stop_time
-                result_data = {
-                    "stop_line": self.stop_line,
-                    "raw_points": stop_line_lists,
-                }
-
-            elif zone_type == "pre_stop":
+            if zone_type == "pre_stop":
                 # Store as line (2 points)
                 if len(zone_data) == 2 and isinstance(zone_data[0], (tuple, list)):
                     # New format: line with 2 points

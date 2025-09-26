@@ -83,7 +83,7 @@ class ConfigSetting(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     category = Column(String, nullable=False)  # "zones", "video_processing", "tracking", etc.
-    key = Column(String, nullable=False)  # "stop_line", "scale", "fps", etc.
+    key = Column(String, nullable=False)  # "stop_zone", "scale", "fps", etc.
     value = Column(JSON, nullable=False)  # The actual config value
     coordinate_system = Column(String)  # "raw", "processing", null for non-zones
     created_at = Column(DateTime, default=func.now())

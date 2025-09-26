@@ -281,27 +281,6 @@ def home():
     )
 
 
-@app.post("/api/update-stop-zone")  # type: ignore
-async def update_stop_zone(request):
-    data = await request.json()
-    points = data["points"]
-    stop_line = ((points[0]["x"], points[0]["y"]), (points[1]["x"], points[1]["y"]))
-    stop_box_tolerance = [10, 10]
-    min_stop_duration = 2.0
-
-    new_config = {
-        "stop_line": stop_line,
-        "stop_box_tolerance": stop_box_tolerance,
-        "min_stop_duration": min_stop_duration,
-    }
-
-    # Update config file directly - video analyzer will pick up changes
-    config = Config("/app/config/config.yaml")
-    config.update_stop_zone(new_config)
-
-    return {"status": "success"}
-
-
 @app.get("/api/coordinate-info")  # type: ignore
 async def get_coordinate_info():
     """Get current coordinate system information for coordinate transformations."""
@@ -348,7 +327,10 @@ async def get_coordinate_info():
         processing_height = int(cropped_height * config.scale)
 
         return {
-            "current_stop_line": {"coordinates": list(config.stop_line), "coordinate_system": "raw_coordinates"},
+            "current_stop_zone": {
+                "coordinates": [list(point) for point in config.stop_zone] if config.stop_zone else [],
+                "coordinate_system": "raw_coordinates",
+            },
             "coordinate_system_info": {
                 "raw_resolution": f"{raw_width}x{raw_height}",
                 "cropped_resolution": f"{cropped_width}x{cropped_height}",
@@ -378,7 +360,7 @@ async def update_stop_zone_from_display(request):
         # coordinate system.  For now we simply echo it back so the variable is
         # genuinely "used" and does not trip Ruff's F841 rule.
 
-        display_points = data["display_points"]  # [{"x": px, "y": py}, {"x": px, "y": py}]
+        display_points = data["display_points"]  # Four points: [{"x": px, "y": py}, ...]
         video_element_size = data["video_element_size"]  # {"width": px, "height": px}
         # NOTE:
         # -----
@@ -425,7 +407,7 @@ async def update_stop_zone_from_display(request):
             return {"error": f"Failed to get video dimensions: {str(e)}"}
 
         # Scale browser coordinates directly to actual video coordinates
-        # The video analyzer will draw stop lines on frames BEFORE crop/scale
+        # The video analyzer draws the stop zone on frames BEFORE crop/scale
         scale_x = raw_width / video_element_size["width"]
         scale_y = raw_height / video_element_size["height"]
 
@@ -567,7 +549,10 @@ async def debug_coordinates(request):
 
         return {
             "coordinate_system": "raw_frame_coordinates",
-            "current_stop_line": {"coordinates": list(config.stop_line), "coordinate_system": "raw_coordinates"},
+            "current_stop_zone": {
+                "coordinates": [list(point) for point in config.stop_zone] if config.stop_zone else [],
+                "coordinate_system": "raw_coordinates",
+            },
             "scaling_info": {
                 "raw_resolution": f"{raw_width}x{raw_height}",
                 "scale_factors": f"x={scale_x:.3f}, y={scale_y:.3f}",
@@ -602,7 +587,7 @@ async def update_zone_from_display(request):
     """Update any zone type using display coordinates."""
     try:
         data = await request.json()
-        zone_type = data.get("zone_type", "stop-line")
+        zone_type = data.get("zone_type")
         display_points = data["display_points"]
         video_element_size = data["video_element_size"]
 
@@ -640,28 +625,8 @@ async def update_zone_from_display(request):
         scale_x = raw_width / video_element_size["width"]
         scale_y = raw_height / video_element_size["height"]
 
-        # Handle different zone types
-        if zone_type == "stop-line":
-            # Stop line needs two points in raw coordinates
-            if len(display_points) != 2:
-                return {"error": "Stop line requires exactly 2 points"}
-
-            raw_points = []
-            for p in display_points:
-                raw_x = p["x"] * scale_x
-                raw_y = p["y"] * scale_y
-                raw_points.append((raw_x, raw_y))
-
-            stop_line = tuple(raw_points)
-            result = config.update_stop_zone(
-                {
-                    "stop_line": stop_line,
-                    "stop_box_tolerance": config.stop_box_tolerance,
-                    "min_stop_duration": 2.0,
-                }
-            )
-
-        elif zone_type in ["pre-stop", "capture"]:
+        # Handle supported zone types
+        if zone_type in ["pre-stop", "capture"]:
             # Line zones need exactly 2 points
             if len(display_points) != 2:
                 return {"error": f"{zone_type} zone requires exactly 2 points"}
@@ -687,6 +652,9 @@ async def update_zone_from_display(request):
             elif zone_type == "capture":
                 result = config.update_zone("capture", raw_line)
 
+        else:
+            return {"error": f"Unsupported zone type '{zone_type}'"}
+
         # Signal video analyzer to reload config
         try:
             redis_client.set("config_updated", "1")
@@ -710,7 +678,7 @@ async def update_zone_from_display(request):
 
 @app.get("/debug")  # type: ignore
 def debug_page():
-    """Simple debug page for stop line adjustment - access via /debug URL"""
+    """Simple debug page for live zone adjustment - access via /debug URL"""
     from fasthtml.common import H1
 
     return Html(
