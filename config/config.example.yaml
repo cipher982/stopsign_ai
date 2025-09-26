@@ -1,3 +1,4 @@
+version: '20250925.180020'
 debugging_visualization:
   draw_grid: true
   grid_size: 100
@@ -20,10 +21,10 @@ stopsign_detection:
   - 10
   - 10
   stop_line:
-  - - 303.7067209775968
-    - 230.0
-  - - 376.70061099796334
-    - 291.3333333333333
+  - - 300.0
+    - 225.0
+  - - 380.0
+    - 295.0
   stop_speed_threshold: 20
   unparked_frame_threshold: 20
   unparked_speed_threshold: 30

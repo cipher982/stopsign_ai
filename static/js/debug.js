@@ -171,10 +171,26 @@ function updateZoneFromClicks() {
     .then(data => {
         const status = document.getElementById('status');
         if (data.status === 'success') {
-            status.innerText = `✅ SUCCESS! ${config.name} updated successfully.`;
+            // Display version and coordinates
+            let statusText = `✅ SUCCESS! ${config.name} updated successfully.`;
+            if (data.version) {
+                statusText += ` (v${data.version})`;
+            }
 
-            // Show coordinate details
-            console.log('Coordinate transformation details:', data);
+            // Show coordinates if available
+            if (data.stop_line || data.raw_points) {
+                const coords = data.stop_line || data.raw_points;
+                if (coords && coords.length >= 2) {
+                    const p1 = coords[0];
+                    const p2 = coords[1];
+                    statusText += `\nStop line: (${Math.round(p1[0])}, ${Math.round(p1[1])}) to (${Math.round(p2[0])}, ${Math.round(p2[1])})`;
+                }
+            }
+
+            status.innerText = statusText;
+
+            // Show coordinate details in console
+            console.log('Config update response:', data);
 
             setTimeout(() => {
                 status.innerText = 'Ready for next adjustment.';

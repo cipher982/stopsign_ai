@@ -104,7 +104,38 @@ MINIO_ENDPOINT=minio:9000
 
 Production: supply the same variables via your orchestrator (Docker Swarm, Kubernetes, Fly.io, etc.).  GPU models (`yolov8x.pt`) & NVIDIA runtimes are fully supported.
 
-Some advanced vision parameters (stop-line coordinates, buffer sizes, etc.) live in `config.yaml`.
+### Configuration Management
+
+**Config File:** `config/config.yaml` (NOT in git - created from `config.example.yaml`)
+
+**Key Features:**
+- **Persistent across deployments:** Config stored in Docker volume, not in image
+- **Single source of truth:** One config file shared by all services
+- **Atomic updates:** Changes are written atomically with automatic versioning
+- **Instant reload:** Analyzer detects changes every frame (< 100ms typical)
+- **Fail-fast:** Services exit immediately if config is missing or invalid
+
+**Initial Setup:**
+```bash
+# Local development
+cp config/config.example.yaml config/config.yaml
+
+# Production (after first deploy)
+docker exec <container> cp /app/config.example.yaml /app/config/config.yaml
+```
+
+**CLI Tools:**
+```bash
+# View current configuration
+./tools/print_config.py
+
+# Update stop line coordinates
+./tools/set_stop_line.py --x1 300 --y1 230 --x2 376 --y2 291
+```
+
+**Web UI:** Navigate to `/debug` to visually adjust stop zones with instant feedback.
+
+**Production Persistence:** Use Coolify persistent volumes or Docker named volumes to maintain config across deployments. See `docs/config-deployment.md` for details.
 
 ---
 

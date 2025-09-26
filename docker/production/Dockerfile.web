@@ -22,7 +22,8 @@ RUN uv sync
 # Copy project
 COPY stopsign /app/stopsign
 COPY static /app/static
-COPY config.yaml /app/config.yaml
+# Copy example config (actual config will be in mounted volume)
+COPY config/config.example.yaml /app/config.example.yaml
 
 # Run the application
 CMD ["uv", "run", "python", "-m", "stopsign.web_server"]

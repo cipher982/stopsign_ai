@@ -1,5 +1,8 @@
 import os
+import tempfile
 import threading
+from datetime import datetime
+from typing import Any
 
 import yaml
 
@@ -8,226 +11,277 @@ shutdown_flag = threading.Event()
 
 
 class Config:
-    def __init__(self, config_path, db_url=None):
+    """Configuration manager with atomic file operations and version tracking."""
+
+    def __init__(self, config_path: str = "/app/config/config.yaml"):
+        """Initialize config from file.
+
+        Args:
+            config_path: Path to the configuration YAML file.
+                        Defaults to /app/config/config.yaml for container environment.
+        """
         self.config_path = config_path
-        self.db_url = db_url or os.getenv("DB_URL")
-        self.database = None
+        self._lock = threading.Lock()
 
-        # Try to initialize database connection
-        if self.db_url:
-            try:
-                from .database import Database
-
-                self.database = Database(self.db_url)
-                print("✅ Config: Connected to database for configuration")
-            except Exception as e:
-                print(f"⚠️ Config: Database connection failed, using YAML fallback: {e}")
-                self.database = None
+        # Ensure config exists before loading
+        self._ensure_config_exists()
 
         self.load_config()
 
-    def _get_config_value(self, category: str, key: str, yaml_path: list):
-        """Get config value from database first, then YAML fallback."""
-        if self.database:
-            try:
-                db_value = self.database.get_config_setting(category, key)
-                if db_value is not None:
-                    return db_value
-            except Exception as e:
-                print(f"⚠️ Config: Database read failed for {category}.{key}: {e}")
+    def _ensure_config_exists(self) -> None:
+        """Ensure the config file exists by seeding from an example if available."""
+        if os.path.exists(self.config_path):
+            return
 
-        # Fallback to YAML
-        try:
-            config_section = self._yaml_config
-            for path_part in yaml_path[:-1]:
-                config_section = config_section[path_part]
-            return config_section[yaml_path[-1]]
-        except (KeyError, TypeError) as e:
-            print(f"❌ Config: Missing YAML value for {yaml_path}: {e}")
-            return None
+        config_dir = os.path.dirname(self.config_path) or "."
+        os.makedirs(config_dir, exist_ok=True)
+
+        example_candidates = [
+            os.path.join(config_dir, "config.example.yaml"),
+            "/app/config.example.yaml",
+            os.path.join(os.path.dirname(__file__), "..", "config", "config.example.yaml"),
+        ]
+
+        for candidate in example_candidates:
+            if candidate and os.path.exists(candidate):
+                with open(candidate, "r", encoding="utf-8") as src:
+                    data = src.read()
+
+                with tempfile.NamedTemporaryFile(mode="w", dir=config_dir, delete=False) as tmp_file:
+                    tmp_file.write(data)
+                    tmp_path = tmp_file.name
+
+                os.replace(tmp_path, self.config_path)
+                print(f"Config seeded from template: {candidate} -> {self.config_path}")
+                return
+
+        raise FileNotFoundError(
+            f"Config file not found at {self.config_path} and no template available. "
+            "Ensure config volume is writable or provide a config example."
+        )
 
     def load_config(self):
-        # Always load YAML as fallback
-        with open(self.config_path, "r") as file:
-            self._yaml_config = yaml.safe_load(file)
+        """Load configuration from YAML file and validate."""
+        with self._lock:
+            with open(self.config_path, "r") as file:
+                self._yaml_config = yaml.safe_load(file)
 
-        # Stream settings
-        self.input_source = self._get_config_value("stream", "input_source", ["stream_settings", "input_source"])
-        self.fps = self._get_config_value("stream", "fps", ["stream_settings", "fps"])
-        self.vehicle_classes = self._get_config_value(
-            "stream", "vehicle_classes", ["stream_settings", "vehicle_classes"]
-        )
+            # Validate config structure
+            self._validate()
 
-        # Video processing
-        self.scale = self._get_config_value("video_processing", "scale", ["video_processing", "scale"])
-        self.crop_top = self._get_config_value("video_processing", "crop_top", ["video_processing", "crop_top"])
-        self.crop_side = self._get_config_value("video_processing", "crop_side", ["video_processing", "crop_side"])
-        self.frame_buffer_size = self._get_config_value(
-            "video_processing", "frame_buffer_size", ["video_processing", "frame_buffer_size"]
-        )
+            # Extract version or initialize
+            self.version = self._yaml_config.get("version", "1.0.0")
 
-        # Zones (with coordinate conversion)
-        stop_line_raw = self._get_config_value("zones", "stop_line", ["stopsign_detection", "stop_line"])
-        self.stop_line = tuple(tuple(i) for i in stop_line_raw) if stop_line_raw else None
+            # Stream settings
+            stream = self._yaml_config.get("stream_settings", {})
+            self.input_source = stream.get("input_source")
+            self.fps = stream.get("fps")
+            self.vehicle_classes = stream.get("vehicle_classes", [])
 
-        stop_box_tolerance_raw = self._get_config_value(
-            "zones", "stop_box_tolerance", ["stopsign_detection", "stop_box_tolerance"]
-        )
-        if stop_box_tolerance_raw:
-            if isinstance(stop_box_tolerance_raw, (list, tuple)):
-                self.stop_box_tolerance = tuple(stop_box_tolerance_raw)
+            # Video processing
+            video = self._yaml_config.get("video_processing", {})
+            self.scale = video.get("scale")
+            self.crop_top = video.get("crop_top")
+            self.crop_side = video.get("crop_side")
+            self.frame_buffer_size = video.get("frame_buffer_size")
+
+            # Stop sign detection zones
+            detection = self._yaml_config.get("stopsign_detection", {})
+
+            # Stop line (raw coordinates)
+            stop_line_raw = detection.get("stop_line")
+            self.stop_line = tuple(tuple(i) for i in stop_line_raw) if stop_line_raw else None
+
+            # Stop box tolerance
+            stop_box_tolerance_raw = detection.get("stop_box_tolerance")
+            if stop_box_tolerance_raw:
+                if isinstance(stop_box_tolerance_raw, (list, tuple)):
+                    self.stop_box_tolerance = tuple(stop_box_tolerance_raw)
+                else:
+                    self.stop_box_tolerance = (stop_box_tolerance_raw, stop_box_tolerance_raw)
             else:
-                # Handle case where it's returned as int instead of list
-                self.stop_box_tolerance = (stop_box_tolerance_raw, stop_box_tolerance_raw)
-        else:
-            self.stop_box_tolerance = None
+                self.stop_box_tolerance = None
 
-        pre_stop_zone_raw = self._get_config_value("zones", "pre_stop_zone", ["stopsign_detection", "pre_stop_zone"])
-        self.pre_stop_zone = tuple(pre_stop_zone_raw) if pre_stop_zone_raw else None
+            # Other zones
+            pre_stop_zone_raw = detection.get("pre_stop_zone")
+            self.pre_stop_zone = tuple(pre_stop_zone_raw) if pre_stop_zone_raw else None
 
-        image_capture_zone_raw = self._get_config_value(
-            "zones", "image_capture_zone", ["stopsign_detection", "image_capture_zone"]
-        )
-        self.image_capture_zone = tuple(image_capture_zone_raw) if image_capture_zone_raw else None
+            image_capture_zone_raw = detection.get("image_capture_zone")
+            self.image_capture_zone = tuple(image_capture_zone_raw) if image_capture_zone_raw else None
 
-        # Detection thresholds
-        self.in_zone_frame_threshold = self._get_config_value(
-            "detection", "in_zone_frame_threshold", ["stopsign_detection", "in_zone_frame_threshold"]
-        )
-        self.out_zone_frame_threshold = self._get_config_value(
-            "detection", "out_zone_frame_threshold", ["stopsign_detection", "out_zone_frame_threshold"]
-        )
-        self.stop_speed_threshold = self._get_config_value(
-            "detection", "stop_speed_threshold", ["stopsign_detection", "stop_speed_threshold"]
-        )
-        self.max_movement_speed = self._get_config_value(
-            "detection", "max_movement_speed", ["stopsign_detection", "max_movement_speed"]
-        )
-        self.parked_frame_threshold = self._get_config_value(
-            "detection", "parked_frame_threshold", ["stopsign_detection", "parked_frame_threshold"]
-        )
-        self.unparked_frame_threshold = self._get_config_value(
-            "detection", "unparked_frame_threshold", ["stopsign_detection", "unparked_frame_threshold"]
-        )
-        self.unparked_speed_threshold = self._get_config_value(
-            "detection", "unparked_speed_threshold", ["stopsign_detection", "unparked_speed_threshold"]
-        )
+            # Detection thresholds
+            self.in_zone_frame_threshold = detection.get("in_zone_frame_threshold")
+            self.out_zone_frame_threshold = detection.get("out_zone_frame_threshold")
+            self.stop_speed_threshold = detection.get("stop_speed_threshold")
+            self.max_movement_speed = detection.get("max_movement_speed")
+            self.parked_frame_threshold = detection.get("parked_frame_threshold")
+            self.unparked_frame_threshold = detection.get("unparked_frame_threshold")
+            self.unparked_speed_threshold = detection.get("unparked_speed_threshold")
+            self.min_stop_time = detection.get("min_stop_time", 2.0)
 
-        # Tracking
-        self.use_kalman_filter = self._get_config_value(
-            "tracking", "use_kalman_filter", ["tracking", "use_kalman_filter"]
-        )
+            # Tracking
+            tracking = self._yaml_config.get("tracking", {})
+            self.use_kalman_filter = tracking.get("use_kalman_filter", True)
 
-        # Output
-        self.save_video = self._get_config_value("output", "save_video", ["output", "save_video"])
-        self.frame_skip = self._get_config_value("output", "frame_skip", ["output", "frame_skip"])
-        self.jpeg_quality = self._get_config_value("output", "jpeg_quality", ["output", "jpeg_quality"])
+            # Output
+            output = self._yaml_config.get("output", {})
+            self.save_video = output.get("save_video", True)
+            self.frame_skip = output.get("frame_skip", 3)
+            self.jpeg_quality = output.get("jpeg_quality", 85)
 
-        # Visualization
-        self.draw_grid = self._get_config_value("visualization", "draw_grid", ["debugging_visualization", "draw_grid"])
-        self.grid_size = self._get_config_value("visualization", "grid_size", ["debugging_visualization", "grid_size"])
+            # Visualization
+            debug = self._yaml_config.get("debugging_visualization", {})
+            self.draw_grid = debug.get("draw_grid", False)
+            self.grid_size = debug.get("grid_size", 100)
 
-    def update_stop_zone(self, new_config):
-        print(f"DEBUG: update_stop_zone called with: {new_config}")
-        print(f"DEBUG: stop_line from new_config: {new_config['stop_line']}, type: {type(new_config['stop_line'])}")
+            print(f"✅ Config loaded successfully. Version: {self.version}")
 
-        self.stop_line = new_config["stop_line"]
-        self.stop_box_tolerance = new_config["stop_box_tolerance"]
-        self.min_stop_time = new_config["min_stop_duration"]
+    def _validate(self):
+        """Validate configuration structure and required fields."""
+        required_sections = ["stream_settings", "video_processing", "stopsign_detection"]
+        for section in required_sections:
+            if section not in self._yaml_config:
+                raise ValueError(f"Missing required config section: {section}")
 
-        print(f"DEBUG: self.stop_line after assignment: {self.stop_line}, type: {type(self.stop_line)}")
+        # Validate stop_line has exactly 2 points if present
+        detection = self._yaml_config.get("stopsign_detection", {})
+        stop_line = detection.get("stop_line")
+        if stop_line:
+            if not isinstance(stop_line, list) or len(stop_line) != 2:
+                raise ValueError("stop_line must have exactly 2 points")
+            for point in stop_line:
+                if not isinstance(point, list) or len(point) != 2:
+                    raise ValueError("Each stop_line point must have [x, y] coordinates")
 
-        self._save_config_changes(
-            {"zones": {"stop_line": new_config["stop_line"], "stop_box_tolerance": new_config["stop_box_tolerance"]}},
-            change_reason="Stop zone updated via debug interface",
-        )
+    def _increment_version(self):
+        """Increment the version number."""
+        # Use timestamp-based versioning for simplicity
+        self.version = datetime.now().strftime("%Y%m%d.%H%M%S")
+        return self.version
 
-    def _save_config_changes(self, updates, change_reason="Config update"):
-        """Save config changes to database first, then YAML fallback."""
-        saved_to_db = False
+    def _save_atomic(self, config_data: dict) -> str:
+        """Save configuration atomically using temp file + rename.
 
-        if self.database:
-            try:
-                for category, settings in updates.items():
-                    for key, value in settings.items():
-                        # Determine coordinate system for zones
-                        coord_system = None
-                        if category == "zones":
-                            if key == "stop_line":
-                                coord_system = "raw"
-                            elif key in ["pre_stop_zone", "image_capture_zone"]:
-                                coord_system = "processing"
+        Args:
+            config_data: Configuration dictionary to save
 
-                        self.database.update_config_setting(
-                            category=category,
-                            key=key,
-                            value=value,
-                            coordinate_system=coord_system,
-                            updated_by="debug_interface",
-                            change_reason=change_reason,
-                        )
-                print("✅ Configuration saved to database")
-                saved_to_db = True
-            except Exception as e:
-                print(f"⚠️ Database save failed, falling back to YAML: {e}")
+        Returns:
+            New version string
+        """
+        # Increment version
+        new_version = self._increment_version()
+        config_data["version"] = new_version
 
-        if not saved_to_db:
-            # Fallback to YAML
-            self.save_to_yaml()
+        # Write to temp file in same directory (for atomic rename)
+        config_dir = os.path.dirname(self.config_path)
+        with tempfile.NamedTemporaryFile(mode="w", dir=config_dir, delete=False) as tmp_file:
+            yaml.dump(config_data, tmp_file, default_flow_style=False, sort_keys=False)
+            tmp_path = tmp_file.name
 
-    def save_to_yaml(self):
-        """Legacy YAML save method (fallback only)."""
-        with open(self.config_path, "r") as file:
-            config = yaml.safe_load(file)
+        # Atomic rename
+        os.replace(tmp_path, self.config_path)
 
-        # Update stop sign detection values
-        try:
+        print(f"✅ Config saved atomically. New version: {new_version}")
+        return new_version
+
+    def update_stop_zone(self, new_config: dict) -> dict:
+        """Update stop zone configuration.
+
+        Args:
+            new_config: Dictionary with stop_line, stop_box_tolerance, min_stop_duration
+
+        Returns:
+            Dictionary with version, stop_line, and raw_points
+        """
+        with self._lock:
+            # Update in-memory state
+            self.stop_line = new_config["stop_line"]
+            self.stop_box_tolerance = new_config["stop_box_tolerance"]
+            self.min_stop_time = new_config.get("min_stop_duration", self.min_stop_time)
+
+            # Load current config for update
+            with open(self.config_path, "r") as file:
+                config = yaml.safe_load(file)
+
+            # Update stop detection values
             stop_line_lists = [list(point) for point in self.stop_line]
             config["stopsign_detection"]["stop_line"] = stop_line_lists
-        except Exception:
-            raise
 
-        # Handle stop_box_tolerance - it might be an int instead of a list/tuple
-        if isinstance(self.stop_box_tolerance, (list, tuple)):
-            config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
-        else:
-            # It's probably an int, convert to list format
-            config["stopsign_detection"]["stop_box_tolerance"] = [self.stop_box_tolerance, self.stop_box_tolerance]
+            # Handle stop_box_tolerance
+            if isinstance(self.stop_box_tolerance, (list, tuple)):
+                config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
+            else:
+                config["stopsign_detection"]["stop_box_tolerance"] = [self.stop_box_tolerance, self.stop_box_tolerance]
 
-        # Update zone ranges
-        config["stopsign_detection"]["pre_stop_zone"] = list(self.pre_stop_zone)
-        config["stopsign_detection"]["image_capture_zone"] = list(self.image_capture_zone)
-
-        # Handle min_stop_time if it exists
-        if hasattr(self, "min_stop_time"):
             config["stopsign_detection"]["min_stop_time"] = self.min_stop_time
 
-        with open(self.config_path, "w") as file:
-            yaml.dump(config, file, default_flow_style=False)
+            # Save atomically
+            new_version = self._save_atomic(config)
 
-        print(f"Configuration updated and saved to {self.config_path}")
+            # Return response data
+            return {"version": new_version, "stop_line": self.stop_line, "raw_points": stop_line_lists}
 
-    def update_zone(self, zone_type: str, zone_data):
-        """Update a specific zone type and save to config."""
-        updates = {}
+    def update_zone(self, zone_type: str, zone_data: Any) -> dict:
+        """Update a specific zone type and save to config.
 
-        if zone_type == "stop_line":
-            self.stop_line = zone_data["stop_line"]
-            self.stop_box_tolerance = zone_data.get("stop_box_tolerance", self.stop_box_tolerance)
-            if "min_stop_duration" in zone_data:
-                self.min_stop_time = zone_data["min_stop_duration"]
-            updates["zones"] = {
-                "stop_line": zone_data["stop_line"],
-                "stop_box_tolerance": zone_data.get("stop_box_tolerance", self.stop_box_tolerance),
-            }
-        elif zone_type == "pre_stop":
-            self.pre_stop_zone = zone_data
-            updates["zones"] = {"pre_stop_zone": zone_data}
-        elif zone_type == "capture":
-            self.image_capture_zone = zone_data
-            updates["zones"] = {"image_capture_zone": zone_data}
-        else:
-            raise ValueError(f"Unknown zone type: {zone_type}")
+        Args:
+            zone_type: Type of zone ('stop_line', 'pre_stop', 'capture')
+            zone_data: Zone configuration data
 
-        self._save_config_changes(updates, change_reason=f"Updated {zone_type} zone via debug interface")
-        print(f"Updated {zone_type} zone: {zone_data}")
+        Returns:
+            Dictionary with version and updated zone data
+        """
+        with self._lock:
+            # Load current config
+            with open(self.config_path, "r") as file:
+                config = yaml.safe_load(file)
+
+            # Update based on zone type
+            if zone_type == "stop_line":
+                self.stop_line = zone_data["stop_line"]
+                self.stop_box_tolerance = zone_data.get("stop_box_tolerance", self.stop_box_tolerance)
+                if "min_stop_duration" in zone_data:
+                    self.min_stop_time = zone_data["min_stop_duration"]
+
+                stop_line_lists = [list(point) for point in self.stop_line]
+                config["stopsign_detection"]["stop_line"] = stop_line_lists
+
+                if isinstance(self.stop_box_tolerance, (list, tuple)):
+                    config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
+                else:
+                    config["stopsign_detection"]["stop_box_tolerance"] = [
+                        self.stop_box_tolerance,
+                        self.stop_box_tolerance,
+                    ]
+
+                config["stopsign_detection"]["min_stop_time"] = self.min_stop_time
+                result_data = {
+                    "stop_line": self.stop_line,
+                    "raw_points": stop_line_lists,
+                }
+
+            elif zone_type == "pre_stop":
+                self.pre_stop_zone = zone_data
+                config["stopsign_detection"]["pre_stop_zone"] = list(zone_data)
+                result_data = {"pre_stop_zone": zone_data}
+
+            elif zone_type == "capture":
+                self.image_capture_zone = zone_data
+                config["stopsign_detection"]["image_capture_zone"] = list(zone_data)
+                result_data = {"image_capture_zone": zone_data}
+
+            else:
+                raise ValueError(f"Unknown zone type: {zone_type}")
+
+            # Save atomically
+            new_version = self._save_atomic(config)
+
+            print(f"✅ Updated {zone_type} zone: {zone_data}")
+
+            # Return response data
+            result_data["version"] = new_version
+            return result_data
+
+    def get_file_mtime(self) -> float:
+        """Get the modification time of the config file."""
+        return os.path.getmtime(self.config_path)
