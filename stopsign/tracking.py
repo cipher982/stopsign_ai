@@ -361,7 +361,10 @@ class StopDetector:
         car_x = car.state.location[0]
 
         # Check if car is in pre-stop zone
-        in_pre_stop_zone = self.pre_stop_zone[0] <= car_x <= self.pre_stop_zone[1]
+        if self.pre_stop_zone is not None:
+            in_pre_stop_zone = self.pre_stop_zone[0] <= car_x <= self.pre_stop_zone[1]
+        else:
+            in_pre_stop_zone = False
 
         # Check if car is in stop zone
         in_stop_zone = self._check_polygon_intersection(car_polygon, self.stop_zone)
