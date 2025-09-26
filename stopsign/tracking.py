@@ -287,7 +287,12 @@ class StopDetector:
             )
 
         stop_zone_polygon = []
-        for x, y in self.config.stop_zone:
+        for i, point in enumerate(self.config.stop_zone):
+            if point is None:
+                raise ValueError(f"Stop zone point {i+1} is None. Stop zone: {self.config.stop_zone}")
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                raise ValueError(f"Stop zone point {i+1} must be a [x, y] pair, got: {point}")
+            x, y = point
             proc_x, proc_y = self._video_analyzer.raw_to_processing_coordinates(x, y)
             stop_zone_polygon.append([proc_x, proc_y])
 

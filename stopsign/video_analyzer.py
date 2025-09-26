@@ -680,7 +680,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             if len(stop_zone) != 4:
                 raise ValueError(f"Expected stop zone to contain four points, found {len(stop_zone)}")
 
-            points = np.array([(int(p[0]), int(p[1])) for p in stop_zone], dtype=np.int32)
+            points = []
+            for i, p in enumerate(stop_zone):
+                if p is None:
+                    raise ValueError(f"Stop zone point {i+1} is None. Stop zone: {stop_zone}")
+                if not isinstance(p, (list, tuple)) or len(p) != 2:
+                    raise ValueError(f"Stop zone point {i+1} must be a [x, y] pair, got: {p}")
+                points.append((int(p[0]), int(p[1])))
+            points = np.array(points, dtype=np.int32)
             cv2.polylines(frame_copy, [points], True, (0, 0, 255), 3)
 
             # Draw corner points for visibility
