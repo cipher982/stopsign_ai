@@ -6,17 +6,16 @@ output:
   frame_skip: 3
   save_video: true
 stopsign_detection:
-  image_capture_zone:
-  - 800
-  - 900
   in_zone_frame_threshold: 2
   max_movement_speed: 20
   min_stop_time: 2.0
   out_zone_frame_threshold: 2
   parked_frame_threshold: 60
-  pre_stop_zone:
-  - 1000
-  - 1100
+  pre_stop_line:
+  - - 1000
+    - 200
+  - - 1100
+    - 250
   stop_zone:
   - - 300.0
     - 225.0
@@ -26,6 +25,11 @@ stopsign_detection:
     - 295.0
   - - 300.0
     - 295.0
+  capture_line:
+  - - 800
+    - 180
+  - - 900
+    - 220
   stop_speed_threshold: 20
   unparked_frame_threshold: 20
   unparked_speed_threshold: 30

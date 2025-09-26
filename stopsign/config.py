@@ -110,29 +110,27 @@ class Config:
                     "stopsign_detection.stop_box_tolerance is no longer supported. Remove it from the config."
                 )
 
-            # Pre-stop zone/line
-            pre_stop_line_raw = detection.get("pre_stop_line")
-            if pre_stop_line_raw:
-                # New format: line (2 points)
-                self.pre_stop_line = [tuple(p) for p in pre_stop_line_raw]
-                self.pre_stop_zone = None
-            else:
-                # Legacy format: X-range
-                pre_stop_zone_raw = detection.get("pre_stop_zone")
-                self.pre_stop_zone = tuple(pre_stop_zone_raw) if pre_stop_zone_raw else None
-                self.pre_stop_line = None
+            if "pre_stop_zone" in detection:
+                raise ValueError(
+                    "stopsign_detection.pre_stop_zone is no longer supported. "
+                    "Record a pre_stop_line with two points."
+                )
 
-            # Capture zone/line
+            if "image_capture_zone" in detection:
+                raise ValueError(
+                    "stopsign_detection.image_capture_zone is no longer supported. "
+                    "Record a capture_line with two points."
+                )
+
+            pre_stop_line_raw = detection.get("pre_stop_line")
+            if pre_stop_line_raw is None:
+                raise ValueError("stopsign_detection.pre_stop_line is required and must contain two [x, y] points.")
+            self.pre_stop_line = self._normalize_line(pre_stop_line_raw, "stopsign_detection.pre_stop_line")
+
             capture_line_raw = detection.get("capture_line")
-            if capture_line_raw:
-                # New format: line (2 points)
-                self.capture_line = [tuple(p) for p in capture_line_raw]
-                self.image_capture_zone = None
-            else:
-                # Legacy format: X-range
-                image_capture_zone_raw = detection.get("image_capture_zone")
-                self.image_capture_zone = tuple(image_capture_zone_raw) if image_capture_zone_raw else None
-                self.capture_line = None
+            if capture_line_raw is None:
+                raise ValueError("stopsign_detection.capture_line is required and must contain two [x, y] points.")
+            self.capture_line = self._normalize_line(capture_line_raw, "stopsign_detection.capture_line")
 
             # Detection thresholds
             self.in_zone_frame_threshold = detection.get("in_zone_frame_threshold")
@@ -265,6 +263,27 @@ class Config:
             area += x1 * y2 - x2 * y1
         return 0.5 * area
 
+    @staticmethod
+    def _normalize_line(points: Any, field_name: str) -> list[tuple[float, float]]:
+        if not isinstance(points, (list, tuple)) or len(points) != 2:
+            raise ValueError(f"{field_name} must contain exactly two [x, y] points")
+
+        normalized: list[tuple[float, float]] = []
+        for idx, point in enumerate(points):
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                raise ValueError(f"{field_name} point {idx + 1} must be a [x, y] coordinate pair")
+            try:
+                x = float(point[0])
+                y = float(point[1])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{field_name} point {idx + 1} must contain numeric coordinates") from exc
+            normalized.append((x, y))
+
+        if normalized[0] == normalized[1]:
+            raise ValueError(f"{field_name} must use two distinct points")
+
+        return normalized
+
     def update_stop_zone(self, new_config: dict) -> dict:
         """Update stop zone configuration.
 
@@ -312,32 +331,19 @@ class Config:
             with open(self.config_path, "r") as file:
                 config = yaml.safe_load(file)
 
-            # Update based on zone type
+            detection = config["stopsign_detection"]
+
             if zone_type == "pre_stop":
-                # Store as line (2 points)
-                if len(zone_data) == 2 and isinstance(zone_data[0], (tuple, list)):
-                    # New format: line with 2 points
-                    self.pre_stop_line = zone_data
-                    config["stopsign_detection"]["pre_stop_line"] = [list(p) for p in zone_data]
-                    result_data = {"pre_stop_line": zone_data}
-                else:
-                    # Legacy format: X-range
-                    self.pre_stop_zone = zone_data
-                    config["stopsign_detection"]["pre_stop_zone"] = list(zone_data)
-                    result_data = {"pre_stop_zone": zone_data}
+                normalized_line = self._normalize_line(zone_data, "pre_stop_line update")
+                self.pre_stop_line = normalized_line
+                detection["pre_stop_line"] = [list(point) for point in normalized_line]
+                result_data = {"pre_stop_line": [list(point) for point in normalized_line]}
 
             elif zone_type == "capture":
-                # Store as line (2 points)
-                if len(zone_data) == 2 and isinstance(zone_data[0], (tuple, list)):
-                    # New format: line with 2 points
-                    self.capture_line = zone_data
-                    config["stopsign_detection"]["capture_line"] = [list(p) for p in zone_data]
-                    result_data = {"capture_line": zone_data}
-                else:
-                    # Legacy format: X-range
-                    self.image_capture_zone = zone_data
-                    config["stopsign_detection"]["image_capture_zone"] = list(zone_data)
-                    result_data = {"image_capture_zone": zone_data}
+                normalized_line = self._normalize_line(zone_data, "capture_line update")
+                self.capture_line = normalized_line
+                detection["capture_line"] = [list(point) for point in normalized_line]
+                result_data = {"capture_line": [list(point) for point in normalized_line]}
 
             else:
                 raise ValueError(f"Unknown zone type: {zone_type}")
