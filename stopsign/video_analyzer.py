@@ -876,11 +876,29 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                     2,
                 )
 
-        # Image capture zone (green vertical band)
+        # Image capture zone (green vertical band) or capture line
         if self.config.image_capture_zone is not None:
+            # Legacy format: X-range
             cap_start, cap_end = self.config.image_capture_zone
             cv2.rectangle(frame, (int(cap_start), 0), (int(cap_end), height), (0, 255, 0), 2)
             cv2.putText(frame, "CAPTURE", (int(cap_start) + 5, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        elif hasattr(self.config, "capture_line") and self.config.capture_line is not None:
+            # New format: line (2 points) - convert to processing coordinates and draw line
+            line_points = []
+            for raw_x, raw_y in self.config.capture_line:
+                proc_x, proc_y = self.raw_to_processing_coordinates(raw_x, raw_y)
+                line_points.append((int(proc_x), int(proc_y)))
+            if len(line_points) == 2:
+                cv2.line(frame, line_points[0], line_points[1], (0, 255, 0), 3)
+                cv2.putText(
+                    frame,
+                    "CAPTURE",
+                    (line_points[0][0] + 5, line_points[0][1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2,
+                )
 
         # Stop zone buffer (semi-transparent overlay)
         if self.stop_detector.stop_zone is not None:
