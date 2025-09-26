@@ -88,26 +88,52 @@ class Config:
             # Stop sign detection zones
             detection = self._yaml_config.get("stopsign_detection", {})
 
-            # Stop line (raw coordinates)
-            stop_line_raw = detection.get("stop_line")
-            self.stop_line = tuple(tuple(i) for i in stop_line_raw) if stop_line_raw else None
-
-            # Stop box tolerance
-            stop_box_tolerance_raw = detection.get("stop_box_tolerance")
-            if stop_box_tolerance_raw:
-                if isinstance(stop_box_tolerance_raw, (list, tuple)):
-                    self.stop_box_tolerance = tuple(stop_box_tolerance_raw)
-                else:
-                    self.stop_box_tolerance = (stop_box_tolerance_raw, stop_box_tolerance_raw)
-            else:
+            # Stop zone (4-point rectangle) or legacy stop line (2 points)
+            stop_zone_raw = detection.get("stop_zone")
+            if stop_zone_raw:
+                # New 4-point format
+                self.stop_zone = [tuple(point) for point in stop_zone_raw]
+                self.stop_line = None
                 self.stop_box_tolerance = None
+            else:
+                # Legacy 2-point format
+                stop_line_raw = detection.get("stop_line")
+                self.stop_line = tuple(tuple(i) for i in stop_line_raw) if stop_line_raw else None
+                self.stop_zone = None
 
-            # Other zones
-            pre_stop_zone_raw = detection.get("pre_stop_zone")
-            self.pre_stop_zone = tuple(pre_stop_zone_raw) if pre_stop_zone_raw else None
+                # Stop box tolerance (only for legacy format)
+                stop_box_tolerance_raw = detection.get("stop_box_tolerance")
+                if stop_box_tolerance_raw:
+                    if isinstance(stop_box_tolerance_raw, (list, tuple)):
+                        self.stop_box_tolerance = tuple(stop_box_tolerance_raw)
+                    else:
+                        self.stop_box_tolerance = (stop_box_tolerance_raw, stop_box_tolerance_raw)
+                else:
+                    self.stop_box_tolerance = None
 
-            image_capture_zone_raw = detection.get("image_capture_zone")
-            self.image_capture_zone = tuple(image_capture_zone_raw) if image_capture_zone_raw else None
+            # Pre-stop zone/line
+            pre_stop_line_raw = detection.get("pre_stop_line")
+            if pre_stop_line_raw:
+                # New format: line (2 points)
+                self.pre_stop_line = [tuple(p) for p in pre_stop_line_raw]
+                self.pre_stop_zone = None
+            else:
+                # Legacy format: X-range
+                pre_stop_zone_raw = detection.get("pre_stop_zone")
+                self.pre_stop_zone = tuple(pre_stop_zone_raw) if pre_stop_zone_raw else None
+                self.pre_stop_line = None
+
+            # Capture zone/line
+            capture_line_raw = detection.get("capture_line")
+            if capture_line_raw:
+                # New format: line (2 points)
+                self.capture_line = [tuple(p) for p in capture_line_raw]
+                self.image_capture_zone = None
+            else:
+                # Legacy format: X-range
+                image_capture_zone_raw = detection.get("image_capture_zone")
+                self.image_capture_zone = tuple(image_capture_zone_raw) if image_capture_zone_raw else None
+                self.capture_line = None
 
             # Detection thresholds
             self.in_zone_frame_threshold = detection.get("in_zone_frame_threshold")
@@ -188,30 +214,45 @@ class Config:
         """Update stop zone configuration.
 
         Args:
-            new_config: Dictionary with stop_line, stop_box_tolerance, min_stop_duration
+            new_config: Dictionary with stop_zone (4 points) and min_stop_duration
 
         Returns:
-            Dictionary with version, stop_line, and raw_points
+            Dictionary with version and stop_zone
         """
         with self._lock:
             # Update in-memory state
-            self.stop_line = new_config["stop_line"]
-            self.stop_box_tolerance = new_config["stop_box_tolerance"]
+            if "stop_zone" in new_config:
+                # New 4-point stop zone
+                self.stop_zone = new_config["stop_zone"]
+                # Clear old stop_line format
+                self.stop_line = None
+                self.stop_box_tolerance = None
+            elif "stop_line" in new_config:
+                # Legacy 2-point format (backwards compatibility)
+                self.stop_line = new_config["stop_line"]
+                self.stop_box_tolerance = new_config.get("stop_box_tolerance", [10, 10])
+                self.stop_zone = None
+
             self.min_stop_time = new_config.get("min_stop_duration", self.min_stop_time)
 
             # Load current config for update
             with open(self.config_path, "r") as file:
                 config = yaml.safe_load(file)
 
-            # Update stop detection values
-            stop_line_lists = [list(point) for point in self.stop_line]
-            config["stopsign_detection"]["stop_line"] = stop_line_lists
-
-            # Handle stop_box_tolerance
-            if isinstance(self.stop_box_tolerance, (list, tuple)):
-                config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
+            # Update config based on format
+            if self.stop_zone:
+                # Store as 4-point zone
+                stop_zone_lists = [list(point) for point in self.stop_zone]
+                config["stopsign_detection"]["stop_zone"] = stop_zone_lists
+                # Remove legacy fields
+                config["stopsign_detection"].pop("stop_line", None)
+                config["stopsign_detection"].pop("stop_box_tolerance", None)
             else:
-                config["stopsign_detection"]["stop_box_tolerance"] = [self.stop_box_tolerance, self.stop_box_tolerance]
+                # Legacy format
+                stop_line_lists = [list(point) for point in self.stop_line]
+                config["stopsign_detection"]["stop_line"] = stop_line_lists
+                config["stopsign_detection"]["stop_box_tolerance"] = list(self.stop_box_tolerance)
+                config["stopsign_detection"].pop("stop_zone", None)
 
             config["stopsign_detection"]["min_stop_time"] = self.min_stop_time
 
@@ -219,7 +260,10 @@ class Config:
             new_version = self._save_atomic(config)
 
             # Return response data
-            return {"version": new_version, "stop_line": self.stop_line, "raw_points": stop_line_lists}
+            if self.stop_zone:
+                return {"version": new_version, "stop_zone": self.stop_zone}
+            else:
+                return {"version": new_version, "stop_line": self.stop_line, "raw_points": stop_line_lists}
 
     def update_zone(self, zone_type: str, zone_data: Any) -> dict:
         """Update a specific zone type and save to config.
@@ -261,14 +305,30 @@ class Config:
                 }
 
             elif zone_type == "pre_stop":
-                self.pre_stop_zone = zone_data
-                config["stopsign_detection"]["pre_stop_zone"] = list(zone_data)
-                result_data = {"pre_stop_zone": zone_data}
+                # Store as line (2 points)
+                if len(zone_data) == 2 and isinstance(zone_data[0], (tuple, list)):
+                    # New format: line with 2 points
+                    self.pre_stop_line = zone_data
+                    config["stopsign_detection"]["pre_stop_line"] = [list(p) for p in zone_data]
+                    result_data = {"pre_stop_line": zone_data}
+                else:
+                    # Legacy format: X-range
+                    self.pre_stop_zone = zone_data
+                    config["stopsign_detection"]["pre_stop_zone"] = list(zone_data)
+                    result_data = {"pre_stop_zone": zone_data}
 
             elif zone_type == "capture":
-                self.image_capture_zone = zone_data
-                config["stopsign_detection"]["image_capture_zone"] = list(zone_data)
-                result_data = {"image_capture_zone": zone_data}
+                # Store as line (2 points)
+                if len(zone_data) == 2 and isinstance(zone_data[0], (tuple, list)):
+                    # New format: line with 2 points
+                    self.capture_line = zone_data
+                    config["stopsign_detection"]["capture_line"] = [list(p) for p in zone_data]
+                    result_data = {"capture_line": zone_data}
+                else:
+                    # Legacy format: X-range
+                    self.image_capture_zone = zone_data
+                    config["stopsign_detection"]["image_capture_zone"] = list(zone_data)
+                    result_data = {"image_capture_zone": zone_data}
 
             else:
                 raise ValueError(f"Unknown zone type: {zone_type}")
