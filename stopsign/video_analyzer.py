@@ -461,7 +461,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 self.total_frame_time.set(total_frame_time)
 
             except Exception as e:
-                logger.error(f"Error in stream processing: {str(e)}")
+                logger.error(f"Error in stream processing: {str(e)}", exc_info=True)
                 self.increment_exception_counter(type(e).__name__, "process_stream")
                 time.sleep(1)
 
