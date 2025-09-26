@@ -32,13 +32,27 @@ from redis.exceptions import RedisError
 from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
 from stopsign.service_status import RTSPServiceStatusMixin
 
-# Suppress ffmpeg SEI warnings from OpenCV
-cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
-
 
 # ----------------- logging setup --------------------
+import re
+
+
+class SEI764Filter(logging.Filter):
+    """Filter to suppress only SEI type 764 truncation warnings from ffmpeg."""
+
+    SEI_764_PATTERN = re.compile(r"\[h264 @ 0x[0-9a-f]+\] SEI type 764 size \d+ truncated at \d+")
+
+    def filter(self, record):
+        # Suppress only the specific SEI type 764 messages
+        return not self.SEI_764_PATTERN.search(record.getMessage())
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+# Apply the filter to the root logger to catch ffmpeg output
+root_logger = logging.getLogger()
+root_logger.addFilter(SEI764Filter())
 
 
 # ------------------- local app ----------------------
