@@ -49,6 +49,8 @@ def suppress_ffmpeg_sei_warnings():
             # Windows or other platforms
             libavutil = ctypes.CDLL("avutil.dll")
 
+        print(f"DEBUG: Successfully loaded FFmpeg library: {libavutil}")
+
         # FFmpeg logging levels (from libavutil/log.h)
         AV_LOG_ERROR = 16  # Error messages - keep these
 
@@ -57,8 +59,11 @@ def suppress_ffmpeg_sei_warnings():
         libavutil.av_log_set_level.restype = None
         libavutil.av_log_set_level(AV_LOG_ERROR)
 
+        print(f"DEBUG: Successfully set FFmpeg log level to ERROR ({AV_LOG_ERROR})")
+
     except (OSError, AttributeError) as e:
         # If we can't load the library or function, just log and continue
+        print(f"DEBUG: FAILED to set FFmpeg log level: {e}")
         logging.getLogger(__name__).warning(f"Could not set FFmpeg log level: {e}")
 
 
