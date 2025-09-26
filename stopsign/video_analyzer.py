@@ -852,10 +852,29 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         """Draw all zones when in debug mode (processing coordinates)."""
         height, width = frame.shape[:2]
 
-        # Pre-stop zone (yellow vertical band)
-        pre_start, pre_end = self.config.pre_stop_zone
-        cv2.rectangle(frame, (int(pre_start), 0), (int(pre_end), height), (0, 255, 255), 2)
-        cv2.putText(frame, "PRE-STOP", (int(pre_start) + 5, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        # Pre-stop zone (yellow vertical band) or pre-stop line
+        if self.config.pre_stop_zone is not None:
+            # Legacy format: X-range
+            pre_start, pre_end = self.config.pre_stop_zone
+            cv2.rectangle(frame, (int(pre_start), 0), (int(pre_end), height), (0, 255, 255), 2)
+            cv2.putText(frame, "PRE-STOP", (int(pre_start) + 5, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        elif hasattr(self.config, "pre_stop_line") and self.config.pre_stop_line is not None:
+            # New format: line (2 points) - convert to processing coordinates and draw line
+            line_points = []
+            for raw_x, raw_y in self.config.pre_stop_line:
+                proc_x, proc_y = self.raw_to_processing_coordinates(raw_x, raw_y)
+                line_points.append((int(proc_x), int(proc_y)))
+            if len(line_points) == 2:
+                cv2.line(frame, line_points[0], line_points[1], (0, 255, 255), 3)
+                cv2.putText(
+                    frame,
+                    "PRE-STOP",
+                    (line_points[0][0] + 5, line_points[0][1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 255),
+                    2,
+                )
 
         # Image capture zone (green vertical band)
         cap_start, cap_end = self.config.image_capture_zone
