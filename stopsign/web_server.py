@@ -442,28 +442,27 @@ async def update_stop_zone_from_display(request):
 
             raw_points.append({"x": raw_x, "y": raw_y})
 
-        # Persist the new stop-line coordinates to the YAML config so that the
-        # video-analyzer container can pick them up automatically.
-        # Now using raw coordinates instead of processing coordinates
+        # Persist the new stop zone coordinates to the YAML config
+        # Stop zone now uses 4 points to define a rectangle
 
-        if len(raw_points) < 2:
-            return {"error": "Need exactly 2 points"}
+        if len(raw_points) != 4:
+            return {"error": "Stop zone requires exactly 4 points"}
 
-        stop_line = (
+        # Store as list of 4 points
+        stop_zone = [
             (raw_points[0]["x"], raw_points[0]["y"]),
             (raw_points[1]["x"], raw_points[1]["y"]),
-        )
+            (raw_points[2]["x"], raw_points[2]["y"]),
+            (raw_points[3]["x"], raw_points[3]["y"]),
+        ]
 
         try:
             # Debug what we're sending to config
-            logger.info(f"Sending to config - stop_line: {stop_line}, type: {type(stop_line)}")
-            for i, point in enumerate(stop_line):
-                logger.info(f"Point {i}: {point}, type: {type(point)}")
+            logger.info(f"Sending to config - stop_zone: {stop_zone}, type: {type(stop_zone)}")
 
             result = config.update_stop_zone(
                 {
-                    "stop_line": stop_line,
-                    "stop_box_tolerance": [10, 10],
+                    "stop_zone": stop_zone,
                     "min_stop_duration": 2.0,
                 }
             )
@@ -479,8 +478,7 @@ async def update_stop_zone_from_display(request):
         return {
             "status": "success",
             "version": result["version"],
-            "stop_line": result["stop_line"],
-            "raw_points": result["raw_points"],
+            "stop_zone": result.get("stop_zone", stop_zone),
             "display_coordinates": display_points,
             "raw_coordinates": raw_points,
             "video_element_size": video_element_size,
@@ -489,7 +487,7 @@ async def update_stop_zone_from_display(request):
                 "raw_resolution": f"{raw_width}x{raw_height}",
                 "scale_factors": f"x={scale_x:.3f}, y={scale_y:.3f}",
                 "browser_video_size": f"{video_element_size['width']}x{video_element_size['height']}",
-                "note": "Using raw frame coordinates (Option 2) - stop lines drawn before crop/scale",
+                "note": "Stop zone defined by 4 corner points",
             },
         }
 
@@ -664,40 +662,30 @@ async def update_zone_from_display(request):
             )
 
         elif zone_type in ["pre-stop", "capture"]:
-            # X-range zones need two points for X coordinates
+            # Line zones need exactly 2 points
             if len(display_points) != 2:
                 return {"error": f"{zone_type} zone requires exactly 2 points"}
 
-            # Convert to processing coordinates (these zones work in processing space)
-            proc_x_coords = []
+            # Store as raw coordinate line (2 points)
+            raw_line = []
             for p in display_points:
-                # Convert to raw coordinates first
                 raw_x = p["x"] * scale_x
                 raw_y = p["y"] * scale_y
+                raw_line.append((raw_x, raw_y))
 
-                # Then convert to processing coordinates using the same logic as video analyzer
-                crop_side_pixels = int(raw_width * config.crop_side)
+            # Basic validation - ensure line has some length
+            dx = abs(raw_line[1][0] - raw_line[0][0])
+            dy = abs(raw_line[1][1] - raw_line[0][1])
+            line_length = (dx * dx + dy * dy) ** 0.5
 
-                cropped_x = raw_x - crop_side_pixels
-                processing_x = cropped_x * config.scale
+            if line_length < 10:
+                return {"error": f"Line too short ({line_length:.1f} pixels). Draw a longer line."}
 
-                proc_x_coords.append(processing_x)
-
-            # Ensure proper ordering (left to right)
-            x_range = tuple(sorted(proc_x_coords))
-
-            # Basic validation - ensure zones are reasonable
-            zone_width = abs(x_range[1] - x_range[0])
-            if zone_width < 10:
-                return {"error": f"Zone width ({zone_width:.1f}) is too small. Minimum width is 10 pixels."}
-            if zone_width > 500:
-                return {"error": f"Zone width ({zone_width:.1f}) is too large. Maximum width is 500 pixels."}
-
-            # Update the appropriate zone using the new method
+            # Update the appropriate zone with the line
             if zone_type == "pre-stop":
-                result = config.update_zone("pre_stop", x_range)
+                result = config.update_zone("pre_stop", raw_line)
             elif zone_type == "capture":
-                result = config.update_zone("capture", x_range)
+                result = config.update_zone("capture", raw_line)
 
         # Signal video analyzer to reload config
         try:

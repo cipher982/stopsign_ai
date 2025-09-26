@@ -7,25 +7,25 @@ let debugZonesVisible = false;
 // Zone configuration
 const zoneConfig = {
     'stop-line': {
-        name: 'Stop Line',
-        color: '#c0c0c0',
-        bgColor: '#c0c0c0',
-        clicksRequired: 2,
-        description: 'Click two points to define where vehicles must stop'
+        name: 'Stop Zone',
+        color: '#ff0000',
+        bgColor: 'rgba(255, 0, 0, 0.2)',
+        clicksRequired: 4,
+        description: 'Click 4 corners to define the stop zone rectangle'
     },
     'pre-stop': {
-        name: 'Pre-Stop Zone',
-        color: '#c0c0c0',
-        bgColor: '#c0c0c0',
+        name: 'Pre-Stop Line',
+        color: '#ffff00',
+        bgColor: 'rgba(255, 255, 0, 0.2)',
         clicksRequired: 2,
-        description: 'Click two points to set detection range for approaching vehicles'
+        description: 'Click 2 points to define the pre-stop detection line'
     },
     'capture': {
-        name: 'Image Capture Zone',
-        color: '#c0c0c0',
-        bgColor: '#c0c0c0',
+        name: 'Capture Line',
+        color: '#00ff00',
+        bgColor: 'rgba(0, 255, 0, 0.2)',
         clicksRequired: 2,
-        description: 'Click two points to set optimal photo capture range'
+        description: 'Click 2 points to define the photo capture line'
     }
 };
 
@@ -130,9 +130,16 @@ function handleVideoClick(event) {
     const status = document.getElementById('status');
     const submitBtn = document.getElementById('submitBtn');
 
-    if (clickedPoints.length === 1) {
-        status.innerText = `POINT 1 SET ✓ - Now click the second point for ${config.name}.`;
-    } else if (clickedPoints.length === config.clicksRequired) {
+    if (clickedPoints.length < config.clicksRequired) {
+        const remaining = config.clicksRequired - clickedPoints.length;
+        if (currentZoneType === 'stop-line') {
+            status.innerText = `Point ${clickedPoints.length} of 4 set - ${remaining} more corners to go`;
+        } else {
+            status.innerText = `Point ${clickedPoints.length} of 2 set - click ${remaining} more point(s) for the line`;
+        }
+    }
+
+    if (clickedPoints.length === config.clicksRequired) {
         status.innerText = `ALL POINTS SET ✓ - Click SUBMIT to update ${config.name}.`;
         submitBtn.style.display = 'inline-block';
         submitBtn.disabled = false;

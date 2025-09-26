@@ -269,8 +269,18 @@ class StopDetector:
         if self._video_analyzer is None:
             raise ValueError("Video analyzer not set. Call set_video_analyzer first.")
 
+        # Check if we have the new 4-point stop zone format
+        if hasattr(self.config, "stop_zone") and self.config.stop_zone:
+            # Convert 4 raw points to processing coordinates
+            stop_zone_polygon = []
+            for x, y in self.config.stop_zone:
+                proc_x, proc_y = self._video_analyzer.raw_to_processing_coordinates(x, y)
+                stop_zone_polygon.append([proc_x, proc_y])
+            return np.array(stop_zone_polygon, dtype=np.float32)
+
+        # Legacy 2-point format with tolerances
         (x1, y1), (x2, y2) = self._video_analyzer.get_stop_line_processing_coords()
-        stop_box_tolerance = self.config.stop_box_tolerance
+        stop_box_tolerance = self.config.stop_box_tolerance or (0, 0)
 
         # Calculate tolerances
         left_tolerance = stop_box_tolerance[0]
