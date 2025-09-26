@@ -8,17 +8,13 @@ from fasthtml.common import H3
 from fasthtml.common import H4
 from fasthtml.common import A
 from fasthtml.common import Button
-from fasthtml.common import Details
 from fasthtml.common import Div
 from fasthtml.common import Footer
 from fasthtml.common import Header
-from fasthtml.common import Input
-from fasthtml.common import Label
 from fasthtml.common import Main
 from fasthtml.common import Nav
 from fasthtml.common import P
 from fasthtml.common import Span
-from fasthtml.common import Summary
 
 
 def video_component():
@@ -65,56 +61,7 @@ def main_layout_component():
             ),
             cls="content-grid",
         ),
-        adjustment_panel_component(),
         cls="app-layout",
-    )
-
-
-def adjustment_panel_component():
-    """Stop line adjustment panel (hidden by default)"""
-    return Div(
-        H3("Stop Line Adjustment"),
-        # Click-to-set interface
-        Div(
-            Button(
-                "Adjust Stop Line",
-                id="adjustmentModeBtn",
-                onclick="toggleAdjustmentMode()",
-                cls="button",
-            ),
-            P(
-                "Click the button above, then click two points on the video to set the new stop line position.",
-            ),
-        ),
-        # Manual coordinate input (legacy interface)
-        Details(
-            Summary("Manual Coordinate Input"),
-            Div(
-                Div(
-                    Label("Point 1 - X:"),
-                    Input(type="number", id="x1", value="550"),
-                    Label("Y:"),
-                    Input(type="number", id="y1", value="500"),
-                ),
-                Div(
-                    Label("Point 2 - X:"),
-                    Input(type="number", id="x2", value="400"),
-                    Label("Y:"),
-                    Input(type="number", id="y2", value="550"),
-                ),
-                Button(
-                    "Update Stop Zone",
-                    onclick="updateStopZone()",
-                    cls="button",
-                ),
-                cls="sunken",
-            ),
-        ),
-        # Status display
-        Div(id="status", cls="terminal terminal--status"),
-        id="adjustmentPanel",
-        style="display: none;",
-        cls="window window--panel",
     )
 
 
@@ -245,7 +192,7 @@ def debug_controls_component():
             Div(id="status", cls="terminal terminal--status"),
             Div(
                 P(
-                    "Select zone → Show zones → Adjust → Click 2 points → Submit",
+                    "Select zone → Show zones → Adjust → Click required points (4 for stop zone) → Submit",
                 ),
             ),
         ),

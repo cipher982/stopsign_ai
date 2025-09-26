@@ -129,8 +129,12 @@ docker exec <container> cp /app/config.example.yaml /app/config/config.yaml
 # View current configuration
 ./tools/print_config.py
 
-# Update stop line coordinates
-./tools/set_stop_line.py --x1 300 --y1 230 --x2 376 --y2 291
+# Update stop zone coordinates (four corners)
+./tools/set_stop_zone.py \
+  --x1 300 --y1 225 \
+  --x2 380 --y2 225 \
+  --x3 380 --y3 295 \
+  --x4 300 --y4 295
 ```
 
 **Web UI:** Navigate to `/debug` to visually adjust stop zones with instant feedback.

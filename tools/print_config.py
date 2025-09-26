@@ -24,15 +24,13 @@ def main():
         # Version
         print(f"\nVersion: {config.version}")
 
-        # Stop line
-        if config.stop_line:
-            p1, p2 = config.stop_line
-            print("\nStop Line:")
-            print(f"  Point 1: ({p1[0]:.2f}, {p1[1]:.2f})")
-            print(f"  Point 2: ({p2[0]:.2f}, {p2[1]:.2f})")
-            print(f"  Tolerance: {config.stop_box_tolerance}")
+        # Stop zone
+        if config.stop_zone:
+            print("\nStop Zone (4-point polygon):")
+            for i, p in enumerate(config.stop_zone, 1):
+                print(f"  Corner {i}: ({p[0]:.2f}, {p[1]:.2f})")
         else:
-            print("\nStop Line: Not configured")
+            print("\nStop Zone: Not configured")
 
         # Pre-stop zone
         if config.pre_stop_zone:
