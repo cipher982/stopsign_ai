@@ -83,6 +83,7 @@ services:
       - .env
     environment:
       DB_URL: ${DB_URL}
+      TZ: America/Chicago
       # HLS staleness threshold is baked into the service code
     depends_on:
       - video_analyzer

@@ -2,6 +2,7 @@
 import logging
 import os
 import time
+from zoneinfo import ZoneInfo
 
 from stopsign.hls_health import parse_hls_playlist
 
@@ -961,8 +962,14 @@ def create_pass_item(pass_data, scores):
             # Use direct MinIO URL for now - proxy endpoint has issues
             image_url = f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{object_name}"
 
-    # Format timestamp
-    time_str = pass_data.timestamp.strftime("%H:%M:%S") if hasattr(pass_data, "timestamp") else "N/A"
+    # Format timestamp - convert UTC to Chicago time
+    if hasattr(pass_data, "timestamp") and pass_data.timestamp:
+        # Database timestamps are in UTC, convert to Chicago time for display
+        utc_time = pass_data.timestamp.replace(tzinfo=ZoneInfo("UTC"))
+        chicago_time = utc_time.astimezone(ZoneInfo("America/Chicago"))
+        time_str = chicago_time.strftime("%H:%M:%S")
+    else:
+        time_str = "N/A"
 
     # Use actual values to create visual variety (simpler approach)
     speed_val = pass_data.min_speed
