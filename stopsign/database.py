@@ -371,3 +371,176 @@ class Database:
                 }
                 for h in history
             ]
+
+    # ==========================================
+    # Real-time Insights Methods
+    # ==========================================
+
+    @log_execution_time
+    def get_peak_hour_today(self):
+        """Get today's peak hour with vehicle count in Chicago timezone."""
+        with self.Session() as session:
+            result = session.execute(
+                text("""
+                WITH hourly_series AS (
+                    SELECT generate_series(0, 23) AS hour
+                ),
+                today_counts AS (
+                    SELECT
+                        EXTRACT(hour FROM timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') AS hour,
+                        COUNT(*) AS vehicle_count
+                    FROM vehicle_passes
+                    WHERE DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                    GROUP BY EXTRACT(hour FROM timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
+                )
+                SELECT
+                    hs.hour,
+                    COALESCE(tc.vehicle_count, 0) AS count,
+                    CASE
+                        WHEN hs.hour = 0 THEN '12-1 AM'
+                        WHEN hs.hour < 12 THEN hs.hour || '-' || (hs.hour + 1) || ' AM'
+                        WHEN hs.hour = 12 THEN '12-1 PM'
+                        ELSE (hs.hour - 12) || '-' || (hs.hour - 11) || ' PM'
+                    END AS display_format
+                FROM hourly_series hs
+                LEFT JOIN today_counts tc ON hs.hour = tc.hour
+                WHERE COALESCE(tc.vehicle_count, 0) > 0
+                ORDER BY count DESC, hs.hour
+                LIMIT 1
+            """)
+            ).first()
+
+            if result and result.count > 0:
+                return {"hour": result.hour, "count": result.count, "display": result.display_format}
+            return None
+
+    @log_execution_time
+    def get_compliance_streak(self):
+        """Get the longest compliance streak from recent passes using gaps-and-islands technique."""
+        with self.Session() as session:
+            result = session.execute(
+                text("""
+                WITH compliance_data AS (
+                    SELECT
+                        id,
+                        timestamp,
+                        time_in_zone >= 2.0 AS is_compliant,
+                        ROW_NUMBER() OVER (ORDER BY timestamp) as rn
+                    FROM vehicle_passes
+                    WHERE timestamp >= CURRENT_DATE - INTERVAL '7 days'
+                    ORDER BY timestamp
+                ),
+                groups AS (
+                    SELECT
+                        id,
+                        timestamp,
+                        is_compliant,
+                        rn - ROW_NUMBER() OVER (PARTITION BY is_compliant ORDER BY timestamp) AS grp
+                    FROM compliance_data
+                ),
+                streaks AS (
+                    SELECT
+                        is_compliant,
+                        grp,
+                        COUNT(*) AS streak_length,
+                        MIN(timestamp) AS streak_start,
+                        MAX(timestamp) AS streak_end
+                    FROM groups
+                    GROUP BY is_compliant, grp
+                )
+                SELECT
+                    streak_length,
+                    streak_start AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago' AS start_chicago,
+                    streak_end AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago' AS end_chicago
+                FROM streaks
+                WHERE is_compliant = true
+                ORDER BY streak_length DESC
+                LIMIT 1
+            """)
+            ).first()
+
+            if result:
+                return {"length": result.streak_length, "start": result.start_chicago, "end": result.end_chicago}
+            return None
+
+    @log_execution_time
+    def get_average_stop_time(self, hours=24):
+        """Get average stop time for the last N hours."""
+        with self.Session() as session:
+            result = session.execute(
+                text("""
+                SELECT
+                    AVG(time_in_zone) AS avg_time_in_zone,
+                    AVG(stop_duration) AS avg_stop_duration,
+                    COUNT(*) AS sample_size
+                FROM vehicle_passes
+                WHERE timestamp >= NOW() - INTERVAL ':hours hours'
+            """),
+                {"hours": hours},
+            ).first()
+
+            if result and result.sample_size > 0:
+                return {
+                    "avg_time_in_zone": round(result.avg_time_in_zone, 1),
+                    "avg_stop_duration": round(result.avg_stop_duration or 0, 1),
+                    "sample_size": result.sample_size,
+                }
+            return None
+
+    @log_execution_time
+    def get_fastest_vehicle_today(self):
+        """Get fastest vehicle from today with timestamp and details."""
+        with self.Session() as session:
+            result = session.execute(
+                text("""
+                SELECT
+                    min_speed,
+                    timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago' AS chicago_time,
+                    image_path
+                FROM vehicle_passes
+                WHERE DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                ORDER BY min_speed DESC
+                LIMIT 1
+            """)
+            ).first()
+
+            if result:
+                return {
+                    "speed": round(result.min_speed, 1),
+                    "time": result.chicago_time,
+                    "image_path": result.image_path,
+                }
+            return None
+
+    @log_execution_time
+    def get_traffic_summary_today(self):
+        """Get comprehensive traffic summary for today."""
+        with self.Session() as session:
+            result = session.execute(
+                text("""
+                SELECT
+                    COUNT(*) AS total_vehicles,
+                    AVG(time_in_zone) AS avg_stop_time,
+                    SUM(CASE WHEN time_in_zone >= 2.0 THEN 1 ELSE 0 END) AS compliant_vehicles,
+                    MAX(min_speed) AS fastest_speed,
+                    COUNT(DISTINCT EXTRACT(hour FROM timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago'))
+                        AS active_hours
+                FROM vehicle_passes
+                WHERE DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+            """)
+            ).first()
+
+            if result and result.total_vehicles > 0:
+                # Calculate compliance rate in Python to avoid division by zero
+                compliance_rate = (
+                    (result.compliant_vehicles / result.total_vehicles * 100) if result.total_vehicles > 0 else 0
+                )
+
+                return {
+                    "total_vehicles": result.total_vehicles,
+                    "avg_stop_time": round(result.avg_stop_time, 1),
+                    "compliance_rate": round(compliance_rate, 1),
+                    "fastest_speed": round(result.fastest_speed, 1),
+                    "active_hours": result.active_hours,
+                }
+            return None
