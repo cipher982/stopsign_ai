@@ -441,6 +441,178 @@ p {
 }
 
 /* =============================================================================
+   ABOUT PAGE LAYOUT
+   ============================================================================= */
+
+.about-page {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.about-section {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.about-hero {
+  display: grid;
+  gap: var(--space-sm);
+  background: linear-gradient(135deg, rgba(0, 120, 215, 0.18), rgba(0, 120, 215, 0));
+}
+
+.about-hero__eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--font-size-sm);
+  color: var(--color-win98-accent);
+}
+
+.about-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+}
+
+.about-metric {
+  display: grid;
+  gap: var(--space-xs);
+  text-align: left;
+}
+
+.about-metric__value {
+  font-size: var(--font-size-lg);
+  color: var(--color-win98-accent);
+}
+
+.about-metric__label {
+  font-size: var(--font-size-sm);
+  color: var(--color-win98-shadow);
+}
+
+.about-diagram {
+  display: grid;
+  gap: var(--space-sm);
+  overflow-x: auto;
+  padding-bottom: var(--space-xs);
+}
+
+.about-diagram__rail {
+  display: flex;
+  gap: var(--space-sm);
+  min-width: 720px;
+  padding-right: var(--space-sm);
+}
+
+.about-diagram__rail--support {
+  opacity: 0.9;
+}
+
+.about-diagram__node {
+  position: relative;
+  flex: 1 1 170px;
+  min-width: 170px;
+}
+
+.about-diagram__node::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: calc(var(--space-sm) * -0.5);
+  width: var(--space-lg);
+  height: 2px;
+  background: var(--color-win98-shadow);
+}
+
+.about-diagram__rail > .about-diagram__node:last-child::after {
+  display: none;
+}
+
+.about-diagram__badge {
+  font-size: var(--font-size-sm);
+  color: var(--color-win98-shadow);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.about-diagram__heading {
+  margin-top: 0;
+}
+
+.about-diagram__text {
+  font-size: var(--font-size-sm);
+}
+
+.about-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-sm);
+}
+
+.about-card__title {
+  margin-bottom: var(--space-xs);
+}
+
+.about-card__subtitle {
+  margin-bottom: var(--space-sm);
+  color: var(--color-win98-shadow);
+}
+
+.about-card__list {
+  margin: 0;
+  padding-left: var(--space-lg);
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.about-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-sm);
+}
+
+.about-split__column {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.about-section__body {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.about-cta {
+  display: grid;
+  gap: var(--space-sm);
+  text-align: center;
+}
+
+.about-cta__actions {
+  display: flex;
+  justify-content: center;
+}
+
+.about-cta__actions .button {
+  min-width: 220px;
+}
+
+@media (max-width: 900px) {
+  .about-diagram__rail {
+    min-width: 600px;
+  }
+}
+
+@media (max-width: var(--breakpoint-tablet)) {
+  .about-diagram__rail {
+    flex-direction: column;
+    min-width: auto;
+  }
+
+  .about-diagram__node::after {
+    display: none;
+  }
+}
+
+/* =============================================================================
    7. RESPONSIVE DESIGN
    ============================================================================= */
 

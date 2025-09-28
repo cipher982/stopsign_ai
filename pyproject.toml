@@ -27,6 +27,7 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.55b1",
     "opentelemetry-instrumentation-redis>=0.55b1",
     "opentelemetry-instrumentation-requests>=0.55b1",
+    "ruff>=0.13.2",
 ]
 
 [tool.ruff]
