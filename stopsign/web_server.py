@@ -16,9 +16,11 @@ except ImportError:
 
 import redis
 import uvicorn
+from fasthtml.common import H1
 from fasthtml.common import H2
 from fasthtml.common import H3
 from fasthtml.common import H4
+from fasthtml.common import A
 from fasthtml.common import Body
 from fasthtml.common import Div
 from fasthtml.common import FastHTML
@@ -27,12 +29,16 @@ from fasthtml.common import Html
 from fasthtml.common import HTMLResponse
 from fasthtml.common import Iframe
 from fasthtml.common import Img
+from fasthtml.common import Li
 from fasthtml.common import Link
+from fasthtml.common import Main
 from fasthtml.common import P
 from fasthtml.common import Script
+from fasthtml.common import Section
 from fasthtml.common import Span
 from fasthtml.common import StaticFiles
 from fasthtml.common import StreamingResponse
+from fasthtml.common import Ul
 from fasthtml.common import Video
 from minio import Minio
 from sqlalchemy import text
@@ -1148,22 +1154,282 @@ def statistics():
 
 @app.get("/about")  # type: ignore
 def about():
-    from fasthtml.common import Main
+    hero_metrics_data = [
+        {"value": "15 FPS", "label": "real-time inference budget from capture to stream"},
+        {"value": "SSFM timestamps", "label": "capture-time metadata preserved across every queue"},
+        {"value": "4 dedicated services", "label": "ingest, analyze, render, and serve the experience"},
+    ]
 
-    with open("static/summary.md", "r") as file:
-        summary_content = file.read()
-    return Html(
-        page_head_component("About"),
-        Body(
-            common_header_component("About"),
-            Main(
-                Div(
-                    H2("Project Summary"),
-                    P(summary_content),
-                    cls="window",
-                ),
+    hero_metrics = Div(
+        *[
+            Div(
+                Span(metric["value"], cls="about-metric__value"),
+                Span(metric["label"], cls="about-metric__label"),
+                cls="about-metric window window--card",
+            )
+            for metric in hero_metrics_data
+        ],
+        cls="about-metrics",
+    )
+
+    hero_section = Section(
+        Span("Stop Sign Nanny", cls="about-hero__eyebrow"),
+        H1("Real-time stop sign accountability"),
+        P(
+            "StopSign AI watches a live intersection feed and detects vehicles with YOLO while "
+            "measuring true stop compliance using capture-time data. "
+            "Every hop in the pipeline is tuned for low latency and instrumented for observability."
+        ),
+        hero_metrics,
+        cls="window window--panel about-hero",
+    )
+
+    pipeline_nodes = [
+        {
+            "name": "RTSP Camera",
+            "badge": "Capture",
+            "detail": "Network camera or sample MP4 feed streaming into the site via RTSP.",
+        },
+        {
+            "name": "rtsp_to_redis",
+            "badge": "Frame ingestion",
+            "detail": (
+                "Encodes frames as JPEG, wraps them in the SSFM header, and " "LPUSHes into Redis with FIFO semantics."
             ),
-            common_footer_component(),
+        },
+        {
+            "name": "Redis · RAW",
+            "badge": "Buffer",
+            "detail": "Deterministic queueing keeps capture order intact while smoothing network jitter.",
+        },
+        {
+            "name": "video_analyzer",
+            "badge": "Detection & scoring",
+            "detail": (
+                "YOLO inference, Kalman-smoothed tracking, and stop-zone scoring feed " "Postgres + MinIO evidence."
+            ),
+        },
+        {
+            "name": "Redis · PROCESSED",
+            "badge": "Frame bus",
+            "detail": ("Annotated frames with timestamps stay ready for streaming without " "blocking the analyzer."),
+        },
+        {
+            "name": "ffmpeg_service",
+            "badge": "Streaming",
+            "detail": (
+                "FFmpeg (NVENC or libx264) assembles HLS playlists, guarded by watchdog " "and readiness probes."
+            ),
+        },
+        {
+            "name": "web_server",
+            "badge": "Experience layer",
+            "detail": ("FastAPI + FastHTML + htmx deliver the live player, dashboards, and " "developer tooling."),
+        },
+        {
+            "name": "Operators",
+            "badge": "Interface",
+            "detail": ("Browsers consume HLS, review recent passes, and adjust zones without " "redeploying."),
+        },
+    ]
+
+    support_nodes = [
+        {
+            "name": "PostgreSQL",
+            "badge": "Structured history",
+            "detail": "Stores vehicle pass records, compliance scoring, and trend queries for insights.",
+        },
+        {
+            "name": "MinIO",
+            "badge": "Evidence store",
+            "detail": "Holds annotated JPEG clips and exposes them through signed URLs in the UI.",
+        },
+        {
+            "name": "Grafana + Prometheus",
+            "badge": "Observability",
+            "detail": "Dashboards visualize FPS, inference latency, queue depth, and HLS freshness.",
+        },
+    ]
+
+    def build_diagram(nodes, modifier=""):
+        classes = "about-diagram__rail"
+        if modifier:
+            classes = f"{classes} {modifier}"
+        return Div(
+            *[
+                Div(
+                    Span(node["badge"], cls="about-diagram__badge"),
+                    H4(node["name"], cls="about-diagram__heading"),
+                    P(node["detail"], cls="about-diagram__text"),
+                    cls="window window--card about-diagram__node",
+                )
+                for node in nodes
+            ],
+            cls=classes,
+        )
+
+    architecture_section = Section(
+        H2("Pipeline at a glance"),
+        P(
+            "Frames take a deterministic path from the curb to the browser. "
+            "Each boundary is backed by Redis queues, explicit health checks, and "
+            "Prometheus metrics so issues are easy to trace."
+        ),
+        Div(
+            build_diagram(pipeline_nodes, "about-diagram__rail--primary"),
+            build_diagram(support_nodes, "about-diagram__rail--support"),
+            cls="about-diagram",
+        ),
+        cls="window window--panel about-section",
+    )
+
+    service_cards = [
+        {
+            "title": "rtsp_to_redis",
+            "subtitle": "Frame ingestion & SSFM packaging",
+            "items": [
+                "LPUSHes JPEG frames with SSFM headers so capture timestamps survive downstream hops.",
+                "Bounded queues (FRAME_BUFFER_SIZE) smooth out bursty networks without going stale.",
+                "Exports Prometheus counters/timers plus runtime status mixins for health probes.",
+            ],
+        },
+        {
+            "title": "video_analyzer",
+            "subtitle": "Computer vision core",
+            "items": [
+                "Runs Ultralytics YOLO models (configured via YOLO_MODEL_NAME/YOLO_DEVICE).",
+                "CarTracker + Kalman filter blend trajectories for reliable stop detection.",
+                "Persists scores to Postgres, ships annotated evidence to MinIO, and surfaces live insights.",
+            ],
+        },
+        {
+            "title": "ffmpeg_service",
+            "subtitle": "HLS edge",
+            "items": [
+                "Consumes processed frames from Redis and renders annotated video at 15 FPS.",
+                "Configurable FFmpeg encoders (NVENC, libx264) with presets tuned for low latency.",
+                "Watchdog + /ready + /health endpoints restart the stream if freshness drifts.",
+            ],
+        },
+        {
+            "title": "web_server",
+            "subtitle": "Experience + APIs",
+            "items": [
+                "FastAPI + FastHTML pages powered by htmx for live updates without heavy JS.",
+                "Interactive records view, live HLS.js player, and `/debug` zone editor for calibration.",
+                "Caches insights, proxies media from MinIO, and exposes `/health/stream` for monitors.",
+            ],
+        },
+    ]
+
+    service_section = Section(
+        H2("What each service owns"),
+        Div(
+            *[
+                Div(
+                    H3(card["title"], cls="about-card__title"),
+                    P(card["subtitle"], cls="about-card__subtitle"),
+                    Ul(*(Li(item) for item in card["items"]), cls="about-card__list"),
+                    cls="about-card window window--panel",
+                )
+                for card in service_cards
+            ],
+            cls="about-card-grid",
+        ),
+        cls="window window--panel about-section",
+    )
+
+    observability_items = [
+        "Prometheus exporters on every service feed Grafana boards shipped in `static/`.",
+        "Health surface: `/healthz` for liveness, `/ready` for freshness, `/health/stream` for external probes.",
+        "ServiceStatus mixins report queue depth, Redis/DB connectivity, and error counters for triage.",
+        "Insights cache highlights live trends (peak hour, average stop time, fastest vehicle).",
+    ]
+
+    resilience_items = [
+        "Analyzer catch-up trims Redis backlogs when frames age past ANALYZER_CATCHUP_SEC.",
+        "FFmpeg watchdog exits when HLS segments age beyond playlist thresholds so orchestrators restart cleanly.",
+        "Single-source config (`config/config.yaml`) hot-reloads across services and persists via volumes.",
+        "Debug UI + CLI tools (`tools/set_stop_zone.py`) let operators retune stop zones without downtime.",
+    ]
+
+    operations_section = Section(
+        H2("Operational guardrails"),
+        Div(
+            Div(
+                H3("Observability"),
+                Ul(*(Li(item) for item in observability_items), cls="about-card__list"),
+                cls="about-split__column window window--panel",
+            ),
+            Div(
+                H3("Resilience"),
+                Ul(*(Li(item) for item in resilience_items), cls="about-card__list"),
+                cls="about-split__column window window--panel",
+            ),
+            cls="about-split",
+        ),
+        cls="window window--panel about-section",
+    )
+
+    developer_items = [
+        "`docker/local/docker-compose.yml` spins up the full stack with Redis, Postgres, and MinIO dependencies.",
+        "`Makefile` automates setup (`make setup`), streaming (`make stream-local`), and linting.",
+        "`sample_data/` video lets you replay the pipeline offline; `uv` manages Python deps reproducibly.",
+        "Documentation lives under `docs/` covering architecture, health modeling, and deployment strategy.",
+    ]
+
+    developer_section = Section(
+        H2("Build & extend it"),
+        Div(
+            P(
+                "The repository doubles as a reference implementation for real-time computer "
+                "vision pipelines. Everything from configuration to deployment can be modified "
+                "without touching production footage."
+            ),
+            Ul(*(Li(item) for item in developer_items), cls="about-card__list"),
+            cls="about-section__body",
+        ),
+        cls="window window--panel about-section",
+    )
+
+    cta_section = Section(
+        H2("Next steps"),
+        P(
+            "Explore the code, adapt the stop-zone logic to your intersection, or plug in "
+            "new models—the stack is modular by design."
+        ),
+        Div(
+            A(
+                "View the repository on GitHub",
+                href="https://github.com/cipher982/stopsign_ai",
+                target="_blank",
+                cls="button",
+            ),
+            cls="about-cta__actions",
+        ),
+        cls="window window--panel about-cta",
+    )
+
+    return Html(
+        page_head_component("About Stop Sign Nanny"),
+        Body(
+            Div(
+                common_header_component("About"),
+                Main(
+                    Div(
+                        hero_section,
+                        architecture_section,
+                        service_section,
+                        operations_section,
+                        developer_section,
+                        cta_section,
+                        cls="about-page",
+                    ),
+                    cls="app-layout",
+                ),
+                common_footer_component(),
+                cls="desktop-container",
+            ),
         ),
     )
 
