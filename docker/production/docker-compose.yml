@@ -49,8 +49,7 @@ services:
       # HLS staleness threshold and watchdog are baked into the service code
     volumes:
       - storage-dir:/app/data
-    tmpfs:
-      - /app/data/stream:size=256m,mode=1777
+      - /mnt/hls-stream:/app/data/stream
     depends_on:
       - video_analyzer
     networks:
@@ -92,8 +91,7 @@ services:
     volumes:
       - storage-dir:/app/data
       - config-dir:/app/config
-    tmpfs:
-      - /app/data/stream:size=256m,mode=1777
+      - /mnt/hls-stream:/app/data/stream
     networks:
       - default
       - monitoring
