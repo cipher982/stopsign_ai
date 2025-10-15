@@ -387,11 +387,11 @@ class Database:
                 ),
                 today_counts AS (
                     SELECT
-                        EXTRACT(hour FROM timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') AS hour,
+                        EXTRACT(hour FROM timestamp AT TIME ZONE 'America/Chicago') AS hour,
                         COUNT(*) AS vehicle_count
                     FROM vehicle_passes
-                    WHERE DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') = CURRENT_DATE
-                    GROUP BY EXTRACT(hour FROM timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
+                    WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                    GROUP BY EXTRACT(hour FROM timestamp AT TIME ZONE 'America/Chicago')
                 )
                 SELECT
                     hs.hour,
@@ -450,8 +450,8 @@ class Database:
                 )
                 SELECT
                     streak_length,
-                    streak_start AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago' AS start_chicago,
-                    streak_end AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago' AS end_chicago
+                    streak_start AT TIME ZONE 'America/Chicago' AS start_chicago,
+                    streak_end AT TIME ZONE 'America/Chicago' AS end_chicago
                 FROM streaks
                 WHERE is_compliant = true
                 ORDER BY streak_length DESC
@@ -495,10 +495,10 @@ class Database:
                 text("""
                 SELECT
                     min_speed,
-                    timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago' AS chicago_time,
+                    timestamp AT TIME ZONE 'America/Chicago' AS chicago_time,
                     image_path
                 FROM vehicle_passes
-                WHERE DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = CURRENT_DATE
                 ORDER BY min_speed DESC
                 LIMIT 1
             """)
@@ -523,10 +523,10 @@ class Database:
                     AVG(time_in_zone) AS avg_stop_time,
                     SUM(CASE WHEN time_in_zone >= 2.0 THEN 1 ELSE 0 END) AS compliant_vehicles,
                     MAX(min_speed) AS fastest_speed,
-                    COUNT(DISTINCT EXTRACT(hour FROM timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago'))
+                    COUNT(DISTINCT EXTRACT(hour FROM timestamp AT TIME ZONE 'America/Chicago'))
                         AS active_hours
                 FROM vehicle_passes
-                WHERE DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = CURRENT_DATE
             """)
             ).first()
 
