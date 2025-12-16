@@ -231,9 +231,7 @@ app = FastHTML(
         Link(rel="stylesheet", href="/static/base.css"),
         Script(src="https://unpkg.com/htmx.org@1.9.4"),
         Script(
-            defer=True,
-            src="https://analytics.drose.io/script.js",
-            data_website_id="f5671ede-2232-44ea-9e5c-aabeeb766f95",
+            src="https://analytics.drose.io/script.js", **{"data-website-id": "f5671ede-2232-44ea-9e5c-aabeeb766f95"}
         ),
     ),
 )
