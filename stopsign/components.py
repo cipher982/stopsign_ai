@@ -75,6 +75,11 @@ def page_head_component(title, include_video_deps=False, page_type="home"):
 
     scripts = [
         Script(src="https://unpkg.com/htmx.org@1.9.4", defer=True),
+        Script(
+            src="https://analytics.drose.io/script.js",
+            defer=True,
+            **{"data-website-id": "f5671ede-2232-44ea-9e5c-aabeeb766f95"},
+        ),
     ]
 
     if include_video_deps:
