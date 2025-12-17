@@ -15,7 +15,7 @@ Runs end-to-end from an RTSP camera to a web dashboard with nothing more than Do
 [![Ruff](https://img.shields.io/badge/style-Ruff-000000.svg)](https://github.com/astral-sh/ruff) 
 [![UV](https://img.shields.io/badge/deps-UV-4A4A4A.svg)](https://github.com/astral-sh/uv) 
 [![YOLOv8](https://img.shields.io/badge/AI-YOLOv8-green.svg)](https://github.com/ultralytics/ultralytics) 
-[![FastHTML](https://img.shields.io/badge/frontend-FastHTML-orange.svg)](https://github.com/davidrose/fasthtml) 
+[![FastHTML](https://img.shields.io/badge/frontend-FastHTML-orange.svg)](https://github.com/answerdotai/fasthtml) 
 [![Redis](https://img.shields.io/badge/cache-Redis-red.svg)](https://redis.io/) 
 [![PostgreSQL](https://img.shields.io/badge/database-PostgreSQL-blue.svg)](https://www.postgresql.org/) 
 [![MinIO](https://img.shields.io/badge/storage-MinIO-00C6FF.svg)](https://min.io/) 
