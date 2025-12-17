@@ -381,6 +381,16 @@ async def favicon():
     return FileResponse("static/favicon.ico")
 
 
+@app.get("/robots.txt")  # type: ignore
+async def robots():
+    return FileResponse("static/robots.txt", media_type="text/plain")
+
+
+@app.get("/sitemap.xml")  # type: ignore
+async def sitemap():
+    return FileResponse("static/sitemap.xml", media_type="application/xml")
+
+
 @app.get("/")  # type: ignore
 def home():
     return Html(
@@ -965,7 +975,7 @@ def records():
     from fasthtml.common import Main
 
     return Html(
-        page_head_component("Records"),
+        page_head_component("Records", page_type="records"),
         Body(
             common_header_component("Records"),
             Main(
@@ -1414,7 +1424,7 @@ def about():
     )
 
     return Html(
-        page_head_component("About Stop Sign Nanny"),
+        page_head_component("About Stop Sign Nanny", page_type="about"),
         Body(
             Div(
                 common_header_component("About"),

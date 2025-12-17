@@ -73,6 +73,50 @@ def page_head_component(title, include_video_deps=False, page_type="home"):
     from fasthtml.common import Script
     from fasthtml.common import Title
 
+    # Base URL for the site
+    base_url = "https://crestwoodstopsign.com"
+
+    # Page-specific descriptions and URLs
+    page_metadata = {
+        "home": {
+            "description": (
+                "Real-time AI traffic monitoring system using YOLO computer vision for stop sign "
+                "compliance detection. Watch live vehicle detection and tracking at the Crestwood "
+                "intersection with advanced traffic camera AI."
+            ),
+            "url": f"{base_url}/",
+            "image": f"{base_url}/static/screenshot_afternoon.png",
+        },
+        "about": {
+            "description": (
+                "Learn about Stop Sign Nanny's real-time computer vision pipeline for AI traffic "
+                "monitoring. Built with YOLO detection, FastHTML, and advanced stop sign compliance "
+                "tracking technology."
+            ),
+            "url": f"{base_url}/about",
+            "image": f"{base_url}/static/screenshot_afternoon.png",
+        },
+        "records": {
+            "description": (
+                "View vehicle records and stop sign compliance statistics from our AI traffic "
+                "monitoring system. Browse historical data from real-time vehicle detection and "
+                "YOLO computer vision analysis."
+            ),
+            "url": f"{base_url}/records",
+            "image": f"{base_url}/static/screenshot_afternoon.png",
+        },
+        "debug": {
+            "description": (
+                "Debug interface for Stop Sign Nanny AI traffic monitoring system configuration " "and zone adjustment."
+            ),
+            "url": f"{base_url}/debug",
+            "image": f"{base_url}/static/screenshot_afternoon.png",
+        },
+    }
+
+    # Get metadata for current page type, fallback to home
+    metadata = page_metadata.get(page_type, page_metadata["home"])
+
     scripts = [
         Script(src="https://unpkg.com/htmx.org@1.9.4", defer=True),
         Script(
@@ -96,6 +140,22 @@ def page_head_component(title, include_video_deps=False, page_type="home"):
     return Head(
         Title(title),
         Meta(name="viewport", content="width=device-width, initial-scale=1"),
+        # Description meta tag
+        Meta(name="description", content=metadata["description"]),
+        # Canonical URL
+        Link(rel="canonical", href=metadata["url"]),
+        # Open Graph tags
+        Meta(property="og:title", content=title),
+        Meta(property="og:description", content=metadata["description"]),
+        Meta(property="og:image", content=metadata["image"]),
+        Meta(property="og:url", content=metadata["url"]),
+        Meta(property="og:type", content="website"),
+        # Twitter Card tags
+        Meta(name="twitter:card", content="summary_large_image"),
+        Meta(name="twitter:title", content=title),
+        Meta(name="twitter:description", content=metadata["description"]),
+        Meta(name="twitter:image", content=metadata["image"]),
+        # Stylesheet
         Link(rel="stylesheet", href="/static/base.css"),
         *scripts,
     )
