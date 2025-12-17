@@ -65,8 +65,93 @@ def main_layout_component():
     )
 
 
+def _build_json_ld(base_url, metadata, page_type):
+    """Build JSON-LD structured data for the page."""
+    # Base WebSite schema (always included)
+    website_schema = {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Stop Sign Nanny",
+        "url": base_url,
+        "description": (
+            "Real-time AI traffic monitoring using YOLO computer vision for stop sign "
+            "compliance detection at a neighborhood intersection"
+        ),
+    }
+
+    # Organization/Person schema (creator)
+    creator_schema = {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "name": "David Rose",
+        "url": "https://github.com/cipher982",
+        "sameAs": ["https://github.com/cipher982"],
+    }
+
+    # WebApplication schema (main app)
+    web_app_schema = {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Stop Sign Nanny",
+        "description": metadata["description"],
+        "url": metadata["url"],
+        "applicationCategory": "ComputerVisionApplication",
+        "operatingSystem": "Web",
+        "image": metadata["image"],
+        "author": {"@type": "Person", "name": "David Rose", "url": "https://github.com/cipher982"},
+        "featureList": [
+            "Real-time YOLO object detection",
+            "Vehicle tracking and classification",
+            "Stop sign compliance monitoring",
+            "Live HLS video streaming",
+            "Historical vehicle pass records",
+        ],
+        "softwareVersion": "2.0",
+        "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+    }
+
+    # Page-specific schemas
+    schemas = [website_schema, creator_schema, web_app_schema]
+
+    if page_type == "home":
+        # Add VideoObject schema for live stream
+        video_schema = {
+            "@context": "https://schema.org",
+            "@type": "VideoObject",
+            "name": "Live Stop Sign Traffic Monitoring",
+            "description": (
+                "Real-time video stream showing AI-powered vehicle detection " "and stop sign compliance monitoring"
+            ),
+            "thumbnailUrl": f"{base_url}/static/screenshot_afternoon.png",
+            "uploadDate": "2024-01-01T00:00:00Z",
+            "contentUrl": f"{base_url}/stream/stream.m3u8",
+            "embedUrl": f"{base_url}/",
+        }
+        schemas.append(video_schema)
+    elif page_type == "records":
+        # Add Dataset schema for vehicle records
+        dataset_schema = {
+            "@context": "https://schema.org",
+            "@type": "Dataset",
+            "name": "Vehicle Pass Records",
+            "description": (
+                "Historical dataset of vehicle detections including speed, "
+                "stop duration, and compliance metrics from AI traffic monitoring"
+            ),
+            "url": f"{base_url}/records",
+            "temporalCoverage": "2024-01/..",
+            "variableMeasured": ["vehicle speed", "stop duration", "time in zone", "stop compliance"],
+        }
+        schemas.append(dataset_schema)
+
+    # Return as graph for multiple schemas
+    return {"@context": "https://schema.org", "@graph": schemas}
+
+
 def page_head_component(title, include_video_deps=False, page_type="home"):
     """Standard page head with title and dependencies"""
+    import json
+
     from fasthtml.common import Head
     from fasthtml.common import Link
     from fasthtml.common import Meta
@@ -117,6 +202,9 @@ def page_head_component(title, include_video_deps=False, page_type="home"):
     # Get metadata for current page type, fallback to home
     metadata = page_metadata.get(page_type, page_metadata["home"])
 
+    # JSON-LD structured data
+    json_ld_data = _build_json_ld(base_url, metadata, page_type)
+
     scripts = [
         Script(src="https://unpkg.com/htmx.org@1.9.4", defer=True),
         Script(
@@ -155,6 +243,8 @@ def page_head_component(title, include_video_deps=False, page_type="home"):
         Meta(name="twitter:title", content=title),
         Meta(name="twitter:description", content=metadata["description"]),
         Meta(name="twitter:image", content=metadata["image"]),
+        # JSON-LD structured data
+        Script(json.dumps(json_ld_data), type="application/ld+json"),
         # Stylesheet
         Link(rel="stylesheet", href="/static/base.css"),
         *scripts,
