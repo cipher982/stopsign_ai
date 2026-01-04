@@ -53,10 +53,15 @@ def setup_telemetry(service_name: str, service_version: str = "1.0.0", enable_co
         logger.info(f"Telemetry already initialized for {service_name}")
         return
 
-    # Get OTLP endpoint from centralized settings (will fail fast if missing)
+    # Get OTLP endpoint from centralized settings
     from stopsign.settings import OTEL_EXPORTER_OTLP_ENDPOINT
 
     otlp_endpoint = OTEL_EXPORTER_OTLP_ENDPOINT
+
+    # Skip telemetry if endpoint not configured
+    if not otlp_endpoint:
+        logger.info("OTEL endpoint not configured, telemetry disabled")
+        return
 
     try:
         # Create resource
