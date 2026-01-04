@@ -181,8 +181,8 @@ FRAME_BUFFER_SIZE = get_env_int("FRAME_BUFFER_SIZE", 500, required=False)
 PROMETHEUS_PORT = get_env_int("PROMETHEUS_PORT", 9100, required=False)
 WEB_SERVER_PORT = get_env_int("WEB_SERVER_PORT", 8000, required=False)
 
-# Telemetry (required for observability)
-OTEL_EXPORTER_OTLP_ENDPOINT = get_env("OTEL_EXPORTER_OTLP_ENDPOINT")
+# Telemetry (optional - set to empty string to disable)
+OTEL_EXPORTER_OTLP_ENDPOINT = get_env("OTEL_EXPORTER_OTLP_ENDPOINT", required=False) or None
 
 # Select configuration based on environment
 if ENV == "local":
