@@ -21,7 +21,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync && uv pip install debugpy
 
 RUN mkdir -p /app/models && \
-    curl -L https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt -o /app/models/yolo11x.pt
+    curl -L https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt -o /app/models/yolo11s.pt
 
 # Copy application code last (changes most frequently)
 COPY stopsign ./stopsign/

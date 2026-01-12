@@ -23,13 +23,7 @@ services:
       - default
       - monitoring
       - coolify
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['0']
-              capabilities: [gpu]
+    # GPU removed - running YOLO on CPU with yolo11s model
     healthcheck:
       test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:${ANALYZER_HEALTH_PORT:-8081}/ready"]
       interval: 30s
@@ -58,15 +52,7 @@ services:
       - default
       - monitoring
       - coolify
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['0']
-              capabilities:
-                - gpu
-                - video
+    # GPU removed - using libx264 software encoding instead of h264_nvenc
     healthcheck:
       # Use liveness-only endpoint to avoid flapping on transient HLS staleness
       test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:8080/healthz"]
