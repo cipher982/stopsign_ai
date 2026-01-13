@@ -433,66 +433,88 @@ def main():
         logger.error("Failed to start FFmpeg process")
         return
 
+    # Frame pacing: maintain steady 15 FPS output by duplicating frames when input is slow
+    # This is the "Carmack stable fix" - fill gaps with duplicate frames
+    target_fps = float(FRAME_RATE)
+    frame_interval = 1.0 / target_fps  # ~66.7ms at 15 FPS
+    last_frame_time = time.time()
+    last_raw_frame = None  # Cache for frame duplication
+
     # FPS logging for diagnosis
     fps_frame_count = 0
     fps_last_log_time = time.time()
+    new_frame_count = 0
+    dup_frame_count = 0
 
     try:
-        logger.info("Starting main loop")
+        logger.info(f"Starting main loop with frame duplication (target {target_fps} FPS)")
         global frames_processed
         while True:
-            task = safe_brpop(PROCESSED_FRAME_KEY, timeout=5)
+            # Non-blocking check for new frame (timeout=0.01s to allow frame pacing)
+            task = safe_brpop(PROCESSED_FRAME_KEY, timeout=0)
+
+            now = time.time()
+            time_since_last = now - last_frame_time
+
             if task:
+                # New frame arrived - decode and cache it
                 _, data = task  # type: ignore
                 if ffmpeg_process.stdin:
                     try:
-                        with tracer.start_as_current_span("process_frame") as span:
-                            span.set_attribute("frame.size_bytes", len(data))
+                        nparr = np.frombuffer(data, np.uint8)
+                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if frame is None:
+                            logger.warning("cv2.imdecode returned None; skipping corrupt frame")
+                            continue
 
-                            # Decode frame
-                            nparr = np.frombuffer(data, np.uint8)
-                            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                            if frame is None:
-                                logger.warning("cv2.imdecode returned None; skipping corrupt frame")
-                                raise ValueError("decode_failed")
+                        # Resize and cache
+                        resized_frame = cv2.resize(frame, (frame_shape[0], frame_shape[1]))
+                        last_raw_frame = resized_frame.tobytes()
+                        new_frame_count += 1
+                    except Exception as e:
+                        logger.warning(f"Frame decode error: {e}")
+                        continue
 
-                            # Resize frame
-                            resized_frame = cv2.resize(frame, (frame_shape[0], frame_shape[1]))
-                            span.set_attribute("frame.width", frame_shape[0])
-                            span.set_attribute("frame.height", frame_shape[1])
+            # Write frame at steady 15 FPS intervals
+            if time_since_last >= frame_interval and last_raw_frame is not None:
+                if ffmpeg_process.stdin:
+                    try:
+                        ffmpeg_process.stdin.write(last_raw_frame)
+                        ffmpeg_process.stdin.flush()
+                        last_frame_time = now
+                        frames_processed += 1
+                        fps_frame_count += 1
 
-                            # Send to FFmpeg
-                            raw_frame = resized_frame.tobytes()
-                            ffmpeg_process.stdin.write(raw_frame)
-                            ffmpeg_process.stdin.flush()
+                        # Track duplicates vs new frames
+                        if not task:
+                            dup_frame_count += 1
 
-                            frames_processed += 1
-
-                            # Log actual FPS every 5 seconds for diagnosis
-                            fps_frame_count += 1
-                            now = time.time()
-                            if now - fps_last_log_time >= 5.0:
-                                actual_fps = fps_frame_count / (now - fps_last_log_time)
-                                logger.info(f"FFmpeg input rate: {actual_fps:.1f} FPS (target: {FRAME_RATE})")
-                                fps_frame_count = 0
-                                fps_last_log_time = now
-                            # Heartbeat and status updates
-                            global LAST_FRAME_TS
-                            LAST_FRAME_TS = time.time()
-                            status.update_status_metric("current_fps", float(FRAME_RATE))
-                            status.increment_counter("processed_count", 1)
-                            metrics.frames_processed.add(1, {"service": "ffmpeg"})
-                            span.set_attribute("frames.total_processed", frames_processed)
-
+                        # Heartbeat and status updates
+                        global LAST_FRAME_TS
+                        LAST_FRAME_TS = now
+                        status.update_status_metric("current_fps", target_fps)
+                        status.increment_counter("processed_count", 1)
+                        metrics.frames_processed.add(1, {"service": "ffmpeg"})
                     except BrokenPipeError:
                         logger.error("FFmpeg process closed unexpectedly. Restarting...")
-                        with tracer.start_as_current_span("restart_ffmpeg_process"):
-                            ffmpeg_process = start_ffmpeg_process(frame_shape)
-                            if not ffmpeg_process or not ffmpeg_process.stdin:
-                                logger.error("FFmpeg restart failed: stdin is None")
-                    except ValueError as e:
-                        if str(e) != "decode_failed":
-                            logger.warning(f"Processing error: {e}")
+                        ffmpeg_process = start_ffmpeg_process(frame_shape)
+                        if not ffmpeg_process or not ffmpeg_process.stdin:
+                            logger.error("FFmpeg restart failed: stdin is None")
+
+            # Log FPS every 5 seconds
+            if now - fps_last_log_time >= 5.0:
+                actual_fps = fps_frame_count / (now - fps_last_log_time)
+                new_fps = new_frame_count / (now - fps_last_log_time)
+                dup_pct = (dup_frame_count / fps_frame_count * 100) if fps_frame_count > 0 else 0
+                logger.info(f"FFmpeg output: {actual_fps:.1f} FPS (new: {new_fps:.1f}, dup: {dup_pct:.0f}%)")
+                fps_frame_count = 0
+                new_frame_count = 0
+                dup_frame_count = 0
+                fps_last_log_time = now
+
+            # Small sleep to prevent busy-waiting when no frames available
+            if not task and time_since_last < frame_interval:
+                time.sleep(0.005)  # 5ms sleep
 
             # If FFmpeg died, restart it
             if ffmpeg_process.poll() is not None:
