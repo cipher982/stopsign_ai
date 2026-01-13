@@ -606,9 +606,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             stop_detection_time = time.time() - stop_detection_start
             self.stop_detection_time.observe(stop_detection_time)
         else:
-            # FAST PATH: Skip YOLO, stop zone drawing, and stop detection
-            # Just crop/scale and use existing tracking state for visualization
-            frame = self.crop_scale_frame(frame)
+            # FAST PATH: Skip YOLO and stop detection, but still draw stop zone
+            # Use existing tracking state for visualization
+            frame_with_stop_zone = self.draw_stop_zone_on_raw_frame(frame)
+            frame = self.crop_scale_frame(frame_with_stop_zone)
             processed_frame = frame
             boxes = []
 
