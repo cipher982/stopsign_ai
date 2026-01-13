@@ -433,6 +433,10 @@ def main():
         logger.error("Failed to start FFmpeg process")
         return
 
+    # Frame pacing to enforce real-time playback
+    frame_interval = 1.0 / FRAME_RATE  # ~0.0667 seconds at 15 FPS
+    last_frame_write_time = 0.0
+
     try:
         logger.info("Starting main loop")
         global frames_processed
@@ -456,6 +460,14 @@ def main():
                             resized_frame = cv2.resize(frame, (frame_shape[0], frame_shape[1]))
                             span.set_attribute("frame.width", frame_shape[0])
                             span.set_attribute("frame.height", frame_shape[1])
+
+                            # Pace frames to target FPS for real-time playback
+                            now = time.time()
+                            if last_frame_write_time > 0:
+                                elapsed = now - last_frame_write_time
+                                if elapsed < frame_interval:
+                                    time.sleep(frame_interval - elapsed)
+                            last_frame_write_time = time.time()
 
                             # Send to FFmpeg
                             raw_frame = resized_frame.tobytes()
