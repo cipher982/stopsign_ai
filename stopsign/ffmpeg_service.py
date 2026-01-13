@@ -434,7 +434,7 @@ def main():
         return
 
     # Frame pacing to enforce real-time playback
-    frame_interval = 1.0 / FRAME_RATE  # ~0.0667 seconds at 15 FPS
+    frame_interval = 1.0 / float(FRAME_RATE)  # ~0.0667 seconds at 15 FPS
     last_frame_write_time = 0.0
 
     try:
