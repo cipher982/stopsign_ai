@@ -539,23 +539,25 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         start_time = time.time()
         ts_for_logic = capture_ts
 
-        # Calculate average brightness
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        avg_brightness = np.mean(gray)  # type: ignore
-        contrast = np.std(gray)  # type: ignore
+        # Calculate average brightness using thumbnail (Carmack optimization)
+        # Don't process 2560x1440 (11MB) - resize to 64x64 first (12KB)
+        # Statistically identical result, ~1000x less memory bandwidth
+        thumb = cv2.resize(frame, (64, 64), interpolation=cv2.INTER_NEAREST)
+        gray_thumb = cv2.cvtColor(thumb, cv2.COLOR_BGR2GRAY)
+        avg_brightness = np.mean(gray_thumb)  # type: ignore
+        contrast = np.std(gray_thumb)  # type: ignore
         self.avg_brightness.set(float(avg_brightness))
         self.contrast.set(float(contrast))
 
-        # Draw stop zone on raw frame BEFORE crop/scale
-        # This allows direct mapping from browser coordinates to raw frame coordinates
-        frame_with_stop_zone = self.draw_stop_zone_on_raw_frame(frame)
-
-        frame = self.crop_scale_frame(frame_with_stop_zone)
-
-        # Decoupled YOLO: only run detection at ~8 FPS, output every frame at 15 FPS
+        # Decoupled YOLO: check FIRST to enable fast path for non-YOLO frames
         should_run_yolo = (ts_for_logic - self.last_yolo_ts) >= self.min_yolo_interval
 
         if should_run_yolo:
+            # YOLO PATH: Full processing with stop zone drawing on raw frame
+            # Draw stop zone on raw frame BEFORE crop/scale for coordinate mapping
+            frame_with_stop_zone = self.draw_stop_zone_on_raw_frame(frame)
+            frame = self.crop_scale_frame(frame_with_stop_zone)
+
             # Object Detection (expensive - only run when scheduled)
             object_detection_start = time.time()
             processed_frame, boxes = self.detect_objects(frame)
@@ -578,41 +580,37 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             self.car_tracking_fps_count += 1
 
             self.last_yolo_ts = ts_for_logic
+
+            # Stop Detection - only on YOLO frames (state doesn't change between detections)
+            stop_detection_start = time.time()
+            active_cars = [car for car in self.car_tracker.get_cars().values() if not car.state.is_parked]
+
+            violations_detected = 0
+
+            with tracer.start_as_current_span("stop_detection") as span:
+                span.set_attribute("cars.active_count", len(active_cars))
+                span.set_attribute("cars.total_count", len(self.car_tracker.get_cars()))
+
+                for car in active_cars:
+                    was_violating = getattr(car.state, "violating_stop", False)
+                    self.stop_detector.update_car_stop_status(car, ts_for_logic, processed_frame)
+                    is_violating = getattr(car.state, "violating_stop", False)
+                    if is_violating and not was_violating:
+                        violations_detected += 1
+
+                span.set_attribute("violations.total_detected", violations_detected)
+                if violations_detected > 0:
+                    metrics.stop_violations.add(violations_detected)
+                    span.set_attribute("violations.detected_count", violations_detected)
+
+            stop_detection_time = time.time() - stop_detection_start
+            self.stop_detection_time.observe(stop_detection_time)
         else:
-            # Skip YOLO - use existing tracking state, boxes will be interpolated for visualization
+            # FAST PATH: Skip YOLO, stop zone drawing, and stop detection
+            # Just crop/scale and use existing tracking state for visualization
+            frame = self.crop_scale_frame(frame)
             processed_frame = frame
             boxes = []
-
-        # Stop Detection
-        stop_detection_start = time.time()
-        active_cars = [car for car in self.car_tracker.get_cars().values() if not car.state.is_parked]
-
-        violations_detected = 0
-
-        with tracer.start_as_current_span("stop_detection") as span:
-            # Set attributes before creating child spans to avoid lifecycle conflicts
-            span.set_attribute("cars.active_count", len(active_cars))
-            span.set_attribute("cars.total_count", len(self.car_tracker.get_cars()))
-
-            for car in active_cars:
-                # Check if car was violating before update
-                was_violating = getattr(car.state, "violating_stop", False)
-
-                self.stop_detector.update_car_stop_status(car, ts_for_logic, processed_frame)
-
-                # Check if car is now violating (new violation)
-                is_violating = getattr(car.state, "violating_stop", False)
-                if is_violating and not was_violating:
-                    violations_detected += 1
-
-            # Set final attributes before span closes
-            span.set_attribute("violations.total_detected", violations_detected)
-            if violations_detected > 0:
-                metrics.stop_violations.add(violations_detected)
-                span.set_attribute("violations.detected_count", violations_detected)
-
-        stop_detection_time = time.time() - stop_detection_start
-        self.stop_detection_time.observe(stop_detection_time)
 
         # Check debug mode periodically, config updates every frame for instant feedback
         if self.frame_count % 30 == 0:  # Check debug mode every 30 frames
