@@ -7,7 +7,6 @@ name = "stopsign-ai"
 version = "0.1.0"
 description = ""
 authors = [{name = "David Rose", email = "david@drose.io"}]
-readme = "README.md"
 requires-python = "~=3.12.0"
 dependencies = [
     "ffmpeg-python>=0.2.0",
