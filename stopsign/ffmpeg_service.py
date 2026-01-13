@@ -433,9 +433,9 @@ def main():
         logger.error("Failed to start FFmpeg process")
         return
 
-    # Frame pacing to enforce real-time playback
-    frame_interval = 1.0 / float(FRAME_RATE)  # ~0.0667 seconds at 15 FPS
-    last_frame_write_time = 0.0
+    # FPS logging for diagnosis
+    fps_frame_count = 0
+    fps_last_log_time = time.time()
 
     try:
         logger.info("Starting main loop")
@@ -461,20 +461,21 @@ def main():
                             span.set_attribute("frame.width", frame_shape[0])
                             span.set_attribute("frame.height", frame_shape[1])
 
-                            # Pace frames to target FPS for real-time playback
-                            now = time.time()
-                            if last_frame_write_time > 0:
-                                elapsed = now - last_frame_write_time
-                                if elapsed < frame_interval:
-                                    time.sleep(frame_interval - elapsed)
-                            last_frame_write_time = time.time()
-
                             # Send to FFmpeg
                             raw_frame = resized_frame.tobytes()
                             ffmpeg_process.stdin.write(raw_frame)
                             ffmpeg_process.stdin.flush()
 
                             frames_processed += 1
+
+                            # Log actual FPS every 5 seconds for diagnosis
+                            fps_frame_count += 1
+                            now = time.time()
+                            if now - fps_last_log_time >= 5.0:
+                                actual_fps = fps_frame_count / (now - fps_last_log_time)
+                                logger.info(f"FFmpeg input rate: {actual_fps:.1f} FPS (target: {FRAME_RATE})")
+                                fps_frame_count = 0
+                                fps_last_log_time = now
                             # Heartbeat and status updates
                             global LAST_FRAME_TS
                             LAST_FRAME_TS = time.time()
