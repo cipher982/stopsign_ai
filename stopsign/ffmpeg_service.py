@@ -450,8 +450,13 @@ def main():
         logger.info(f"Starting main loop with frame duplication (target {target_fps} FPS)")
         global frames_processed
         while True:
-            # Non-blocking check for new frame (timeout=0.01s to allow frame pacing)
-            task = safe_brpop(PROCESSED_FRAME_KEY, timeout=0)
+            # Non-blocking pop - RPOP returns immediately with None if queue empty
+            # (BRPOP timeout=0 blocks forever, so we use RPOP instead)
+            try:
+                data = REDIS_CLIENT.rpop(PROCESSED_FRAME_KEY)
+                task = (PROCESSED_FRAME_KEY, data) if data else None
+            except Exception:
+                task = None
 
             now = time.time()
             time_since_last = now - last_frame_time
