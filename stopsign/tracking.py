@@ -354,9 +354,8 @@ class StopDetector:
         return np.array(processed, dtype=np.float32)
 
     def _get_car_polygon(self, bbox: Tuple[float, float, float, float]) -> np.ndarray:
-        x, y, w, h = bbox
-        x1, y1 = x - w / 2, y - h / 2  # Top-left corner
-        x2, y2 = x + w / 2, y + h / 2  # Bottom-right corner
+        # bbox is XYXY format (x1, y1, x2, y2) - corner coordinates
+        x1, y1, x2, y2 = bbox
         bbox_polygon = np.array(
             [
                 [x1, y1],  # Top-left
