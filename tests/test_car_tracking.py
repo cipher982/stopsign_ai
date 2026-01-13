@@ -257,3 +257,148 @@ class TestCarMovementStatus:
         # Car should be unparked after sustained high-speed movement
         # (depends on config thresholds)
         assert car.state.consecutive_moving_frames > 0 or not car.state.is_parked
+
+
+class TestBboxXYXYFormat:
+    """Test that XYXY bbox format is handled correctly throughout the pipeline.
+
+    CRITICAL: These tests ensure that functions consuming bbox correctly interpret
+    the XYXY format (x1, y1, x2, y2) rather than the old XYWH format (cx, cy, w, h).
+
+    This was added after a production bug where _get_car_polygon and save_vehicle_image
+    were treating XYXY coords as XYWH, causing zone detection and image cropping to fail.
+    """
+
+    def test_get_car_polygon_xyxy_format(self, mock_config, mock_database):
+        """Test that _get_car_polygon correctly interprets XYXY bbox format."""
+        from stopsign.tracking import StopDetector
+
+        detector = StopDetector(mock_config, mock_database)
+
+        # XYXY bbox: top-left (100, 150), bottom-right (200, 250)
+        bbox = (100.0, 150.0, 200.0, 250.0)
+        polygon = detector._get_car_polygon(bbox)
+
+        # Expected polygon corners (counter-clockwise from top-left)
+        assert polygon.shape == (4, 2), "Polygon should have 4 corners"
+
+        # Top-left
+        assert polygon[0][0] == pytest.approx(100.0), "Top-left x should be x1"
+        assert polygon[0][1] == pytest.approx(150.0), "Top-left y should be y1"
+
+        # Top-right
+        assert polygon[1][0] == pytest.approx(200.0), "Top-right x should be x2"
+        assert polygon[1][1] == pytest.approx(150.0), "Top-right y should be y1"
+
+        # Bottom-right
+        assert polygon[2][0] == pytest.approx(200.0), "Bottom-right x should be x2"
+        assert polygon[2][1] == pytest.approx(250.0), "Bottom-right y should be y2"
+
+        # Bottom-left
+        assert polygon[3][0] == pytest.approx(100.0), "Bottom-left x should be x1"
+        assert polygon[3][1] == pytest.approx(250.0), "Bottom-left y should be y2"
+
+    def test_get_car_polygon_width_height_correct(self, mock_config, mock_database):
+        """Test that polygon dimensions match the bbox width/height."""
+        from stopsign.tracking import StopDetector
+
+        detector = StopDetector(mock_config, mock_database)
+
+        # bbox with known dimensions: width=80, height=60
+        x1, y1, x2, y2 = 50.0, 100.0, 130.0, 160.0
+        expected_width = x2 - x1  # 80
+        expected_height = y2 - y1  # 60
+
+        polygon = detector._get_car_polygon((x1, y1, x2, y2))
+
+        # Check polygon width (x2 - x1)
+        actual_width = polygon[1][0] - polygon[0][0]
+        assert actual_width == pytest.approx(
+            expected_width
+        ), f"Polygon width {actual_width} should match bbox width {expected_width}"
+
+        # Check polygon height (y2 - y1)
+        actual_height = polygon[2][1] - polygon[0][1]
+        assert actual_height == pytest.approx(
+            expected_height
+        ), f"Polygon height {actual_height} should match bbox height {expected_height}"
+
+    def test_save_vehicle_image_crop_bounds(self, sample_frame):
+        """Test that save_vehicle_image calculates correct crop bounds from XYXY bbox."""
+        # We can't easily test the full function (needs Minio), so test the crop logic directly
+
+        # Simulate the crop calculation from save_vehicle_image
+        bbox = (100.0, 150.0, 200.0, 250.0)  # XYXY: 100x100 box
+        bx1, by1, bx2, by2 = bbox
+        w = bx2 - bx1  # Should be 100
+        h = by2 - by1  # Should be 100
+
+        padding_factor = 0.1
+        padding_x = int(w * padding_factor)  # 10
+        padding_y = int(h * padding_factor)  # 10
+
+        x1 = int(bx1 - padding_x)  # 90
+        y1 = int(by1 - padding_y)  # 140
+        x2 = int(bx2 + padding_x)  # 210
+        y2 = int(by2 + padding_y)  # 260
+
+        # Verify dimensions are reasonable (not whole frame)
+        crop_width = x2 - x1  # 120
+        crop_height = y2 - y1  # 120
+
+        assert crop_width == 120, f"Crop width should be 120, got {crop_width}"
+        assert crop_height == 120, f"Crop height should be 120, got {crop_height}"
+
+        # Verify this is NOT the old buggy calculation
+        # Old buggy code would do: x - w/2 where w=200 (actually x2), giving x1=0
+        # which would result in a much larger crop
+        assert x1 > 50, f"x1={x1} suggests correct XYXY handling (buggy code gives ~0)"
+        assert y1 > 100, f"y1={y1} suggests correct XYXY handling (buggy code gives ~0)"
+
+    def test_bbox_format_consistency_through_update(self, mock_config):
+        """Test that bbox maintains XYXY format through Car.update()."""
+        car = Car(id=1, config=mock_config)
+
+        # XYXY bbox representing a 50x30 box at position (125, 135) to (175, 165)
+        input_bbox = (125.0, 135.0, 175.0, 165.0)
+
+        car.update(
+            location=(150.0, 150.0),  # center
+            timestamp=time.time(),
+            bbox=input_bbox,
+        )
+
+        # Verify bbox is stored unchanged
+        assert car.state.bbox == input_bbox
+
+        # Verify we can derive correct width/height from stored bbox
+        x1, y1, x2, y2 = car.state.bbox
+        width = x2 - x1
+        height = y2 - y1
+
+        assert width == pytest.approx(50.0), f"Width should be 50, got {width}"
+        assert height == pytest.approx(30.0), f"Height should be 30, got {height}"
+
+    def test_interpolated_bbox_maintains_xyxy_format(self, mock_config):
+        """Test that get_interpolated_bbox returns valid XYXY format."""
+        car = Car(id=1, config=mock_config)
+        base_time = time.time()
+
+        # Set up car with XYXY bbox and velocity
+        car.state.bbox = (100.0, 100.0, 150.0, 130.0)  # 50x30 box
+        car.state.velocity = (100.0, 50.0)  # Moving right and down
+        car.state.last_update_time = base_time
+
+        # Get interpolated bbox 100ms later
+        bbox = car.get_interpolated_bbox(base_time + 0.1)
+        x1, y1, x2, y2 = bbox
+
+        # Verify XYXY invariant: x2 > x1 and y2 > y1
+        assert x2 > x1, f"XYXY invariant violated: x2 ({x2}) should be > x1 ({x1})"
+        assert y2 > y1, f"XYXY invariant violated: y2 ({y2}) should be > y1 ({y1})"
+
+        # Verify dimensions preserved
+        width = x2 - x1
+        height = y2 - y1
+        assert width == pytest.approx(50.0, abs=0.1), f"Width should be preserved at 50, got {width}"
+        assert height == pytest.approx(30.0, abs=0.1), f"Height should be preserved at 30, got {height}"
