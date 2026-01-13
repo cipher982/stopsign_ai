@@ -37,7 +37,11 @@ class KalmanFilterWrapper:
             * process_noise
         )
 
-    def predict(self):
+    def predict(self, dt: float = None):
+        """Predict state forward. If dt provided, update transition matrix for accurate prediction."""
+        if dt is not None and dt > 0:
+            self.kf.F[0, 2] = dt
+            self.kf.F[1, 3] = dt
         self.kf.predict()
 
     def update(self, location: np.ndarray) -> np.ndarray:

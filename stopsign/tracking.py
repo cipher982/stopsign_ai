@@ -80,7 +80,9 @@ class Car:
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
-        self.kalman_filter.predict()
+        # Calculate dt for accurate Kalman prediction
+        dt = timestamp - self.state.last_update_time if self.state.last_update_time > 0 else None
+        self.kalman_filter.predict(dt)
         smoothed_location = self.kalman_filter.update(np.array(location))
         self.state.location = (float(smoothed_location[0]), float(smoothed_location[1]))
         self.state.track.append((location, timestamp))
@@ -174,6 +176,22 @@ class Car:
             if self.state.consecutive_stationary_frames >= self.config.parked_frame_threshold:
                 self.state.is_parked = True
                 self.state.consecutive_moving_frames = 0
+
+    def get_interpolated_bbox(self, current_ts: float) -> Tuple[float, float, float, float]:
+        """Predict bbox position based on velocity and time since last YOLO update.
+
+        Used for smooth visualization between detection frames. The velocity
+        is in pixels/second, so we multiply by dt (seconds) to get pixel offset.
+        """
+        dt = current_ts - self.state.last_update_time
+        # Don't extrapolate if no time has passed, or too far into future
+        if dt <= 0 or dt > 0.5:
+            return self.state.bbox
+
+        vx, vy = self.state.velocity
+        x1, y1, x2, y2 = self.state.bbox
+        # Translate bbox by velocity * time
+        return (x1 + vx * dt, y1 + vy * dt, x2 + vx * dt, y2 + vy * dt)
 
     def __repr__(self) -> str:
         return (
