@@ -583,13 +583,15 @@ def save_vehicle_image(
     file_id = uuid.uuid4().hex
     object_name = f"vehicle_{file_id}_{int(timestamp)}.jpg"
 
-    # Crop the image
-    x, y, w, h = bbox
+    # Crop the image - bbox is XYXY format (x1, y1, x2, y2)
+    bx1, by1, bx2, by2 = bbox
+    w = bx2 - bx1
+    h = by2 - by1
     padding_factor = 0.1
     padding_x = int(w * padding_factor)
     padding_y = int(h * padding_factor)
-    x1, y1 = int(x - w / 2 - padding_x), int(y - h / 2 - padding_y)
-    x2, y2 = int(x + w / 2 + padding_x), int(y + h / 2 + padding_y)
+    x1, y1 = int(bx1 - padding_x), int(by1 - padding_y)
+    x2, y2 = int(bx2 + padding_x), int(by2 + padding_y)
 
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
