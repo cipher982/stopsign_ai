@@ -18,13 +18,20 @@ services:
       DB_URL: ${DB_URL}
       ANALYZER_HEALTH_PORT: ${ANALYZER_HEALTH_PORT:-8081}
       ANALYZER_STALL_SEC: ${ANALYZER_STALL_SEC:-120}
+      YOLO_DEVICE: ${YOLO_DEVICE:-cuda}
     volumes:
       - config-dir:/app/config
     networks:
       - default
       - monitoring
       - coolify
-    # GPU removed - running YOLO on CPU with yolo11s model
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:${ANALYZER_HEALTH_PORT:-8081}/ready"]
       interval: 30s
