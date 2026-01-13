@@ -224,7 +224,12 @@ class CarTracker:
                 current_car_ids.add(car_id)
                 x, y, w, h = box.xywh[0]
                 location = (float(x), float(y))
-                bbox = (float(x), float(y), float(w), float(h))
+                # Convert XYWH (center) to XYXY (corners) for drawing
+                x1 = float(x - w / 2)
+                y1 = float(y - h / 2)
+                x2 = float(x + w / 2)
+                y2 = float(y + h / 2)
+                bbox = (x1, y1, x2, y2)
 
                 if car_id not in self.cars:
                     self.cars[car_id] = Car(id=car_id, config=self.config)
