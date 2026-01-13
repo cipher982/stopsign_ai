@@ -1,8 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "stopsign-ai"
 version = "0.1.0"
 description = ""
-authors = ["David Rose <david@drose.io>"]
+authors = [{name = "David Rose", email = "david@drose.io"}]
 readme = "README.md"
 requires-python = "~=3.12.0"
 dependencies = [
@@ -29,6 +33,23 @@ dependencies = [
     "opentelemetry-instrumentation-requests>=0.55b1",
     "ruff>=0.13.2",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "fakeredis>=2.20.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["stopsign"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
 
 [tool.ruff]
 line-length = 120
