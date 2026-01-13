@@ -93,7 +93,15 @@ prod-help:
 # Testing
 test:
 	@echo "🧪 Running tests..."
-	@echo "TODO: Add test commands when test suite is available"
+	uv run pytest tests/ -v
+
+test-cov:
+	@echo "🧪 Running tests with coverage..."
+	uv run pytest tests/ -v --cov=stopsign --cov-report=term-missing
+
+test-watch:
+	@echo "🧪 Running tests in watch mode..."
+	uv run pytest tests/ -v --tb=short -x
 
 # Cleanup
 clean:
