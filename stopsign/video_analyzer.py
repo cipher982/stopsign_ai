@@ -99,9 +99,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.last_fps_update = time.time()
         self.stats_update_interval = 300  # Update stats every 5 minutes
 
-        # Decoupled YOLO: run detection at ~8 FPS, output frames at 15 FPS
+        # YOLO timing - run every frame on GPU, can be throttled for CPU
         self.last_yolo_ts = 0.0
-        self.min_yolo_interval = 1.0 / 8  # ~8 FPS for YOLO (matches CPU capacity)
+        self.min_yolo_interval = 0.0  # Run YOLO every frame (GPU can handle it)
         self.stats_queue = queue.Queue()
         self.frame_dimensions = self.get_frame_dimensions()
 
