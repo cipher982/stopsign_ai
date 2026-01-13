@@ -98,6 +98,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.last_processed_time = time.time()
         self.last_fps_update = time.time()
         self.stats_update_interval = 300  # Update stats every 5 minutes
+
+        # Decoupled YOLO: run detection at ~8 FPS, output frames at 15 FPS
+        self.last_yolo_ts = 0.0
+        self.min_yolo_interval = 1.0 / 8  # ~8 FPS for YOLO (matches CPU capacity)
         self.stats_queue = queue.Queue()
         self.frame_dimensions = self.get_frame_dimensions()
 
@@ -358,23 +362,21 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                     logger.error("Discarding frame without valid capture timestamp metadata")
                     return None
 
-                # Catch-up policy: if this frame is too old (pipeline latency high),
-                # trim the raw queue to keep only the newest N frames and skip this one.
+                # With decoupled YOLO, we output every frame for smooth video.
+                # Only log high lag for monitoring, but don't skip frames.
+                # YOLO will naturally run on recent frames since it's time-gated.
                 if ANALYZER_CATCHUP_SEC > 0:
                     try:
                         lag = time.time() - float(capture_ts)
                         if lag > ANALYZER_CATCHUP_SEC:
-                            keep_n = max(1, ANALYZER_CATCHUP_KEEP_N)
-                            self.redis_client.ltrim(RAW_FRAME_KEY, 0, keep_n - 1)
-                            logger.warning(
-                                "Analyzer catch-up: lag=%.2fs > %.2fs, trimmed RAW queue to last %d frames",
+                            # Log but don't skip - smooth output is more important than freshness
+                            logger.info(
+                                "High pipeline lag: %.2fs (threshold %.2fs), continuing to output for smooth video",
                                 lag,
                                 ANALYZER_CATCHUP_SEC,
-                                keep_n,
                             )
-                            return None  # skip this stale frame; fetch again
                     except Exception as e:
-                        logger.debug(f"Catch-up check failed: {e}")
+                        logger.debug(f"Lag check failed: {e}")
                 return frame, capture_ts
             return None
         except Exception as e:
@@ -550,31 +552,36 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         frame = self.crop_scale_frame(frame_with_stop_zone)
 
-        # Object Detection
-        object_detection_start = time.time()
-        processed_frame, boxes = self.detect_objects(frame)
-        object_detection_time = time.time() - object_detection_start
-        self.object_detection_time.observe(object_detection_time)
-        self.object_detection_fps_count += 1  # Increment object detection FPS counter
+        # Decoupled YOLO: only run detection at ~8 FPS, output every frame at 15 FPS
+        should_run_yolo = (ts_for_logic - self.last_yolo_ts) >= self.min_yolo_interval
 
-        # Car Tracking (removed wrapper span to prevent lifecycle conflicts with granular telemetry)
-        car_tracking_start = time.time()
+        if should_run_yolo:
+            # Object Detection (expensive - only run when scheduled)
+            object_detection_start = time.time()
+            processed_frame, boxes = self.detect_objects(frame)
+            object_detection_time = time.time() - object_detection_start
+            self.object_detection_time.observe(object_detection_time)
+            self.object_detection_fps_count += 1
 
-        # Get counts before update for metrics
-        cars_before = len(self.car_tracker.get_cars())
+            # Car Tracking - update with new detections
+            car_tracking_start = time.time()
+            cars_before = len(self.car_tracker.get_cars())
+            self.car_tracker.update_cars(boxes, ts_for_logic, processed_frame)
+            cars_after = len(self.car_tracker.get_cars())
+            new_cars = cars_after - cars_before
 
-        self.car_tracker.update_cars(boxes, ts_for_logic, processed_frame)
+            if new_cars > 0:
+                metrics.vehicles_tracked.add(new_cars)
 
-        # Get counts after update for metrics
-        cars_after = len(self.car_tracker.get_cars())
-        new_cars = cars_after - cars_before
+            car_tracking_time = time.time() - car_tracking_start
+            self.car_tracking_time.observe(car_tracking_time)
+            self.car_tracking_fps_count += 1
 
-        if new_cars > 0:
-            metrics.vehicles_tracked.add(new_cars)
-
-        car_tracking_time = time.time() - car_tracking_start
-        self.car_tracking_time.observe(car_tracking_time)
-        self.car_tracking_fps_count += 1  # Increment car tracking FPS counter
+            self.last_yolo_ts = ts_for_logic
+        else:
+            # Skip YOLO - use existing tracking state, boxes will be interpolated for visualization
+            processed_frame = frame
+            boxes = []
 
         # Stop Detection
         stop_detection_start = time.time()
@@ -807,19 +814,18 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             bottom_mid = (stop_box_corners[2] + stop_box_corners[3]) // 2
             cv2.line(frame, tuple(top_mid), tuple(bottom_mid), (0, 0, 255), 2)
 
-        for box in boxes:
-            if box.id is None:
-                continue
+        # Draw all tracked cars using interpolated boxes (works even when YOLO is skipped)
+        for car_id, car in cars.items():
             try:
-                car_id = int(box.id.item())
-                if car_id in cars:
-                    car = cars[car_id]
-                    if car.state.is_parked:
-                        self.draw_box(frame, car, box, color=(255, 255, 255), thickness=1)
-                    else:
-                        self.draw_box(frame, car, box, color=(0, 255, 0), thickness=2)
+                # Skip cars with no bbox yet (just created)
+                if car.state.bbox == (0.0, 0.0, 0.0, 0.0):
+                    continue
+                if car.state.is_parked:
+                    self.draw_car_interpolated(frame, car, timestamp, color=(255, 255, 255), thickness=1)
+                else:
+                    self.draw_car_interpolated(frame, car, timestamp, color=(0, 255, 0), thickness=2)
             except Exception as e:
-                logger.error(f"Error processing box in visualize function: {str(e)}")
+                logger.error(f"Error drawing car {car_id} in visualize: {str(e)}")
                 self.increment_exception_counter(type(e).__name__, "visualize")
 
         current_time = timestamp
@@ -911,6 +917,21 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
     def draw_box(self, frame: np.ndarray, car, box, color=(0, 255, 0), thickness=2):
         x1, y1, x2, y2 = map(int, box.xyxy[0])
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+
+        # format velocity and direction
+        vx, vy = car.state.velocity
+        direction = car.state.direction
+
+        label1 = f"ID: {car.id}, Speed: {car.state.speed:.1f}"
+        label2 = f"Vel: {int(vx)}, {int(vy)}, Dir: {direction:.2f}"
+        cv2.putText(frame, label1, (x1, y1 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.putText(frame, label2, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+    def draw_car_interpolated(self, frame: np.ndarray, car, timestamp: float, color=(0, 255, 0), thickness=2):
+        """Draw car bbox using interpolated position based on velocity."""
+        bbox = car.get_interpolated_bbox(timestamp)
+        x1, y1, x2, y2 = map(int, bbox)
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
         # format velocity and direction
