@@ -1,3 +1,4 @@
+import atexit
 import contextlib
 import io
 import json
@@ -36,8 +37,11 @@ except ImportError:
 from stopsign.config import Config
 from stopsign.coordinate_transform import Resolution
 from stopsign.database import Database
+from stopsign.frame_source import create_frame_source
 from stopsign.service_status import VideoAnalyzerStatusMixin
+from stopsign.settings import ANALYZER_RTSP_URL
 from stopsign.settings import DB_URL
+from stopsign.settings import FRAME_SOURCE
 from stopsign.settings import PROCESSED_FRAME_KEY
 from stopsign.settings import PROMETHEUS_PORT
 from stopsign.settings import RAW_FRAME_KEY
@@ -86,6 +90,21 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.config = config
         self.db = db
         self.redis_client: Redis = redis.from_url(REDIS_URL)
+
+        # Initialize frame source based on configuration
+        self.frame_source = create_frame_source(
+            source_type=FRAME_SOURCE,
+            redis_client=self.redis_client,
+            frame_key=RAW_FRAME_KEY,
+            rtsp_url=ANALYZER_RTSP_URL,
+            catchup_sec=ANALYZER_CATCHUP_SEC,
+            target_fps=15.0,
+        )
+        logger.info(f"Frame source initialized: {FRAME_SOURCE}")
+
+        # Register cleanup handler for graceful shutdown
+        atexit.register(self._cleanup)
+
         self.initialize_metrics()
         self.model = self.initialize_model()
         self.car_tracker = CarTracker(config, self.db)
@@ -405,10 +424,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         while True:
             try:
-                item = self.get_frame_with_meta(RAW_FRAME_KEY)
+                item = self.frame_source.get_frame()
                 if item is None:
-                    logger.warning("No frame available in Redis. Waiting...")
-                    time.sleep(1)
+                    logger.warning("No frame available from source. Waiting...")
+                    time.sleep(0.1)  # Shorter sleep for RTSP source
                     continue
                 frame, capture_ts = item
 
@@ -428,7 +447,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 self.last_processed_time = now_ts
                 self.update_status_metric("last_frame_ts", now_ts)
 
-                raw_queue_depth = self.redis_client.llen(RAW_FRAME_KEY)  # type: ignore
+                raw_queue_depth = self.frame_source.get_queue_depth()  # 0 for RTSP source
                 processed_queue_depth = self.redis_client.llen(PROCESSED_FRAME_KEY)  # type: ignore
 
                 self.raw_buffer_size.set(raw_queue_depth)
@@ -672,10 +691,22 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         # Create a copy to avoid modifying the original frame
         frame_copy = frame.copy()
 
-        # Update raw dimensions if not set
-        if self.raw_width is None or self.raw_height is None:
-            self.raw_height, self.raw_width = frame.shape[:2]
-            logger.info(f"Detected raw video dimensions: {self.raw_width}x{self.raw_height}")
+        # Update raw dimensions if not set or changed
+        current_height, current_width = frame.shape[:2]
+        if (
+            self.raw_width != current_width
+            or self.raw_height != current_height
+            or (self.frame_dimensions and self.frame_dimensions != (current_width, current_height))
+        ):
+            logger.info(
+                f"Detected raw video dimensions change: "
+                f"{self.raw_width}x{self.raw_height} -> {current_width}x{current_height}"
+            )
+            self.raw_height = current_height
+            self.raw_width = current_width
+            self.frame_dimensions = (current_width, current_height)
+            self._update_coordinate_system()
+
             # Now that we have dimensions, initialize the stop detector's stop zone
             self.stop_detector.set_video_analyzer(self)
 
@@ -1002,17 +1033,17 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.frame_count += 1
 
     def get_frame_dimensions(self):
-        # Attempt to get frame dimensions from Redis
+        # Attempt to get frame dimensions from source
         time.sleep(3)
         max_attempts = 3
         for _ in range(max_attempts):
-            item = self.get_frame_with_meta(RAW_FRAME_KEY)
+            item = self.frame_source.get_frame()
             frame = item[0] if item is not None else None
             if frame is not None:
                 return frame.shape[1], frame.shape[0]  # width, height
             time.sleep(0.5)
-        # Fallback to default if unable to retrieve from Redis
-        logger.warning("Unable to determine frame dimensions from Redis. Using default 1920x1080.")
+        # Fallback to default if unable to retrieve
+        logger.warning("Unable to determine frame dimensions from source. Using default 1920x1080.")
         return 1920, 1080
 
     def update_usage_metrics(self):
@@ -1081,6 +1112,13 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         """Update the actual stream resolution (called from FFmpeg service)."""
         self.current_stream_resolution = Resolution(width, height)
         logger.info(f"Stream resolution updated to: {width}x{height}")
+
+    def _cleanup(self):
+        """Clean up resources on shutdown."""
+        logger.info("Cleaning up video analyzer resources...")
+        if hasattr(self, "frame_source") and self.frame_source is not None:
+            self.frame_source.close()
+            logger.info("Frame source closed")
 
     def run(self):
         while True:

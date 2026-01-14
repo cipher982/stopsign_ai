@@ -158,6 +158,10 @@ services:
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_BUCKET=${MINIO_BUCKET}
+      # Frame source configuration (for decoupled media plane)
+      # Options: "redis" (legacy via rtsp_to_redis), "rtsp" (direct from MediaMTX)
+      - FRAME_SOURCE=${FRAME_SOURCE:-redis}
+      - ANALYZER_RTSP_URL=${ANALYZER_RTSP_URL:-rtsp://mediamtx:8554/camera}
     depends_on:
       - redis
       - postgres
