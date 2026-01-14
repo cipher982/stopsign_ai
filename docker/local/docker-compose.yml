@@ -224,6 +224,9 @@ services:
       - VIDEO_SOURCE=${VIDEO_SOURCE:-legacy_hls}
       - MEDIAMTX_HLS_URL=${MEDIAMTX_HLS_URL:-http://localhost:8888/camera/index.m3u8}
       - MEDIAMTX_WEBRTC_URL=${MEDIAMTX_WEBRTC_URL:-http://localhost:8889/camera/whep}
+      # Internal URLs for server-side health checks (reachable from inside the container network)
+      - MEDIAMTX_HLS_INTERNAL_URL=${MEDIAMTX_HLS_INTERNAL_URL:-http://mediamtx:8888/camera/index.m3u8}
+      - MEDIAMTX_WEBRTC_INTERNAL_URL=${MEDIAMTX_WEBRTC_INTERNAL_URL:-http://mediamtx:8889/camera/whep}
     depends_on:
       - postgres
       - video_analyzer

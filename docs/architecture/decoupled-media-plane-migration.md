@@ -747,6 +747,10 @@ Then set:
 ```
 MEDIAMTX_HLS_URL=/media/hls/camera/index.m3u8
 MEDIAMTX_WEBRTC_URL=/media/whep/camera/whep
+
+# Backend health checks (must be reachable from inside the web_server container/network)
+MEDIAMTX_HLS_INTERNAL_URL=http://<mediamtx-host>:8888/camera/index.m3u8
+MEDIAMTX_WEBRTC_INTERNAL_URL=http://<mediamtx-host>:8889/camera/whep
 ```
 
 **Option B: Enable CORS on MediaMTX**

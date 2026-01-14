@@ -53,7 +53,9 @@ from stopsign.components import page_head_component
 from stopsign.config import Config
 from stopsign.database import Database
 from stopsign.settings import DB_URL
+from stopsign.settings import MEDIAMTX_HLS_INTERNAL_URL
 from stopsign.settings import MEDIAMTX_HLS_URL
+from stopsign.settings import MEDIAMTX_WEBRTC_INTERNAL_URL
 from stopsign.settings import MINIO_ACCESS_KEY
 from stopsign.settings import MINIO_BUCKET
 from stopsign.settings import MINIO_ENDPOINT
@@ -78,7 +80,7 @@ WEB_START_TIME = time.time()
 
 
 def _check_mediamtx_health(url: str, timeout: float = 3.0) -> dict:
-    """Check if MediaMTX HLS endpoint is reachable.
+    """Check if a MediaMTX HTTP endpoint is reachable.
 
     Returns dict with: reachable, status_code, error (if any).
     Used when VIDEO_SOURCE != legacy_hls.
@@ -1666,8 +1668,11 @@ async def health_stream():
                 "segments_count": info.get("segments_count", 0),
             }
         else:
-            # MediaMTX: check if HLS endpoint is reachable
-            mtx_health = _check_mediamtx_health(MEDIAMTX_HLS_URL)
+            # MediaMTX: check if the configured internal endpoint is reachable
+            health_url = (
+                MEDIAMTX_WEBRTC_INTERNAL_URL if VIDEO_SOURCE == "mediamtx_webrtc" else MEDIAMTX_HLS_INTERNAL_URL
+            )
+            mtx_health = _check_mediamtx_health(health_url)
             reachable = mtx_health["reachable"] or warming_up
 
             span.set_attribute("mediamtx.reachable", mtx_health["reachable"])
@@ -1680,7 +1685,8 @@ async def health_stream():
                 "source": VIDEO_SOURCE,
                 "reachable": mtx_health["reachable"],
                 "status_code": mtx_health["status_code"],
-                "url": MEDIAMTX_HLS_URL,
+                "health_url": health_url,
+                "browser_hls_url": MEDIAMTX_HLS_URL,
                 "error": mtx_health["error"],
             }
 
@@ -1774,7 +1780,10 @@ async def health():
                     span.set_attribute("health.hls_segments_count", len(files))
             else:
                 # MediaMTX: check reachability (non-blocking, informational only)
-                mtx_health = _check_mediamtx_health(MEDIAMTX_HLS_URL, timeout=2.0)
+                health_url = (
+                    MEDIAMTX_WEBRTC_INTERNAL_URL if VIDEO_SOURCE == "mediamtx_webrtc" else MEDIAMTX_HLS_INTERNAL_URL
+                )
+                mtx_health = _check_mediamtx_health(health_url, timeout=2.0)
                 span.set_attribute("health.mediamtx_reachable", mtx_health["reachable"])
 
             resp = HTMLResponse(status_code=200, content="Healthy: Database connection verified")

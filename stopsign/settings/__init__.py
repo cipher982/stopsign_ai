@@ -187,8 +187,22 @@ WEB_SERVER_PORT = get_env_int("WEB_SERVER_PORT", 8000, required=False)
 # Video Source Configuration (for decoupled media plane)
 # Options: "legacy_hls" (current pipeline), "mediamtx_hls" (LL-HLS), "mediamtx_webrtc" (lowest latency)
 VIDEO_SOURCE = get_env("VIDEO_SOURCE", "legacy_hls", required=False)
+# Browser-reachable URLs (used by frontend video player). In production, these are often same-origin paths
+# (e.g., reverse-proxied through the main domain) to avoid CORS/mixed-content issues.
 MEDIAMTX_HLS_URL = get_env("MEDIAMTX_HLS_URL", "http://localhost:8888/camera/index.m3u8", required=False)
 MEDIAMTX_WEBRTC_URL = get_env("MEDIAMTX_WEBRTC_URL", "http://localhost:8889/camera/whep", required=False)
+# Server-reachable URLs (used for backend health checks). These should be reachable from inside the web_server
+# container/network (e.g., http://mediamtx:8888/... in local docker-compose or a private hostname in prod).
+MEDIAMTX_HLS_INTERNAL_URL = get_env(
+    "MEDIAMTX_HLS_INTERNAL_URL",
+    "http://mediamtx:8888/camera/index.m3u8",
+    required=False,
+)
+MEDIAMTX_WEBRTC_INTERNAL_URL = get_env(
+    "MEDIAMTX_WEBRTC_INTERNAL_URL",
+    "http://mediamtx:8889/camera/whep",
+    required=False,
+)
 
 # Frame Source Configuration (for analyzer input)
 # Options: "redis" (legacy via rtsp_to_redis), "rtsp" (direct from MediaMTX)
