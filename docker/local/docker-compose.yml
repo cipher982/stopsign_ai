@@ -215,7 +215,11 @@ services:
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_BUCKET=${MINIO_BUCKET}
       - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL}
-      # HLS staleness threshold is baked into the service code
+      # Video source configuration (for decoupled media plane)
+      # NOTE: URLs must be browser-reachable (localhost, not docker service name)
+      - VIDEO_SOURCE=${VIDEO_SOURCE:-legacy_hls}
+      - MEDIAMTX_HLS_URL=${MEDIAMTX_HLS_URL:-http://localhost:8888/camera/index.m3u8}
+      - MEDIAMTX_WEBRTC_URL=${MEDIAMTX_WEBRTC_URL:-http://localhost:8889/camera/whep}
     depends_on:
       - postgres
       - video_analyzer

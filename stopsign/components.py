@@ -218,6 +218,17 @@ def page_head_component(title, include_video_deps=False, page_type="home"):
         scripts.append(Script(src="https://cdn.jsdelivr.net/npm/hls.js@latest", defer=True))
         # Add video player JavaScript
         scripts.append(Script(src="/static/js/video-player.js", defer=True))
+        # Inject video config for the player (read from settings)
+        from stopsign import settings
+
+        video_config = {
+            "source": settings.VIDEO_SOURCE,
+            "hlsUrl": settings.MEDIAMTX_HLS_URL if settings.VIDEO_SOURCE != "legacy_hls" else "/stream/stream.m3u8",
+            "webrtcUrl": settings.MEDIAMTX_WEBRTC_URL,
+        }
+        # Escape </script> to prevent XSS (replace < with \u003c in JSON)
+        safe_json = json.dumps(video_config).replace("<", "\\u003c")
+        scripts.append(Script(safe_json, type="application/json", id="video-config"))
 
     # Add page-specific JavaScript
     if page_type == "home":

@@ -27,8 +27,11 @@ def get_env(key: str, default: Optional[str] = None, required: bool = True) -> s
     if required and value is None:
         raise ConfigError(f"Required environment variable {key} is not set")
     if value:
-        # Don't log sensitive values
-        if any(sensitive in key.lower() for sensitive in ["password", "secret", "key", "token"]):
+        # Don't log sensitive values (passwords, secrets, keys, tokens, URLs with credentials)
+        sensitive_patterns = ["password", "secret", "key", "token"]
+        # Also redact URLs that might contain embedded credentials (rtsp://user:pass@host)
+        is_url_with_creds = "://" in value and "@" in value
+        if any(sensitive in key.lower() for sensitive in sensitive_patterns) or is_url_with_creds:
             logger.info(f"Loaded env var {key}: [REDACTED]")
         else:
             logger.info(f"Loaded env var {key}: {value}")
@@ -180,6 +183,18 @@ PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY", "processed_frames", require
 FRAME_BUFFER_SIZE = get_env_int("FRAME_BUFFER_SIZE", 500, required=False)
 PROMETHEUS_PORT = get_env_int("PROMETHEUS_PORT", 9100, required=False)
 WEB_SERVER_PORT = get_env_int("WEB_SERVER_PORT", 8000, required=False)
+
+# Video Source Configuration (for decoupled media plane)
+# Options: "legacy_hls" (current pipeline), "mediamtx_hls" (LL-HLS), "mediamtx_webrtc" (lowest latency)
+VIDEO_SOURCE = get_env("VIDEO_SOURCE", "legacy_hls", required=False)
+MEDIAMTX_HLS_URL = get_env("MEDIAMTX_HLS_URL", "http://localhost:8888/camera/index.m3u8", required=False)
+MEDIAMTX_WEBRTC_URL = get_env("MEDIAMTX_WEBRTC_URL", "http://localhost:8889/camera/whep", required=False)
+
+# Frame Source Configuration (for analyzer input)
+# Options: "redis" (legacy via rtsp_to_redis), "rtsp" (direct from MediaMTX)
+FRAME_SOURCE = get_env("FRAME_SOURCE", "redis", required=False)
+# RTSP URL for direct MediaMTX connection (used when FRAME_SOURCE=rtsp)
+ANALYZER_RTSP_URL = get_env("ANALYZER_RTSP_URL", "rtsp://mediamtx:8554/camera", required=False)
 
 # Telemetry (optional - set to empty string to disable)
 OTEL_EXPORTER_OTLP_ENDPOINT = get_env("OTEL_EXPORTER_OTLP_ENDPOINT", required=False) or None
