@@ -106,6 +106,17 @@ function initializeHlsPlayer(video, streamUrl, isLowLatency = false) {
 }
 
 // WebRTC/WHEP player initialization
+//
+// LIMITATIONS (current implementation):
+// - No trickle ICE support (all candidates gathered before offer sent)
+// - No proper session teardown (WHEP DELETE request not sent)
+// - Basic reconnection logic only
+//
+// For production use with complex NAT/ICE scenarios, consider:
+// - Using MediaMTX's version-matched reader.js instead
+// - Or implementing full trickle ICE with WHEP PATCH requests
+//
+// See: https://github.com/bluenviron/mediamtx#embed-streams-in-a-website
 async function initializeWebRTCPlayer(video, whepUrl) {
     console.log('Initializing WebRTC player with WHEP URL:', whepUrl);
 

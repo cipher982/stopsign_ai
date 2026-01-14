@@ -53,12 +53,14 @@ from stopsign.components import page_head_component
 from stopsign.config import Config
 from stopsign.database import Database
 from stopsign.settings import DB_URL
+from stopsign.settings import MEDIAMTX_HLS_URL
 from stopsign.settings import MINIO_ACCESS_KEY
 from stopsign.settings import MINIO_BUCKET
 from stopsign.settings import MINIO_ENDPOINT
 from stopsign.settings import MINIO_PUBLIC_URL
 from stopsign.settings import MINIO_SECRET_KEY
 from stopsign.settings import REDIS_URL
+from stopsign.settings import VIDEO_SOURCE
 from stopsign.telemetry import get_tracer
 from stopsign.telemetry import setup_web_server_telemetry
 
@@ -73,6 +75,33 @@ STREAM_FS_PATH = "/app/data/stream/stream.m3u8"  # filesystem path
 STREAM_URL = "/stream/stream.m3u8"  # URL path
 GRACE_STARTUP_SEC = 120  # aligns with ffmpeg_service
 WEB_START_TIME = time.time()
+
+
+def _check_mediamtx_health(url: str, timeout: float = 3.0) -> dict:
+    """Check if MediaMTX HLS endpoint is reachable.
+
+    Returns dict with: reachable, status_code, error (if any).
+    Used when VIDEO_SOURCE != legacy_hls.
+    """
+    import urllib.error
+    import urllib.request
+
+    result = {"reachable": False, "status_code": None, "error": None}
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result["reachable"] = True
+            result["status_code"] = resp.status
+    except urllib.error.HTTPError as e:
+        # 404 means stream not active, but MediaMTX is up
+        result["status_code"] = e.code
+        result["reachable"] = e.code != 503  # 503 = server down
+        result["error"] = str(e)
+    except urllib.error.URLError as e:
+        result["error"] = str(e.reason)
+    except Exception as e:
+        result["error"] = str(e)
+    return result
 
 
 _HLS_PARSE_WARN_LAST_TS = 0.0
@@ -1600,35 +1629,60 @@ async def debug_performance():
 
 @app.get("/health/stream")  # type: ignore
 async def health_stream():
-    """Dedicated stream freshness health endpoint (JSON).
+    """Dedicated stream health endpoint (JSON).
 
-    Returns 200 if the HLS playlist exists and is fresh. Includes fields:
-    fresh, exists, age_seconds, threshold_sec, segments_count.
+    Behavior depends on VIDEO_SOURCE:
+    - legacy_hls: Returns 200 if the HLS playlist exists and is fresh
+    - mediamtx_hls/mediamtx_webrtc: Returns 200 if MediaMTX is reachable
     """
+    import json
+
     with tracer.start_as_current_span("health_stream") as span:
-        info = _parse_hls_playlist(STREAM_FS_PATH)
-        age = info.get("age_seconds")
-        exists = bool(info.get("exists"))
-        threshold = info.get("threshold_sec", 60.0)
+        span.set_attribute("video_source", VIDEO_SOURCE)
         warming_up = (time.time() - WEB_START_TIME) <= GRACE_STARTUP_SEC
-        fresh = (exists and age is not None and age <= threshold) or warming_up
 
-        span.set_attribute("hls.exists", exists)
-        if age is not None:
-            span.set_attribute("hls.age_seconds", float(age))
-        span.set_attribute("hls.segments_count", info.get("segments_count", 0))
-        span.set_attribute("hls.threshold_sec", threshold)
-        span.set_attribute("hls.fresh", fresh)
+        if VIDEO_SOURCE == "legacy_hls":
+            # Legacy: check local HLS file freshness
+            info = _parse_hls_playlist(STREAM_FS_PATH)
+            age = info.get("age_seconds")
+            exists = bool(info.get("exists"))
+            threshold = info.get("threshold_sec", 60.0)
+            fresh = (exists and age is not None and age <= threshold) or warming_up
 
-        status = 200 if fresh else 503
-        payload = {
-            "fresh": bool(fresh),
-            "exists": bool(exists),
-            "age_seconds": age,
-            "threshold_sec": threshold,
-            "segments_count": info.get("segments_count", 0),
-        }
-        import json
+            span.set_attribute("hls.exists", exists)
+            if age is not None:
+                span.set_attribute("hls.age_seconds", float(age))
+            span.set_attribute("hls.segments_count", info.get("segments_count", 0))
+            span.set_attribute("hls.threshold_sec", threshold)
+            span.set_attribute("hls.fresh", fresh)
+
+            status = 200 if fresh else 503
+            payload = {
+                "source": "legacy_hls",
+                "fresh": bool(fresh),
+                "exists": bool(exists),
+                "age_seconds": age,
+                "threshold_sec": threshold,
+                "segments_count": info.get("segments_count", 0),
+            }
+        else:
+            # MediaMTX: check if HLS endpoint is reachable
+            mtx_health = _check_mediamtx_health(MEDIAMTX_HLS_URL)
+            reachable = mtx_health["reachable"] or warming_up
+
+            span.set_attribute("mediamtx.reachable", mtx_health["reachable"])
+            span.set_attribute("mediamtx.status_code", mtx_health["status_code"] or 0)
+            if mtx_health["error"]:
+                span.set_attribute("mediamtx.error", mtx_health["error"])
+
+            status = 200 if reachable else 503
+            payload = {
+                "source": VIDEO_SOURCE,
+                "reachable": mtx_health["reachable"],
+                "status_code": mtx_health["status_code"],
+                "url": MEDIAMTX_HLS_URL,
+                "error": mtx_health["error"],
+            }
 
         resp = HTMLResponse(status_code=status, content=json.dumps(payload))
         resp.headers["Cache-Control"] = "no-store"
@@ -1708,15 +1762,20 @@ async def health():
             span.set_attribute("health.database_duration_seconds", db_duration)
             span.set_attribute("health.status", "healthy")
 
-            # Check HLS stream health
-            hls_healthy = os.path.exists(STREAM_FS_PATH)
-            span.set_attribute("health.hls_stream_ok", hls_healthy)
-
-            # Check if stream directory has recent files
-            stream_dir = os.path.dirname(STREAM_FS_PATH)
-            if os.path.exists(stream_dir):
-                files = [f for f in os.listdir(stream_dir) if f.endswith(".ts")]
-                span.set_attribute("health.hls_segments_count", len(files))
+            # Check video stream health (conditional on VIDEO_SOURCE)
+            span.set_attribute("health.video_source", VIDEO_SOURCE)
+            if VIDEO_SOURCE == "legacy_hls":
+                # Legacy: check local HLS file
+                hls_healthy = os.path.exists(STREAM_FS_PATH)
+                span.set_attribute("health.hls_stream_ok", hls_healthy)
+                stream_dir = os.path.dirname(STREAM_FS_PATH)
+                if os.path.exists(stream_dir):
+                    files = [f for f in os.listdir(stream_dir) if f.endswith(".ts")]
+                    span.set_attribute("health.hls_segments_count", len(files))
+            else:
+                # MediaMTX: check reachability (non-blocking, informational only)
+                mtx_health = _check_mediamtx_health(MEDIAMTX_HLS_URL, timeout=2.0)
+                span.set_attribute("health.mediamtx_reachable", mtx_health["reachable"])
 
             resp = HTMLResponse(status_code=200, content="Healthy: Database connection verified")
             resp.headers["Cache-Control"] = "no-store"

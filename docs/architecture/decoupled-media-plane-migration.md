@@ -23,6 +23,15 @@ Owner: davidrose • Last updated: 2026-01-13
 - `stopsign/components.py` - Injects video config JSON for frontend
 - `stopsign/frame_source.py` - **New**: FrameSource ABC, RedisFrameSource, RTSPFrameSource
 - `stopsign/video_analyzer.py` - Uses frame_source abstraction
+- `stopsign/web_server.py` - Health checks now conditional on VIDEO_SOURCE
+
+### Known limitations (to address before production)
+
+1. **WebRTC implementation is basic**: The current `mediamtx_webrtc` mode uses a minimal WHEP client without trickle ICE or session teardown. This works on friendly networks but may be brittle with NAT/firewalls. For production, consider using MediaMTX's version-matched `reader.js` or implementing full trickle ICE.
+
+2. **Timestamp semantics differ**: `FRAME_SOURCE=rtsp` uses read-time timestamps (not camera capture time). See "Timestamp semantics" section below for details and implications.
+
+3. **Legacy pipeline still required for output**: The analyzer still writes processed JPEGs to Redis, and `ffmpeg_service` still produces `/stream/stream.m3u8`. Full decouple (browser canvas overlays) is Phase 4.
 
 
 ## Why this doc exists
@@ -608,6 +617,38 @@ webrtcICEServers2:
 If that still fails, add TURN (client-only or full relay).
 
 
+## Timestamp semantics: RTSP vs Redis/SSFM
+
+**Important behavioral difference when using `FRAME_SOURCE=rtsp`:**
+
+The legacy Redis/SSFM path embeds the **camera capture timestamp** in each frame's metadata. This is the time `rtsp_to_redis` received the frame from the camera. Stop-duration and speed calculations use this timestamp to measure real-world timing.
+
+The new `RTSPFrameSource` uses `time.time()` at **read time** - when the analyzer dequeues the frame from OpenCV's buffer. This is subtly different:
+
+| Source | Timestamp represents | Accuracy |
+|--------|---------------------|----------|
+| Redis/SSFM | Camera capture time | True timing (rtsp_to_redis stamps it) |
+| RTSP direct | Analyzer read time | Affected by buffering, CPU load |
+
+**Practical implications:**
+
+1. **Stop duration**: If the analyzer processes frames faster than real-time (draining a buffer), timestamps will be closer together → stop duration appears shorter. The rate-limiting fix (sleeping to target FPS) mitigates this but doesn't eliminate it.
+
+2. **Speed calculation**: Same issue - if frames drain quickly, `dt` between frames shrinks, making calculated speeds spike.
+
+3. **`frame_capture_lag_seconds` metric**: With RTSP, this metric shows "time since analyzer read the frame" rather than true pipeline latency.
+
+**Recommendations:**
+
+- For **Phase 3 testing**, the current implementation is acceptable - the rate limiter keeps frame timing reasonably stable.
+- For **production accuracy**, consider:
+  - Using PyAV instead of OpenCV to access frame PTS (presentation timestamps)
+  - Anchoring PTS to wall-clock time at stream start
+  - Or accepting the slight timing variance as a tradeoff for lower latency
+
+**Future enhancement (Phase 4+):** If overlay timestamp alignment becomes critical, implement PTS-based timing using PyAV or similar. This is not a Phase 3 blocker.
+
+
 ## Timestamp alignment (advanced, optional)
 
 You have three levels of alignment:
@@ -710,13 +751,20 @@ MEDIAMTX_WEBRTC_URL=/media/whep/camera/whep
 
 **Option B: Enable CORS on MediaMTX**
 
-Add to MediaMTX config:
+Add to MediaMTX config (env vars or mediamtx.yml):
 ```yaml
-# Allow cross-origin requests (less secure)
-hlsAlwaysRemux: yes
+# Allow cross-origin requests (less secure than reverse proxy)
+hlsAllowOrigin: "*"
+webrtcAllowOrigin: "*"
 ```
 
-Note: WebRTC WHEP may need additional CORS headers via a proxy.
+Or via environment variables:
+```
+MTX_HLSALLOWORIGIN=*
+MTX_WEBRTCALLOWORIGIN=*
+```
+
+Note: Wildcard origins are less secure; prefer reverse proxy for production.
 
 **Option C: Same-origin deployment (local dev)**
 
