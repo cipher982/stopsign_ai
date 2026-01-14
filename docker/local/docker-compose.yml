@@ -54,6 +54,65 @@ services:
       retries: 3
     restart: always
 
+  # ==========================================================================
+  # MediaMTX - Stable Media Plane (decoupled from AI pipeline)
+  # ==========================================================================
+  # Standalone media server that:
+  # - Ingests RTSP from camera (or test video publisher)
+  # - Serves WebRTC (lowest latency) and LL-HLS (fallback) to browsers
+  # - Continues streaming even if analyzer is down
+  mediamtx:
+    image: bluenviron/mediamtx:1.9.3
+    environment:
+      # RTSP transport (TCP-only for reliability through firewalls)
+      MTX_PROTOCOLS: tcp
+      # Low-latency HLS tuning (reduces ~20s delay to ~1-3s)
+      MTX_HLSVARIANT: lowLatency
+      MTX_HLSPARTDURATION: 200ms
+      MTX_HLSSEGMENTDURATION: 1s  # 1s segments with 200ms parts
+      # Metrics for monitoring
+      MTX_METRICS: "yes"
+      MTX_METRICSADDRESS: ":9998"
+      # WebRTC additional hosts - set WEBRTC_HOSTS in .env for LAN IPs
+      MTX_WEBRTCADDITIONALHOSTS: ${WEBRTC_HOSTS:-localhost,host.docker.internal}
+    ports:
+      - "8554:8554"      # RTSP
+      - "8888:8888"      # HLS
+      - "8889:8889"      # WebRTC/WHEP signaling
+      - "8189:8189/udp"  # WebRTC media (ICE/UDP)
+      - "9998:9998"      # Metrics
+    # Note: Minimal scratch container, no health check tools available
+    restart: unless-stopped
+
+  # Test video publisher - loops sample video into MediaMTX
+  # Usage: docker compose --profile mediamtx-test up -d mediamtx video_publisher
+  video_publisher:
+    image: linuxserver/ffmpeg:version-7.1-cli
+    depends_on:
+      - mediamtx
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Wait for MediaMTX to be ready
+        sleep 3
+        # Loop sample video forever, publish to MediaMTX RTSP via TCP
+        # -g 15 forces keyframe every 1s (at 15fps) for LL-HLS segmentation
+        ffmpeg -stream_loop -1 -re \
+          -i /sample_data/sample.mp4 \
+          -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+          -g 15 -keyint_min 15 \
+          -an \
+          -f rtsp -rtsp_transport tcp rtsp://mediamtx:8554/camera
+    volumes:
+      - ../../sample_data:/sample_data:ro
+    profiles:
+      - mediamtx-test
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Legacy Pipeline (current production path - will be deprecated)
+  # ==========================================================================
+
   # RTSP to Redis (with file:// support)
   rtsp_to_redis:
     build:
