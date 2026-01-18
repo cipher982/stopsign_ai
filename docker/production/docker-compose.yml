@@ -21,6 +21,7 @@ services:
       YOLO_DEVICE: ${YOLO_DEVICE:-cuda}
     volumes:
       - config-dir:/app/config
+      - storage-dir:/app/data  # Shared volume for local vehicle images
     networks:
       - default
       - monitoring

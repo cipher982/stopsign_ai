@@ -15,6 +15,7 @@ from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import create_engine
+from sqlalchemy import or_
 from sqlalchemy import text
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -223,7 +224,12 @@ class Database:
                 session.query(VehiclePass)
                 .filter(VehiclePass.image_path.isnot(None))  # Not null
                 .filter(VehiclePass.image_path != "")  # Not empty string
-                .filter(VehiclePass.image_path.like("minio://%"))  # Proper minio prefix
+                .filter(
+                    or_(
+                        VehiclePass.image_path.like("minio://%"),  # Legacy minio prefix
+                        VehiclePass.image_path.like("local://%"),  # New local prefix
+                    )
+                )
                 .filter(VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"))
                 .order_by(text(f"{field} {order}"))
                 .limit(limit)
@@ -299,7 +305,12 @@ class Database:
                 session.query(VehiclePass)
                 .filter(VehiclePass.image_path.isnot(None))
                 .filter(VehiclePass.image_path != "")
-                .filter(VehiclePass.image_path.like("minio://%"))
+                .filter(
+                    or_(
+                        VehiclePass.image_path.like("minio://%"),  # Legacy minio prefix
+                        VehiclePass.image_path.like("local://%"),  # New local prefix
+                    )
+                )
                 .order_by(VehiclePass.timestamp.desc())
                 .limit(limit)
                 .all()

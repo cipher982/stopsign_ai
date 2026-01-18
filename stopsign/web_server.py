@@ -52,11 +52,15 @@ from stopsign.components import main_layout_component
 from stopsign.components import page_head_component
 from stopsign.config import Config
 from stopsign.database import Database
+from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
+from stopsign.settings import BREMEN_MINIO_BUCKET
+from stopsign.settings import BREMEN_MINIO_ENDPOINT
+from stopsign.settings import BREMEN_MINIO_SECRET_KEY
 from stopsign.settings import DB_URL
+from stopsign.settings import LOCAL_IMAGE_DIR
 from stopsign.settings import MINIO_ACCESS_KEY
 from stopsign.settings import MINIO_BUCKET
 from stopsign.settings import MINIO_ENDPOINT
-from stopsign.settings import MINIO_PUBLIC_URL
 from stopsign.settings import MINIO_SECRET_KEY
 from stopsign.settings import REDIS_URL
 from stopsign.telemetry import get_tracer
@@ -213,6 +217,7 @@ def _parse_hls_playlist(path: str) -> dict:
 
 
 def get_minio_client():
+    """Get legacy MinIO client (clifford) - used for legacy paths."""
     logger.debug(f"Creating Minio client with endpoint: {MINIO_ENDPOINT}, secure: True")
     return Minio(
         MINIO_ENDPOINT,
@@ -220,6 +225,17 @@ def get_minio_client():
         secret_key=MINIO_SECRET_KEY,
         secure=True,  # Set to True if using HTTPS
         # cert_check=True is default, so we can remove the argument
+    )
+
+
+def get_bremen_minio_client():
+    """Get Bremen MinIO client for archived images."""
+    logger.debug(f"Creating Bremen Minio client with endpoint: {BREMEN_MINIO_ENDPOINT}")
+    return Minio(
+        BREMEN_MINIO_ENDPOINT,
+        access_key=BREMEN_MINIO_ACCESS_KEY,
+        secret_key=BREMEN_MINIO_SECRET_KEY,
+        secure=False,  # Bremen is on local network
     )
 
 
@@ -239,6 +255,10 @@ app = FastHTML(
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/stream", StaticFiles(directory="/app/data/stream"), name="stream")
+
+# Mount local vehicle images directory for fast serving
+os.makedirs(LOCAL_IMAGE_DIR, exist_ok=True)
+app.mount("/vehicle-images", StaticFiles(directory=LOCAL_IMAGE_DIR), name="vehicle-images")
 
 # Initialize telemetry
 metrics = setup_web_server_telemetry(app)
@@ -274,6 +294,12 @@ async def add_cache_headers(request, call_next):
                     span.set_attribute("request.type", "static_asset")
                     span.set_attribute("browser.type", browser)
             return response
+
+    # Fast cache headers for local vehicle images
+    if request.url.path.startswith("/vehicle-images/"):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "public, max-age=86400"  # 24hr cache
+        return response
 
     # Full telemetry for streaming and API requests
     is_streaming = request.url.path.startswith("/stream/")
@@ -356,14 +382,16 @@ async def add_cache_headers(request, call_next):
 
 @app.get("/vehicle-image/{object_name:path}")  # type: ignore
 def get_image(object_name: str):
+    """Proxy endpoint for legacy minio:// paths - fetches from Bremen archive."""
     # Validate object_name before trying to fetch
     if not object_name or not isinstance(object_name, str) or object_name.strip() == "":
         logger.warning(f"Invalid object_name requested: {object_name}")
         return HTMLResponse("Invalid image request", status_code=400)
 
     try:
-        client = get_minio_client()
-        data = client.get_object(MINIO_BUCKET, object_name)
+        # Use Bremen MinIO for archived images
+        client = get_bremen_minio_client()
+        data = client.get_object(BREMEN_MINIO_BUCKET, object_name)
 
         # Create response with proper cache headers
         response = StreamingResponse(data, media_type="image/jpeg")
@@ -372,7 +400,7 @@ def get_image(object_name: str):
         return response
 
     except Exception as e:
-        logger.error(f"Error fetching image from Minio: {str(e)}", exc_info=True)
+        logger.error(f"Error fetching image from Bremen MinIO: {str(e)}", exc_info=True)
         return HTMLResponse("Image not found", status_code=404)
 
 
@@ -1069,14 +1097,20 @@ def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
 
 
 def create_pass_item(pass_data, scores):
-    # Extract just the filename from minio://bucket/filename, with validation
+    # Build image URL based on path type
     image_url = "/static/placeholder.jpg"  # Default fallback image
-    if pass_data.image_path and isinstance(pass_data.image_path, str) and pass_data.image_path.startswith("minio://"):
-        parts = pass_data.image_path.split("/", 3)
-        if len(parts) >= 4 and parts[3]:
-            object_name = parts[3]
-            # Use direct MinIO URL for now - proxy endpoint has issues
-            image_url = f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{object_name}"
+    if pass_data.image_path and isinstance(pass_data.image_path, str):
+        if pass_data.image_path.startswith("local://"):
+            # New local path - serve from local static mount
+            filename = pass_data.image_path.replace("local://", "")
+            image_url = f"/vehicle-images/{filename}"
+        elif pass_data.image_path.startswith("minio://"):
+            # Legacy minio path - proxy through Bremen
+            parts = pass_data.image_path.split("/", 3)
+            if len(parts) >= 4 and parts[3]:
+                object_name = parts[3]
+                # Use proxy endpoint which fetches from Bremen
+                image_url = f"/vehicle-image/{object_name}"
 
     # Format timestamp - convert UTC to Chicago time
     if hasattr(pass_data, "timestamp") and pass_data.timestamp:
