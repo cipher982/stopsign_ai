@@ -181,6 +181,18 @@ FRAME_BUFFER_SIZE = get_env_int("FRAME_BUFFER_SIZE", 500, required=False)
 PROMETHEUS_PORT = get_env_int("PROMETHEUS_PORT", 9100, required=False)
 WEB_SERVER_PORT = get_env_int("WEB_SERVER_PORT", 8000, required=False)
 
+# Local image storage (fast homepage)
+LOCAL_IMAGE_DIR = get_env("LOCAL_IMAGE_DIR", "/app/data/vehicle-images", required=False)
+
+# Bremen MinIO (archive storage)
+BREMEN_MINIO_ENDPOINT = get_env("BREMEN_MINIO_ENDPOINT", "100.98.103.56:9000", required=False)
+BREMEN_MINIO_ACCESS_KEY = get_env("BREMEN_MINIO_ACCESS_KEY", "root", required=False)
+BREMEN_MINIO_SECRET_KEY = get_env("BREMEN_MINIO_SECRET_KEY", "", required=False)
+BREMEN_MINIO_BUCKET = get_env("BREMEN_MINIO_BUCKET", "vehicle-images", required=False)
+
+# Local image retention
+LOCAL_IMAGE_MAX_COUNT = get_env_int("LOCAL_IMAGE_MAX_COUNT", 500, required=False)
+
 # Telemetry (optional - set to empty string to disable)
 OTEL_EXPORTER_OTLP_ENDPOINT = get_env("OTEL_EXPORTER_OTLP_ENDPOINT", required=False) or None
 

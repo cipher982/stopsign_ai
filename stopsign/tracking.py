@@ -1,9 +1,13 @@
-import io
 import logging
+import os
+import queue
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
+from pathlib import Path
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -16,10 +20,12 @@ from minio import Minio
 from stopsign.config import Config
 from stopsign.database import Database
 from stopsign.kalman_filter import KalmanFilterWrapper
-from stopsign.settings import MINIO_ACCESS_KEY
-from stopsign.settings import MINIO_BUCKET
-from stopsign.settings import MINIO_ENDPOINT
-from stopsign.settings import MINIO_SECRET_KEY
+from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
+from stopsign.settings import BREMEN_MINIO_BUCKET
+from stopsign.settings import BREMEN_MINIO_ENDPOINT
+from stopsign.settings import BREMEN_MINIO_SECRET_KEY
+from stopsign.settings import LOCAL_IMAGE_DIR
+from stopsign.settings import LOCAL_IMAGE_MAX_COUNT
 
 Point = Tuple[float, float]
 Line = Tuple[Point, Point]
@@ -27,6 +33,95 @@ Line = Tuple[Point, Point]
 # Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Module-level upload queue and worker state
+_upload_queue: queue.Queue = queue.Queue(maxsize=100)
+_worker_started = False
+_worker_lock = threading.Lock()
+
+
+def _start_upload_worker():
+    """Start the background upload worker thread if not already running."""
+    global _worker_started
+    with _worker_lock:
+        if not _worker_started:
+            thread = threading.Thread(target=_bremen_upload_worker, daemon=True)
+            thread.start()
+            _worker_started = True
+            logger.info("Bremen upload worker thread started")
+
+
+def _bremen_upload_worker():
+    """Background worker that uploads images to Bremen MinIO with retry logic."""
+    while True:
+        try:
+            local_path, object_name = _upload_queue.get()
+
+            # Skip if Bremen credentials not configured
+            if not BREMEN_MINIO_SECRET_KEY:
+                logger.debug(f"Bremen MinIO not configured, skipping archive of {object_name}")
+                _upload_queue.task_done()
+                continue
+
+            # Retry up to 3 times with exponential backoff
+            for attempt in range(3):
+                try:
+                    client = Minio(
+                        BREMEN_MINIO_ENDPOINT,
+                        access_key=BREMEN_MINIO_ACCESS_KEY,
+                        secret_key=BREMEN_MINIO_SECRET_KEY,
+                        secure=False,  # Bremen is on local network
+                    )
+
+                    # Upload the file
+                    client.fput_object(
+                        BREMEN_MINIO_BUCKET,
+                        object_name,
+                        local_path,
+                        content_type="image/jpeg",
+                    )
+                    logger.debug(f"Archived {object_name} to Bremen MinIO")
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        logger.error(f"Failed to archive {object_name} after 3 attempts: {e}")
+                    else:
+                        logger.warning(f"Bremen upload attempt {attempt + 1} failed for {object_name}: {e}")
+                        time.sleep(2**attempt)  # Exponential backoff: 1s, 2s
+
+            _upload_queue.task_done()
+        except Exception as e:
+            logger.error(f"Unexpected error in Bremen upload worker: {e}")
+
+
+def _prune_old_images():
+    """Remove oldest images when count exceeds LOCAL_IMAGE_MAX_COUNT."""
+    try:
+        image_dir = Path(LOCAL_IMAGE_DIR)
+        if not image_dir.exists():
+            return
+
+        # Get all jpg files with their modification times
+        images = list(image_dir.glob("*.jpg"))
+
+        if len(images) <= LOCAL_IMAGE_MAX_COUNT:
+            return
+
+        # Sort by modification time (oldest first)
+        images.sort(key=lambda p: p.stat().st_mtime)
+
+        # Remove oldest images to get back under limit
+        to_remove = len(images) - LOCAL_IMAGE_MAX_COUNT
+        for img_path in images[:to_remove]:
+            try:
+                img_path.unlink()
+                logger.debug(f"Pruned old image: {img_path.name}")
+            except Exception as e:
+                logger.warning(f"Failed to prune {img_path.name}: {e}")
+
+        logger.info(f"Pruned {to_remove} old images to maintain {LOCAL_IMAGE_MAX_COUNT} limit")
+    except Exception as e:
+        logger.error(f"Error pruning old images: {e}")
 
 
 @dataclass
@@ -571,17 +666,13 @@ def save_vehicle_image(
     timestamp: float,
     bbox: Tuple[float, float, float, float],
 ) -> str:
-    # Initialize Minio client
-    minio_client = Minio(
-        MINIO_ENDPOINT,
-        access_key=MINIO_ACCESS_KEY,
-        secret_key=MINIO_SECRET_KEY,
-        secure=True,  # Set to True if using HTTPS
-    )
+    """Save vehicle image locally and queue upload to Bremen MinIO for archival.
 
+    Returns local:// path for fast serving from cube.
+    """
     # Generate a random UUID for the filename
     file_id = uuid.uuid4().hex
-    object_name = f"vehicle_{file_id}_{int(timestamp)}.jpg"
+    filename = f"vehicle_{file_id}_{int(timestamp)}.jpg"
 
     # Crop the image - bbox is XYXY format (x1, y1, x2, y2)
     bx1, by1, bx2, by2 = bbox
@@ -598,20 +689,36 @@ def save_vehicle_image(
 
     cropped_image = frame[y1:y2, x1:x2]
 
-    # Convert image to bytes
-    _, img_encoded = cv2.imencode(".jpg", cropped_image)
-    img_bytes = io.BytesIO(img_encoded.tobytes())
+    # Ensure local image directory exists
+    image_dir = Path(LOCAL_IMAGE_DIR)
+    image_dir.mkdir(parents=True, exist_ok=True)
 
-    # Upload to Minio
+    local_path = image_dir / filename
+
+    # Save to local filesystem (synchronous, ensure file is fully written)
     try:
-        minio_client.put_object(
-            MINIO_BUCKET,
-            object_name,
-            img_bytes,
-            img_bytes.getbuffer().nbytes,
-            content_type="image/jpeg",
-        )
-        return f"minio://{MINIO_BUCKET}/{object_name}"
+        _, img_encoded = cv2.imencode(".jpg", cropped_image)
+        with open(local_path, "wb") as f:
+            f.write(img_encoded.tobytes())
+            f.flush()
+            os.fsync(f.fileno())  # Ensure data is written to disk
+
+        logger.debug(f"Saved vehicle image locally: {filename}")
+
+        # Start upload worker if not already running
+        _start_upload_worker()
+
+        # Queue upload to Bremen MinIO (non-blocking)
+        try:
+            _upload_queue.put_nowait((str(local_path), filename))
+        except queue.Full:
+            logger.warning(f"Upload queue full, skipping archive of {filename}")
+
+        # Prune old images to maintain disk space
+        _prune_old_images()
+
+        return f"local://{filename}"
+
     except Exception as e:
-        logger.error(f"Failed to upload image to Minio: {str(e)}", exc_info=True)
+        logger.error(f"Failed to save vehicle image locally: {str(e)}", exc_info=True)
         return ""
