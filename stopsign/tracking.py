@@ -546,8 +546,13 @@ class StopDetector:
         if crossed_pre_stop_line and not in_stop_zone and not car.state.passed_pre_stop_zone:
             car.state.passed_pre_stop_zone = True
 
-        # Check if car crosses the capture line
-        if not car.state.image_captured and self._polygon_crosses_line(car_polygon, self.capture_line_proc):
+        # Check if car crosses the capture line (only capture if pre-stop line was crossed first)
+        # This ensures we only capture cars going the correct direction (right-to-left)
+        if (
+            car.state.passed_pre_stop_zone
+            and not car.state.image_captured
+            and self._polygon_crosses_line(car_polygon, self.capture_line_proc)
+        ):
             self.capture_car_image(car, timestamp, frame)
 
         # Only proceed with stop zone logic if pre-stop zone was passed
