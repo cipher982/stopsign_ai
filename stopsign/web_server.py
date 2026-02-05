@@ -57,6 +57,8 @@ from stopsign.settings import BREMEN_MINIO_BUCKET
 from stopsign.settings import BREMEN_MINIO_ENDPOINT
 from stopsign.settings import BREMEN_MINIO_SECRET_KEY
 from stopsign.settings import DB_URL
+from stopsign.settings import FRAME_METADATA_KEY
+from stopsign.settings import GRACE_STARTUP_SEC
 from stopsign.settings import LOCAL_IMAGE_DIR
 from stopsign.settings import MINIO_ACCESS_KEY
 from stopsign.settings import MINIO_BUCKET
@@ -70,12 +72,9 @@ logger = logging.getLogger(__name__)
 
 # Optional Grafana for local development
 GRAFANA_URL = os.getenv("GRAFANA_URL", "http://localhost:3000")
-ORIGINAL_WIDTH = 1920
-ORIGINAL_HEIGHT = 1080
 
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"  # filesystem path
 STREAM_URL = "/stream/stream.m3u8"  # URL path
-GRACE_STARTUP_SEC = 120  # aligns with ffmpeg_service
 WEB_START_TIME = time.time()
 
 
@@ -445,15 +444,10 @@ async def get_coordinate_info():
         redis_client = redis.from_url(REDIS_URL)
 
         try:
-            # Check if there's any frame metadata available
-            metadata_keys = redis_client.keys("frame_metadata:*")
-            if not metadata_keys:
-                return {"error": "No video metadata available. Video analyzer may not be running."}
-
-            # Get the most recent metadata
-            latest_metadata = redis_client.get(metadata_keys[-1])
+            # Get the latest metadata (single key to avoid Redis key buildup)
+            latest_metadata = redis_client.get(FRAME_METADATA_KEY)
             if not latest_metadata:
-                return {"error": "Could not read video metadata."}
+                return {"error": "No video metadata available. Video analyzer may not be running."}
 
             import json
 
@@ -535,13 +529,9 @@ async def update_stop_zone_from_display(request):
         redis_client = redis.from_url(REDIS_URL)
 
         try:
-            metadata_keys = redis_client.keys("frame_metadata:*")
-            if not metadata_keys:
-                return {"error": "No video metadata available. Video analyzer must be running first."}
-
-            latest_metadata = redis_client.get(metadata_keys[-1])
+            latest_metadata = redis_client.get(FRAME_METADATA_KEY)
             if not latest_metadata:
-                return {"error": "Could not read video metadata."}
+                return {"error": "No video metadata available. Video analyzer must be running first."}
 
             import json
 
@@ -593,7 +583,7 @@ async def update_stop_zone_from_display(request):
 
         try:
             # Debug what we're sending to config
-            logger.info(f"Sending to config - stop_zone: {stop_zone}, type: {type(stop_zone)}")
+            logger.debug(f"Sending to config - stop_zone: {stop_zone}, type: {type(stop_zone)}")
 
             result = config.update_stop_zone(
                 {
@@ -646,13 +636,9 @@ async def debug_coordinates(request):
         redis_client = redis.from_url(REDIS_URL)
 
         try:
-            metadata_keys = redis_client.keys("frame_metadata:*")
-            if not metadata_keys:
-                return {"error": "No video metadata available. Video analyzer must be running."}
-
-            latest_metadata = redis_client.get(metadata_keys[-1])
+            latest_metadata = redis_client.get(FRAME_METADATA_KEY)
             if not latest_metadata:
-                return {"error": "Could not read video metadata."}
+                return {"error": "No video metadata available. Video analyzer must be running."}
 
             import json
 
@@ -750,13 +736,9 @@ async def update_zone_from_display(request):
         redis_client = redis.from_url(REDIS_URL)
 
         try:
-            metadata_keys = redis_client.keys("frame_metadata:*")
-            if not metadata_keys:
-                return {"error": "No video metadata available. Video analyzer must be running first."}
-
-            latest_metadata = redis_client.get(metadata_keys[-1])
+            latest_metadata = redis_client.get(FRAME_METADATA_KEY)
             if not latest_metadata:
-                return {"error": "Could not read video metadata."}
+                return {"error": "No video metadata available. Video analyzer must be running first."}
 
             import json
 
@@ -1687,16 +1669,6 @@ def load_video():
             cls="video-stream__player",
         ),
     )
-
-
-def calculate_time_in_zone_score(time_in_zone):
-    percentile = app.state.db.get_time_in_zone_percentile(time_in_zone)
-    return round(percentile / 10)
-
-
-def calculate_speed_score(min_speed):
-    percentile = app.state.db.get_min_speed_percentile(min_speed)
-    return round((100 - percentile) / 10)
 
 
 class DBHealthTracker:

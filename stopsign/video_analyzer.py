@@ -38,7 +38,9 @@ from stopsign.coordinate_transform import Resolution
 from stopsign.database import Database
 from stopsign.service_status import VideoAnalyzerStatusMixin
 from stopsign.settings import DB_URL
+from stopsign.settings import FRAME_METADATA_KEY
 from stopsign.settings import PROCESSED_FRAME_KEY
+from stopsign.settings import PROCESSED_FRAME_SHAPE_KEY
 from stopsign.settings import PROMETHEUS_PORT
 from stopsign.settings import RAW_FRAME_KEY
 from stopsign.settings import REDIS_URL
@@ -978,9 +980,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         if frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3:
             raise ValueError("Frame must be in BGR24 format (3-channel uint8 numpy array)")
 
-        # Encode the frame as JPEG
-        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        raw_frame_data = buffer.tobytes()
+        # Store raw BGR bytes to avoid JPEG encode/decode overhead
+        raw_frame_data = frame.tobytes()
+        frame_height, frame_width = frame.shape[:2]
+        shape_payload = json.dumps({"width": frame_width, "height": frame_height, "format": "raw"})
 
         start_time = time.time()
         pipeline = self.redis_client.pipeline()
@@ -989,11 +992,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         pipeline.lpush(PROCESSED_FRAME_KEY, raw_frame_data)
         pipeline.ltrim(PROCESSED_FRAME_KEY, 0, self.frame_buffer_size - 1)
 
-        # Store metadata separately
+        # Store latest processed frame shape (used by ffmpeg_service)
+        pipeline.set(PROCESSED_FRAME_SHAPE_KEY, shape_payload)
+        pipeline.expire(PROCESSED_FRAME_SHAPE_KEY, 300)
+
+        # Store latest metadata separately
         if metadata:
-            metadata_key = f"frame_metadata:{self.frame_count}"
-            pipeline.set(metadata_key, json.dumps(metadata))
-            pipeline.expire(metadata_key, 300)  # expire after 5 minutes, adjust as needed
+            pipeline.set(FRAME_METADATA_KEY, json.dumps(metadata))
+            pipeline.expire(FRAME_METADATA_KEY, 300)  # expire after 5 minutes, adjust as needed
 
         pipeline.execute()
         self.redis_op_latency.observe(time.time() - start_time)
