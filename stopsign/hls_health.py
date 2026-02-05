@@ -13,17 +13,23 @@ def parse_hls_playlist(path: str) -> Dict[str, Any]:
     Returns keys:
       - exists: bool
       - playlist_mtime: float|None (stat mtime)
-      - age_seconds: float|None (now - PDT or mtime)
+      - age_seconds: float|None (now - mtime, used for health checks)
+      - pdt_age_seconds: float|None (now - last PDT, informational only)
       - target_duration_sec: float|None
       - playlist_window_sec: float|None (sum of #EXTINF durations)
       - segments_count: int
       - threshold_sec: float (≈ 3×window with 60s floor)
+
+    Note: age_seconds uses file mtime rather than PDT timestamps because
+    FFmpeg's internal clock drifts from wall-clock time when frame delivery
+    is not perfectly aligned with the declared input FPS.
     """
     now = time.time()
     out: Dict[str, Any] = {
         "exists": False,
         "playlist_mtime": None,
         "age_seconds": None,
+        "pdt_age_seconds": None,
         "target_duration_sec": None,
         "playlist_window_sec": None,
         "segments_count": 0,
@@ -70,7 +76,15 @@ def parse_hls_playlist(path: str) -> Dict[str, Any]:
         out["playlist_window_sec"] = sum(seg_durs)
         out["segments_count"] = len(seg_durs)
 
-    # Program date-time (PDT) of last segment
+    # Use file mtime for age_seconds (health checks / watchdog).
+    # mtime tracks wall-clock time accurately regardless of encoder drift.
+    if out["playlist_mtime"] is not None:
+        out["age_seconds"] = max(0.0, now - out["playlist_mtime"])  # type: ignore[arg-type]
+
+    # Program date-time (PDT) of last segment — informational only.
+    # PDT drifts from wall-clock time because FFmpeg derives it from its
+    # internal frame counter, which runs slightly fast when frame delivery
+    # is slower than the declared input FPS.
     pdt_matches = re.findall(r"#EXT-X-PROGRAM-DATE-TIME:([^\r\n]+)", content)
     if pdt_matches:
         last = pdt_matches[-1].strip()
@@ -81,12 +95,9 @@ def parse_hls_playlist(path: str) -> Dict[str, Any]:
             dt = datetime.fromisoformat(last)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            out["age_seconds"] = max(0.0, time.time() - dt.timestamp())
+            out["pdt_age_seconds"] = max(0.0, time.time() - dt.timestamp())
         except Exception:
             pass
-
-    if out["age_seconds"] is None and out["playlist_mtime"] is not None:
-        out["age_seconds"] = max(0.0, now - out["playlist_mtime"])  # type: ignore[arg-type]
 
     # Threshold: 3×window (floor 60s)
     window = out.get("playlist_window_sec")
