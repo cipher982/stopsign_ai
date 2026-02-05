@@ -269,7 +269,9 @@ def _build_clip_for_pass(pass_data) -> bool:
             result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0 or not os.path.exists(tmp_path):
-            error = (result.stderr or result.stdout or "ffmpeg_failed")[:500]
+            error_blob = result.stderr or result.stdout or "ffmpeg_failed"
+            error = error_blob[-500:]
+            logger.warning("Clip build failed for pass %s: %s", pass_data.id, error)
             app.state.db.update_clip_status(pass_data.id, "failed", clip_error=error)
             return False
 
