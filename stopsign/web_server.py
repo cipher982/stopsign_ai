@@ -1,9 +1,12 @@
 # ruff: noqa: E501
 import logging
 import os
+import subprocess
+import threading
 import time
 from datetime import datetime
 from datetime import timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from stopsign.hls_health import parse_hls_playlist
@@ -77,6 +80,16 @@ STREAM_FS_PATH = "/app/data/stream/stream.m3u8"  # filesystem path
 STREAM_URL = "/stream/stream.m3u8"  # URL path
 WEB_START_TIME = time.time()
 
+CLIP_DIR = "/app/data/stream/clips"
+CLIP_MAX_SEC = float(os.getenv("CLIP_MAX_SEC", "120"))
+CLIP_PREPAD_SEC = float(os.getenv("CLIP_PREPAD_SEC", "2"))
+CLIP_POSTPAD_SEC = float(os.getenv("CLIP_POSTPAD_SEC", "2"))
+CLIP_PARKED_SEC = float(os.getenv("CLIP_PARKED_SEC", "300"))
+CLIP_WORKER_INTERVAL_SEC = float(os.getenv("CLIP_WORKER_INTERVAL_SEC", "10"))
+CLIP_MIN_AGE_SEC = float(os.getenv("CLIP_MIN_AGE_SEC", "2"))
+_CLIP_EXPIRY_DEFAULT = max(180.0, CLIP_MAX_SEC + 30.0)
+CLIP_EXPIRY_SEC = float(os.getenv("CLIP_EXPIRY_SEC", str(_CLIP_EXPIRY_DEFAULT)))
+
 
 _HLS_PARSE_WARN_LAST_TS = 0.0
 
@@ -110,6 +123,186 @@ class InsightsCache:
 
 # Global insights cache instance
 insights_cache = InsightsCache(ttl_seconds=45)
+
+
+def _load_hls_segments(playlist_path: str):
+    """Parse HLS playlist and return segment timing metadata."""
+    if not os.path.exists(playlist_path):
+        return []
+
+    segments = []
+    stream_dir = os.path.dirname(playlist_path)
+    try:
+        with open(playlist_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+    except Exception as e:
+        logger.warning("Failed to read HLS playlist: %s", e)
+        return []
+
+    current_duration = None
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("#EXTINF:"):
+            try:
+                current_duration = float(line.split(":", 1)[1].split(",", 1)[0])
+            except ValueError:
+                current_duration = None
+            continue
+        if line.startswith("#"):
+            continue
+        if current_duration is None:
+            continue
+
+        seg_path = os.path.join(stream_dir, line)
+        if os.path.exists(seg_path):
+            try:
+                end_ts = os.path.getmtime(seg_path)
+                start_ts = end_ts - current_duration
+                segments.append(
+                    {
+                        "path": seg_path,
+                        "start": start_ts,
+                        "end": end_ts,
+                        "duration": current_duration,
+                    }
+                )
+            except OSError:
+                pass
+        current_duration = None
+
+    segments.sort(key=lambda s: s["start"])
+    return segments
+
+
+def _select_segments_for_window(segments, start_ts: float, end_ts: float):
+    return [seg for seg in segments if seg["end"] >= start_ts and seg["start"] <= end_ts]
+
+
+def _build_clip_for_pass(pass_data) -> bool:
+    """Build an MP4 clip for a completed pass. Returns True on success."""
+    if not hasattr(app.state, "db"):
+        app.state.db = Database(db_url=DB_URL)
+
+    entry_ts = getattr(pass_data, "entry_time", None)
+    exit_ts = getattr(pass_data, "exit_time", None)
+
+    if not entry_ts or not exit_ts:
+        app.state.db.update_clip_status(pass_data.id, "failed", clip_error="missing_entry_exit")
+        return False
+
+    clip_start = entry_ts - CLIP_PREPAD_SEC
+    clip_end = exit_ts + CLIP_POSTPAD_SEC
+
+    stop_duration = getattr(pass_data, "stop_duration", 0.0) or 0.0
+    if stop_duration >= CLIP_PARKED_SEC:
+        clip_start = clip_end - CLIP_MAX_SEC
+
+    if (clip_end - clip_start) > CLIP_MAX_SEC:
+        clip_start = clip_end - CLIP_MAX_SEC
+
+    clip_start = max(0.0, clip_start)
+
+    clip_filename = f"clip_{pass_data.id}_{int(exit_ts)}.mp4"
+    clip_path = os.path.join(CLIP_DIR, clip_filename)
+
+    if os.path.exists(clip_path):
+        app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
+        return True
+
+    segments = _load_hls_segments(STREAM_FS_PATH)
+    selected = _select_segments_for_window(segments, clip_start, clip_end)
+
+    if not selected:
+        if time.time() - exit_ts > CLIP_EXPIRY_SEC:
+            app.state.db.update_clip_status(pass_data.id, "expired", clip_error="segments_expired")
+        return False
+
+    concat_path = os.path.join(CLIP_DIR, f"concat_{pass_data.id}.txt")
+    tmp_path = os.path.join(CLIP_DIR, f".{clip_filename}.tmp")
+
+    try:
+        with open(concat_path, "w", encoding="utf-8") as f:
+            for seg in selected:
+                f.write(f"file '{seg['path']}'\n")
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_path,
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            tmp_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            # Fallback to re-encode if stream copy fails
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_path,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "23",
+                "-an",
+                "-movflags",
+                "+faststart",
+                tmp_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0 or not os.path.exists(tmp_path):
+            error = (result.stderr or result.stdout or "ffmpeg_failed")[:500]
+            app.state.db.update_clip_status(pass_data.id, "failed", clip_error=error)
+            return False
+
+        Path(tmp_path).rename(clip_path)
+        app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
+        return True
+    except Exception as e:
+        app.state.db.update_clip_status(pass_data.id, "failed", clip_error=str(e)[:500])
+        return False
+    finally:
+        try:
+            if os.path.exists(concat_path):
+                os.remove(concat_path)
+        except OSError:
+            pass
+
+
+def _clip_worker_loop():
+    logger.info("Clip worker started (max=%ss, parked=%ss)", CLIP_MAX_SEC, CLIP_PARKED_SEC)
+    while True:
+        try:
+            if not hasattr(app.state, "db"):
+                app.state.db = Database(db_url=DB_URL)
+            if app.state.db.read_only_mode:
+                time.sleep(CLIP_WORKER_INTERVAL_SEC)
+                continue
+
+            pending = app.state.db.get_passes_missing_clips(limit=5, min_exit_age_sec=CLIP_MIN_AGE_SEC)
+            for pass_data in pending:
+                _build_clip_for_pass(pass_data)
+        except Exception as e:
+            logger.error("Clip worker error: %s", e)
+        time.sleep(CLIP_WORKER_INTERVAL_SEC)
 
 
 def get_real_insights(db, recent_passes):
@@ -259,9 +452,21 @@ app.mount("/stream", StaticFiles(directory="/app/data/stream"), name="stream")
 os.makedirs(LOCAL_IMAGE_DIR, exist_ok=True)
 app.mount("/vehicle-images", StaticFiles(directory=LOCAL_IMAGE_DIR), name="vehicle-images")
 
+# Mount clips directory for replay MP4s
+os.makedirs(CLIP_DIR, exist_ok=True)
+app.mount("/clips", StaticFiles(directory=CLIP_DIR), name="clips")
+
 # Initialize telemetry
 metrics = setup_web_server_telemetry(app)
 tracer = get_tracer("stopsign.web_server")
+
+
+@app.on_event("startup")
+def _startup():
+    if not hasattr(app.state, "db"):
+        app.state.db = Database(db_url=DB_URL)
+    t = threading.Thread(target=_clip_worker_loop, daemon=True)
+    t.start()
 
 
 # Add cache headers for images and HLS streaming with optimized telemetry
@@ -1107,6 +1312,12 @@ def create_pass_item(pass_data, scores):
     speed_val = pass_data.min_speed
     time_val = pass_data.time_in_zone
 
+    clip_link = None
+    clip_status = getattr(pass_data, "clip_status", None)
+    clip_path = getattr(pass_data, "clip_path", None)
+    if clip_status == "ready" and clip_path:
+        clip_link = A("Replay", href=f"/clips/{clip_path}", target="_blank", cls="activity-feed__replay")
+
     # Color squares based on value ranges (using raw values for now)
     def get_speed_color(speed):
         if speed > 2.0:
@@ -1151,6 +1362,7 @@ def create_pass_item(pass_data, scores):
                 Span(f"{pass_data.time_in_zone:.2f}s", cls="activity-feed__data"),
                 cls="activity-feed__metrics",
             ),
+            clip_link if clip_link is not None else "",
             cls="activity-feed__content",
         ),
         cls="activity-feed__item",

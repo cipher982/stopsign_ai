@@ -611,6 +611,8 @@ class StopDetector:
                     stop_duration=car.state.stop_duration,
                     min_speed=car.state.min_speed_in_zone,
                     image_path=car.state.image_path,
+                    entry_time=car.state.entry_time,
+                    exit_time=car.state.exit_time,
                 )
                 logger.info(
                     f"Vehicle pass recorded: ID={car.id}, "

@@ -44,6 +44,7 @@ HEALTH_PORT = int(os.getenv("FFMPEG_HEALTH_PORT", "8080"))
 STREAM_DIR = "/app/data/stream"
 FRAME_RATE = "15"
 RESOLUTION = "1920x1080"
+HLS_LIST_SIZE = os.getenv("HLS_LIST_SIZE", "60")
 
 # ---------------------------------------------------------------------------
 # Run-time configurable encoding parameters.
@@ -276,7 +277,7 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         "-hls_time",
         "2",
         "-hls_list_size",
-        "10",
+        HLS_LIST_SIZE,
         "-hls_flags",
         "delete_segments+program_date_time",
         "-hls_allow_cache",
