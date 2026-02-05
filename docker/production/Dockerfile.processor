@@ -23,7 +23,7 @@ RUN mkdir -p /app/models && \
 # Install dependencies with BuildKit cache mount
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync && uv pip install debugpy
+    UV_LINK_MODE=copy uv sync && uv pip install debugpy
 
 # Copy application code last (changes most frequently)
 COPY stopsign ./stopsign/
