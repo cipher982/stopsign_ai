@@ -77,6 +77,11 @@ class VehiclePass(Base):
     stop_duration = Column(Float)
     min_speed = Column(Float)
     image_path = Column(String)
+    entry_time = Column(Float)
+    exit_time = Column(Float)
+    clip_path = Column(String)
+    clip_status = Column(String)
+    clip_error = Column(String)
 
 
 class ConfigSetting(Base):
@@ -116,7 +121,43 @@ class Database:
             logger.warning("🔒 DATABASE IN READ-ONLY MODE - All write operations will be blocked")
 
         logger.info(f"Database connection established at {db_url}")
+        self._ensure_vehicle_pass_columns()
         self.log_database_summary()
+
+    def _ensure_vehicle_pass_columns(self) -> None:
+        """Add new columns to vehicle_passes if missing (lightweight migration)."""
+        if self.read_only_mode:
+            return
+
+        desired = {
+            "entry_time": "DOUBLE PRECISION",
+            "exit_time": "DOUBLE PRECISION",
+            "clip_path": "TEXT",
+            "clip_status": "TEXT",
+            "clip_error": "TEXT",
+        }
+        try:
+            with self.Session() as session:
+                result = session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'vehicle_passes'
+                        """
+                    )
+                )
+                existing = {row[0] for row in result.fetchall()}
+
+                missing = [name for name in desired.keys() if name not in existing]
+                for name in missing:
+                    session.execute(text(f"ALTER TABLE vehicle_passes ADD COLUMN {name} {desired[name]}"))
+                if missing:
+                    session.commit()
+                    logger.info("Added missing columns to vehicle_passes: %s", ", ".join(missing))
+        except Exception as e:
+            logger.warning("Failed to ensure vehicle_passes columns: %s", e)
 
     @log_execution_time
     def log_database_summary(self):
@@ -152,7 +193,14 @@ class Database:
 
     @log_execution_time
     def add_vehicle_pass(
-        self, vehicle_id: int, time_in_zone: float, stop_duration: float, min_speed: float, image_path: str
+        self,
+        vehicle_id: int,
+        time_in_zone: float,
+        stop_duration: float,
+        min_speed: float,
+        image_path: str,
+        entry_time: float | None = None,
+        exit_time: float | None = None,
     ):
         if self.read_only_mode:
             logger.debug("🚫 Blocked add_vehicle_pass (READ-ONLY MODE)")
@@ -165,8 +213,47 @@ class Database:
                 stop_duration=stop_duration,
                 min_speed=min_speed,
                 image_path=image_path,
+                entry_time=entry_time,
+                exit_time=exit_time,
             )
             session.add(vehicle_pass)
+            session.commit()
+
+    @log_execution_time
+    def get_passes_missing_clips(self, limit: int = 10, min_exit_age_sec: float = 2.0):
+        """Return recent passes that have entry/exit times but no clip yet."""
+        cutoff = time.time() - min_exit_age_sec
+        with self.Session() as session:
+            return (
+                session.query(VehiclePass)
+                .filter(VehiclePass.exit_time.isnot(None))
+                .filter(VehiclePass.exit_time > 0)
+                .filter(VehiclePass.exit_time <= cutoff)
+                .filter(VehiclePass.clip_status.is_(None))
+                .order_by(VehiclePass.timestamp.desc())
+                .limit(limit)
+                .all()
+            )
+
+    @log_execution_time
+    def update_clip_status(
+        self,
+        pass_id: int,
+        status: str | None,
+        clip_path: str | None = None,
+        clip_error: str | None = None,
+    ):
+        if self.read_only_mode:
+            logger.debug("🚫 Blocked update_clip_status (READ-ONLY MODE)")
+            return
+
+        with self.Session() as session:
+            update_fields = {"clip_status": status}
+            if clip_path is not None:
+                update_fields["clip_path"] = clip_path
+            if clip_error is not None:
+                update_fields["clip_error"] = clip_error
+            session.query(VehiclePass).filter(VehiclePass.id == pass_id).update(update_fields)
             session.commit()
 
     @log_execution_time
