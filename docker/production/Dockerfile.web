@@ -1,22 +1,30 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim
+FROM python:3.12-slim AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    curl \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN pip install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    UV_LINK_MODE=copy uv sync
+    UV_LINK_MODE=copy uv sync --extra db --extra storage --extra web --no-dev --no-editable
 
 COPY stopsign /app/stopsign
 COPY static /app/static
 COPY config/config.example.yaml /app/config.example.yaml
 
-CMD ["uv", "run", "python", "-m", "stopsign.web_server"]
+# Runtime stage — clean image without build artifacts
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app /app
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+CMD ["python", "-m", "stopsign.web_server"]

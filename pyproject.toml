@@ -9,31 +9,48 @@ description = ""
 authors = [{name = "David Rose", email = "david@drose.io"}]
 requires-python = "~=3.12.0"
 dependencies = [
-    "ffmpeg-python>=0.2.0",
-    "filterpy>=1.4.5",
-    "ipykernel>=6.29.5",
-    "lapx>=0.5.10.post1",
-    "minio>=7.2.9",
-    "opencv-python>=4.10.0.84",
-    "prometheus-client>=0.20.0",
-    "psycopg2-binary>=2.9.10",
     "python-dotenv>=1.0.1",
-    "python-fasthtml>=0.6.2",
+    "pyyaml>=6.0",
     "redis>=5.0.8",
-    "shapely>=2.0.6",
-    "sqlalchemy-utils>=0.41.2",
-    "sqlalchemy>=2.0.36",
-    "ultralytics>=8.2.96",
     "opentelemetry-distro>=0.55b1",
     "opentelemetry-exporter-otlp>=1.34.1",
-    "opentelemetry-instrumentation-fastapi>=0.55b1",
-    "opentelemetry-instrumentation-sqlalchemy>=0.55b1",
     "opentelemetry-instrumentation-redis>=0.55b1",
     "opentelemetry-instrumentation-requests>=0.55b1",
-    "ruff>=0.13.2",
 ]
 
 [project.optional-dependencies]
+# ML inference (video_analyzer only)
+ml = [
+    "filterpy>=1.4.5",
+    "lapx>=0.5.10.post1",
+    "opencv-python-headless>=4.10.0.84",
+    "prometheus-client>=0.20.0",
+    "psutil>=5.9.0",
+    "shapely>=2.0.6",
+    "ultralytics>=8.2.96",
+]
+# Database access (video_analyzer + web_server)
+db = [
+    "psycopg2-binary>=2.9.10",
+    "sqlalchemy>=2.0.36",
+    "sqlalchemy-utils>=0.41.2",
+    "opentelemetry-instrumentation-sqlalchemy>=0.55b1",
+]
+# Object storage (video_analyzer + web_server)
+storage = [
+    "minio>=7.2.9",
+]
+# Web UI (web_server only)
+web = [
+    "psutil>=5.9.0",
+    "python-fasthtml>=0.6.2",
+    "opentelemetry-instrumentation-fastapi>=0.55b1",
+]
+# Development tools
+dev = [
+    "ipykernel>=6.29.5",
+    "ruff>=0.13.2",
+]
 test = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
