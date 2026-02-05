@@ -1,30 +1,22 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     curl \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
 RUN pip install uv
 
-# Set working directory
 WORKDIR /app
 
-# Copy over dependency files
-COPY pyproject.toml /app/pyproject.toml
-COPY uv.lock /app/uv.lock
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync
 
-# Install dependencies using uv
-RUN uv sync
-
-# Copy project
 COPY stopsign /app/stopsign
 COPY static /app/static
-# Copy example config (actual config will be in mounted volume)
 COPY config/config.example.yaml /app/config.example.yaml
 
-# Run the application
 CMD ["uv", "run", "python", "-m", "stopsign.web_server"]

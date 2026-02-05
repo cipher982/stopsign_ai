@@ -1,19 +1,19 @@
-**/models/
-**/__pycache__/
-**/scratch/
-.git/
-.env
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.log
-.vscode/
-.idea/
-# Keep only what you need
+# Ignore everything first
+*
+
+# Allow only what builds need
 !stopsign/
-!config.yaml
-!trackers/
+!config/
 !static/
+!rtsp_to_redis/
 !pyproject.toml
 !uv.lock
+
+# Always exclude these even from allowed dirs
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/*.log
+**/models/
+**/scratch/
