@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import shutil
@@ -8,13 +9,13 @@ import time
 from http.server import BaseHTTPRequestHandler
 from http.server import HTTPServer
 
-import cv2
-import numpy as np
 import redis
 from redis import exceptions as redis_exceptions
 
 from stopsign.hls_health import parse_hls_playlist
 from stopsign.service_status import FFmpegServiceStatusMixin
+from stopsign.settings import GRACE_STARTUP_SEC
+from stopsign.settings import PROCESSED_FRAME_SHAPE_KEY
 from stopsign.telemetry import get_tracer
 from stopsign.telemetry import setup_ffmpeg_service_telemetry
 
@@ -67,7 +68,6 @@ REDIS_INITIAL_BACKOFF_SEC = float(os.getenv("REDIS_INITIAL_BACKOFF_SEC", "0.5"))
 
 # FFmpeg Configuration
 HLS_PLAYLIST = os.path.join(STREAM_DIR, "stream.m3u8")
-GRACE_STARTUP_SEC = 120  # tolerate startup warmup without flapping health
 
 # For monitoring
 frames_processed = 0
@@ -292,16 +292,17 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
 def get_frame_shape(r: redis.Redis) -> tuple[int, int] | None:
     """Get the shape of the first frame from Redis."""
     while True:
-        task = safe_brpop(PROCESSED_FRAME_KEY, timeout=5)
-        if task is None:
-            continue
-        _, data = task  # type: ignore
-        nparr = np.frombuffer(data, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if frame is None:
-            logger.warning("Initial frame decode failed; waiting for next frame")
-            continue
-        return (frame.shape[1], frame.shape[0])
+        shape_data = r.get(PROCESSED_FRAME_SHAPE_KEY)
+        if shape_data:
+            try:
+                payload = json.loads(shape_data)
+                width = int(payload.get("width", 0))
+                height = int(payload.get("height", 0))
+                if width > 0 and height > 0:
+                    return (width, height)
+            except Exception as e:
+                logger.warning("Failed to parse processed frame shape: %s", e)
+        time.sleep(0.5)
 
 
 def connect_redis_with_backoff(url: str) -> redis.Redis:
@@ -437,6 +438,7 @@ def main():
     # This is the "Carmack stable fix" - fill gaps with duplicate frames
     target_fps = float(FRAME_RATE)
     frame_interval = 1.0 / target_fps  # ~66.7ms at 15 FPS
+    expected_frame_bytes = frame_shape[0] * frame_shape[1] * 3
     last_frame_time = time.time()
     last_raw_frame = None  # Cache for frame duplication
 
@@ -462,22 +464,21 @@ def main():
             time_since_last = now - last_frame_time
 
             if task:
-                # New frame arrived - decode and cache it
+                # New frame arrived - cache raw bytes
                 _, data = task  # type: ignore
                 if ffmpeg_process.stdin:
                     try:
-                        nparr = np.frombuffer(data, np.uint8)
-                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                        if frame is None:
-                            logger.warning("cv2.imdecode returned None; skipping corrupt frame")
+                        if len(data) != expected_frame_bytes:
+                            logger.warning(
+                                "Processed frame size mismatch (got %d bytes, expected %d)",
+                                len(data),
+                                expected_frame_bytes,
+                            )
                             continue
-
-                        # Resize and cache
-                        resized_frame = cv2.resize(frame, (frame_shape[0], frame_shape[1]))
-                        last_raw_frame = resized_frame.tobytes()
+                        last_raw_frame = data
                         new_frame_count += 1
                     except Exception as e:
-                        logger.warning(f"Frame decode error: {e}")
+                        logger.warning(f"Frame read error: {e}")
                         continue
 
             # Write frame at steady 15 FPS intervals
@@ -519,7 +520,7 @@ def main():
 
             # Small sleep to prevent busy-waiting when no frames available
             if not task and time_since_last < frame_interval:
-                time.sleep(0.005)  # 5ms sleep
+                time.sleep(frame_interval - time_since_last)
 
             # If FFmpeg died, restart it
             if ffmpeg_process.poll() is not None:

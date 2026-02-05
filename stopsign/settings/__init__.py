@@ -177,9 +177,12 @@ class ProductionConfig(BaseConfig):
 RTSP_URL = get_env("RTSP_URL", required=False)
 RAW_FRAME_KEY = get_env("RAW_FRAME_KEY", "raw_frames", required=False)
 PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY", "processed_frames", required=False)
+PROCESSED_FRAME_SHAPE_KEY = get_env("PROCESSED_FRAME_SHAPE_KEY", "processed_frame_shape", required=False)
+FRAME_METADATA_KEY = get_env("FRAME_METADATA_KEY", "frame_metadata_latest", required=False)
 FRAME_BUFFER_SIZE = get_env_int("FRAME_BUFFER_SIZE", 500, required=False)
 PROMETHEUS_PORT = get_env_int("PROMETHEUS_PORT", 9100, required=False)
 WEB_SERVER_PORT = get_env_int("WEB_SERVER_PORT", 8000, required=False)
+GRACE_STARTUP_SEC = get_env_int("GRACE_STARTUP_SEC", 120, required=False)
 
 # Local image storage (fast homepage)
 LOCAL_IMAGE_DIR = get_env("LOCAL_IMAGE_DIR", "/app/data/vehicle-images", required=False)
