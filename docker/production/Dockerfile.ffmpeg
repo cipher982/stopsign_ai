@@ -1,26 +1,20 @@
-FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y python3 python3-pip python3-venv ffmpeg curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set up virtual environment
-ENV VIRTUAL_ENV=/opt/venv
-RUN python3 -m venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-# Install Python dependencies in the virtual environment
-RUN pip install --no-cache-dir redis numpy opencv-python-headless \
+RUN pip install --no-cache-dir \
+    redis \
     opentelemetry-distro opentelemetry-exporter-otlp \
     opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-sqlalchemy \
     opentelemetry-instrumentation-redis opentelemetry-instrumentation-requests
 
-# Set work directory
 WORKDIR /app
 
-# Copy project
 COPY stopsign /app/stopsign
 
-# Start process
 CMD ["python", "-m", "stopsign.ffmpeg_service"]
