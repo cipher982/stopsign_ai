@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
     gcc \
-    libgl1-mesa-glx \
     libglib2.0-0 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/* \
@@ -23,11 +22,10 @@ RUN mkdir -p /app/models && \
 # Install dependencies with BuildKit cache mount
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    UV_LINK_MODE=copy uv sync && uv pip install debugpy
+    UV_LINK_MODE=copy uv sync --extra ml --extra db --extra storage && uv pip install debugpy
 
 # Copy application code last (changes most frequently)
 COPY stopsign ./stopsign/
-# Copy example config (actual config will be in mounted volume)
 COPY config/config.example.yaml /app/config.example.yaml
 
 CMD ["uv", "run", "python", "-m", "stopsign.video_analyzer"]
