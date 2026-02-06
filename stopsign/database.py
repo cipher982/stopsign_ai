@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from typing import Dict
 from typing import List
 
 from sqlalchemy import JSON
@@ -11,7 +12,9 @@ from sqlalchemy import Boolean
 from sqlalchemy import Column
 from sqlalchemy import DateTime
 from sqlalchemy import Float
+from sqlalchemy import ForeignKey
 from sqlalchemy import Integer
+from sqlalchemy import LargeBinary
 from sqlalchemy import String
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import create_engine
@@ -100,6 +103,32 @@ class ConfigSetting(Base):
 
     # Only one active setting per category/key combination
     __table_args__ = (UniqueConstraint("category", "key", "is_active", name="_category_key_active_uc"),)
+
+
+class VehicleEmbedding(Base):
+    __tablename__ = "vehicle_embeddings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    vehicle_pass_id = Column(BigInteger, ForeignKey("vehicle_passes.id"), unique=True, nullable=False)
+    embedding = Column(LargeBinary, nullable=False)  # 384 x float32 = 1,536 bytes
+    model_name = Column(String(64), nullable=False)  # e.g. 'dinov2-small'
+    created_at = Column(DateTime, default=func.now())
+
+
+class VehicleAttribute(Base):
+    __tablename__ = "vehicle_attributes"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    vehicle_pass_id = Column(BigInteger, ForeignKey("vehicle_passes.id"), unique=True, nullable=False)
+    cluster_id = Column(Integer)
+    vehicle_type = Column(String(64))  # sedan, suv, pickup, van, etc.
+    color = Column(String(64))  # white, silver, black, etc.
+    make_model = Column(String(128))  # Toyota Camry, Ford F-150, etc.
+    confidence = Column(Float)  # LLM confidence 0.0-1.0
+    is_representative = Column(Boolean, default=False)
+    raw_llm_response = Column(JSON)  # Full structured response for debugging
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
 
 class Database:
@@ -485,6 +514,158 @@ class Database:
                 }
                 for h in history
             ]
+
+    # ==========================================
+    # Vehicle Attributes Methods
+    # ==========================================
+
+    @log_execution_time
+    def get_vehicle_stats_summary(self) -> dict | None:
+        """Get summary stats: total classified, distinct clusters, coverage %."""
+        with self.Session() as session:
+            result = session.execute(
+                text("""
+                SELECT
+                    COUNT(*) AS total_classified,
+                    COUNT(DISTINCT cluster_id) AS cluster_count,
+                    ROUND(
+                        COUNT(*)::numeric * 100.0
+                        / GREATEST((SELECT COUNT(*) FROM vehicle_passes), 1),
+                        1
+                    ) AS coverage_pct
+                FROM vehicle_attributes
+                """)
+            ).first()
+            if result and result.total_classified > 0:
+                return {
+                    "total_classified": result.total_classified,
+                    "cluster_count": result.cluster_count,
+                    "coverage_pct": float(result.coverage_pct),
+                }
+            return None
+
+    @log_execution_time
+    def get_vehicle_type_distribution(self) -> list[dict]:
+        """Get vehicle type counts ordered by frequency."""
+        with self.Session() as session:
+            rows = session.execute(
+                text("""
+                SELECT vehicle_type, COUNT(*) AS cnt
+                FROM vehicle_attributes
+                WHERE vehicle_type IS NOT NULL
+                GROUP BY vehicle_type
+                ORDER BY cnt DESC
+                """)
+            ).fetchall()
+            return [{"vehicle_type": r.vehicle_type, "count": r.cnt} for r in rows]
+
+    @log_execution_time
+    def get_vehicle_color_distribution(self) -> list[dict]:
+        """Get vehicle color counts ordered by frequency."""
+        with self.Session() as session:
+            rows = session.execute(
+                text("""
+                SELECT color, COUNT(*) AS cnt
+                FROM vehicle_attributes
+                WHERE color IS NOT NULL
+                GROUP BY color
+                ORDER BY cnt DESC
+                """)
+            ).fetchall()
+            return [{"color": r.color, "count": r.cnt} for r in rows]
+
+    @log_execution_time
+    def get_top_make_models(self, limit: int = 15) -> list[dict]:
+        """Get top make/models with a representative image path."""
+        with self.Session() as session:
+            rows = session.execute(
+                text("""
+                SELECT
+                    va.make_model,
+                    COUNT(*) AS cnt,
+                    (
+                        SELECT vp.image_path
+                        FROM vehicle_attributes va2
+                        JOIN vehicle_passes vp ON vp.id = va2.vehicle_pass_id
+                        WHERE va2.make_model = va.make_model
+                          AND vp.image_path IS NOT NULL
+                          AND vp.image_path != ''
+                        ORDER BY va2.confidence DESC NULLS LAST
+                        LIMIT 1
+                    ) AS image_path
+                FROM vehicle_attributes va
+                WHERE va.make_model IS NOT NULL
+                GROUP BY va.make_model
+                ORDER BY cnt DESC
+                LIMIT :limit
+                """),
+                {"limit": limit},
+            ).fetchall()
+            return [{"make_model": r.make_model, "count": r.cnt, "image_path": r.image_path} for r in rows]
+
+    @log_execution_time
+    def get_cluster_gallery(self, limit: int = 30) -> list[dict]:
+        """Get representative images for top clusters."""
+        with self.Session() as session:
+            rows = session.execute(
+                text("""
+                SELECT
+                    va.cluster_id,
+                    va.vehicle_type,
+                    va.color,
+                    va.make_model,
+                    vp.image_path,
+                    cs.cluster_size
+                FROM vehicle_attributes va
+                JOIN vehicle_passes vp ON vp.id = va.vehicle_pass_id
+                LEFT JOIN (
+                    SELECT cluster_id, COUNT(*) AS cluster_size
+                    FROM vehicle_attributes
+                    WHERE cluster_id IS NOT NULL
+                    GROUP BY cluster_id
+                ) cs ON cs.cluster_id = va.cluster_id
+                WHERE va.is_representative = true
+                  AND vp.image_path IS NOT NULL
+                  AND vp.image_path != ''
+                ORDER BY cs.cluster_size DESC NULLS LAST
+                LIMIT :limit
+                """),
+                {"limit": limit},
+            ).fetchall()
+            return [
+                {
+                    "cluster_id": r.cluster_id,
+                    "vehicle_type": r.vehicle_type,
+                    "color": r.color,
+                    "make_model": r.make_model,
+                    "image_path": r.image_path,
+                    "cluster_size": r.cluster_size,
+                }
+                for r in rows
+            ]
+
+    @log_execution_time
+    def get_vehicle_attributes_for_passes(self, pass_ids: list[int]) -> Dict[int, dict]:
+        """Bulk lookup vehicle attributes keyed by vehicle_pass_id."""
+        if not pass_ids:
+            return {}
+        with self.Session() as session:
+            rows = session.execute(
+                text("""
+                SELECT vehicle_pass_id, vehicle_type, color, make_model
+                FROM vehicle_attributes
+                WHERE vehicle_pass_id = ANY(:ids)
+                """),
+                {"ids": pass_ids},
+            ).fetchall()
+            return {
+                r.vehicle_pass_id: {
+                    "vehicle_type": r.vehicle_type,
+                    "color": r.color,
+                    "make_model": r.make_model,
+                }
+                for r in rows
+            }
 
     # ==========================================
     # Real-time Insights Methods

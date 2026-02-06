@@ -14,6 +14,7 @@ from fasthtml.common import Header
 from fasthtml.common import Main
 from fasthtml.common import Nav
 from fasthtml.common import P
+from fasthtml.common import Small
 from fasthtml.common import Span
 
 
@@ -190,6 +191,14 @@ def page_head_component(title, include_video_deps=False, page_type="home"):
             "url": f"{base_url}/records",
             "image": f"{base_url}/static/screenshot_afternoon.png",
         },
+        "vehicles": {
+            "description": (
+                "Explore vehicle classification data from AI traffic monitoring. See breakdowns "
+                "by type, color, and make/model from real-time YOLO detection and vision analysis."
+            ),
+            "url": f"{base_url}/vehicles",
+            "image": f"{base_url}/static/screenshot_afternoon.png",
+        },
         "debug": {
             "description": (
                 "Debug interface for Stop Sign Nanny AI traffic monitoring system configuration " "and zone adjustment."
@@ -259,6 +268,7 @@ def common_header_component(title):
             Div(
                 A("Home", href="/", cls="navigation__link"),
                 A("Records", href="/records", cls="navigation__link"),
+                A("Vehicles", href="/vehicles", cls="navigation__link"),
                 A("About", href="/about", cls="navigation__link"),
                 cls="navigation__group",
             ),
@@ -422,3 +432,52 @@ def debug_tools_component():
         Div(id="debugOutput", cls="terminal terminal--log"),
         cls="window window--panel",
     )
+
+
+def vehicle_badge_component(attrs):
+    """Inline badge showing vehicle type/color and make/model."""
+    if not attrs:
+        return Span()
+    parts = []
+    type_color = " ".join(filter(None, [attrs.get("color"), attrs.get("vehicle_type")]))
+    if type_color:
+        parts.append(Span(type_color.title(), cls="vehicle-badge__type"))
+    make_model = attrs.get("make_model")
+    if make_model:
+        parts.append(Small(make_model, cls="vehicle-badge__make"))
+    if not parts:
+        return Span()
+    return Span(*parts, cls="vehicle-badge")
+
+
+def vehicle_bar_chart_component(items, label_key, value_key, color_fn=None):
+    """Pure-CSS horizontal bar chart with sunken tracks.
+
+    ``items`` is a list of dicts.  ``label_key`` and ``value_key`` select
+    which fields to use.  ``color_fn`` (optional) takes an item and returns
+    a CSS color string for the fill bar.
+    """
+    if not items:
+        return Div(P("No data available."), cls="bar-chart")
+    max_val = max(item[value_key] for item in items)
+    rows = []
+    for item in items:
+        pct = (item[value_key] / max_val * 100) if max_val else 0
+        fill_style = f"width:{pct:.1f}%;"
+        if color_fn:
+            fill_style += f"background-color:{color_fn(item)};"
+        rows.append(
+            Div(
+                Div(
+                    Span(str(item[label_key]).title(), cls="bar-chart__label"),
+                    Span(f"{item[value_key]:,}", cls="bar-chart__value"),
+                    cls="bar-chart__header",
+                ),
+                Div(
+                    Div(cls="bar-chart__fill", style=fill_style),
+                    cls="bar-chart__track sunken",
+                ),
+                cls="bar-chart__row",
+            )
+        )
+    return Div(*rows, cls="bar-chart")
