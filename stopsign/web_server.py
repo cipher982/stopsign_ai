@@ -53,6 +53,8 @@ from stopsign.components import debug_tools_component
 from stopsign.components import debug_video_component
 from stopsign.components import main_layout_component
 from stopsign.components import page_head_component
+from stopsign.components import vehicle_badge_component
+from stopsign.components import vehicle_bar_chart_component
 from stopsign.config import Config
 from stopsign.database import Database
 from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
@@ -1174,9 +1176,17 @@ async def get_recent_vehicle_passes():
         # Create a dict to map scores to passes
         scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
 
+        # Bulk-fetch vehicle attributes for these passes
+        pass_ids = [p.id for p in recent_passes]
+        vehicle_attrs = app.state.db.get_vehicle_attributes_for_passes(pass_ids)
+
         passes_list = Div(
             *[
-                create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)])
+                create_pass_item(
+                    pass_data,
+                    scores_dict[(pass_data.min_speed, pass_data.time_in_zone)],
+                    vehicle_attrs=vehicle_attrs,
+                )
                 for pass_data in recent_passes
             ],
             id="passes-list",
@@ -1230,8 +1240,11 @@ async def get_worst_passes():
         )
         scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
 
+        pass_ids = [p.id for p in all_passes]
+        vehicle_attrs = app.state.db.get_vehicle_attributes_for_passes(pass_ids)
+
         return create_pass_list(
-            "Worst Passes (7 Days)", worst_speed_passes, worst_time_passes, "worstPasses", scores_dict
+            "Worst Passes (7 Days)", worst_speed_passes, worst_time_passes, "worstPasses", scores_dict, vehicle_attrs
         )
     except Exception as e:
         logger.error(f"Error in get_worst_passes: {str(e)}")
@@ -1252,10 +1265,203 @@ async def get_best_passes():
         )
         scores_dict = {(score["min_speed"], score["time_in_zone"]): score for score in scores}
 
-        return create_pass_list("Best Passes (7 Days)", best_speed_passes, best_time_passes, "bestPasses", scores_dict)
+        pass_ids = [p.id for p in all_passes]
+        vehicle_attrs = app.state.db.get_vehicle_attributes_for_passes(pass_ids)
+
+        return create_pass_list(
+            "Best Passes (7 Days)", best_speed_passes, best_time_passes, "bestPasses", scores_dict, vehicle_attrs
+        )
     except Exception as e:
         logger.error(f"Error in get_best_passes: {str(e)}")
         return Div(P(f"Error: {str(e)}"), id="bestPasses")
+
+
+@app.get("/vehicles")  # type: ignore
+def vehicles():
+    return Html(
+        page_head_component("Vehicles - Stop Sign Nanny", page_type="vehicles"),
+        Body(
+            Div(
+                common_header_component("Vehicles"),
+                Main(
+                    Div(
+                        H2("Vehicle Classification"),
+                        Div(id="vehicleSummary", hx_get="/api/vehicles/summary", hx_trigger="load"),
+                        Div(
+                            Div(id="vehicleTypes", hx_get="/api/vehicles/types", hx_trigger="load"),
+                            Div(id="vehicleColors", hx_get="/api/vehicles/colors", hx_trigger="load"),
+                            cls="two-col",
+                        ),
+                        Div(id="vehicleMakeModels", hx_get="/api/vehicles/make-models", hx_trigger="load"),
+                        Div(id="vehicleGallery", hx_get="/api/vehicles/gallery", hx_trigger="load"),
+                        cls="vehicles-page window",
+                    ),
+                    cls="app-layout",
+                ),
+                common_footer_component(),
+                cls="desktop-container",
+            ),
+        ),
+    )
+
+
+@app.get("/api/vehicles/summary")  # type: ignore
+async def api_vehicles_summary():
+    try:
+        if not hasattr(app.state, "db"):
+            app.state.db = Database(db_url=DB_URL)
+        summary = app.state.db.get_vehicle_stats_summary()
+        if not summary:
+            return Div(P("Vehicle classification data not yet available."), id="vehicleSummary")
+        return Div(
+            Div(
+                *[
+                    Div(
+                        Span(str(m["value"]), cls="about-metric__value"),
+                        Span(m["label"], cls="about-metric__label"),
+                        cls="about-metric window window--card",
+                    )
+                    for m in [
+                        {"value": f"{summary['total_classified']:,}", "label": "vehicles classified"},
+                        {"value": f"{summary['cluster_count']:,}", "label": "unique clusters"},
+                        {"value": f"{summary['coverage_pct']}%", "label": "of all passes covered"},
+                    ]
+                ],
+                cls="about-metrics",
+            ),
+            id="vehicleSummary",
+        )
+    except Exception as e:
+        logger.error(f"Error in api_vehicles_summary: {e}")
+        return Div(P("Summary unavailable."), id="vehicleSummary")
+
+
+@app.get("/api/vehicles/types")  # type: ignore
+async def api_vehicles_types():
+    try:
+        if not hasattr(app.state, "db"):
+            app.state.db = Database(db_url=DB_URL)
+        items = app.state.db.get_vehicle_type_distribution()
+        if not items:
+            return Div(P("No vehicle type data."), id="vehicleTypes")
+        return Div(
+            H3("By Type"),
+            vehicle_bar_chart_component(items, "vehicle_type", "count"),
+            id="vehicleTypes",
+            cls="window window--panel",
+        )
+    except Exception as e:
+        logger.error(f"Error in api_vehicles_types: {e}")
+        return Div(P("Type data unavailable."), id="vehicleTypes")
+
+
+COLOR_MAP = {
+    "white": "#e8e8e8",
+    "black": "#333333",
+    "silver": "#a0a0a0",
+    "gray": "#808080",
+    "grey": "#808080",
+    "red": "#cc3333",
+    "blue": "#3366cc",
+    "green": "#339933",
+    "brown": "#8b6914",
+    "beige": "#d4c5a0",
+    "gold": "#cca300",
+    "yellow": "#cccc00",
+    "orange": "#cc6600",
+    "maroon": "#660000",
+    "tan": "#c4a882",
+}
+
+
+@app.get("/api/vehicles/colors")  # type: ignore
+async def api_vehicles_colors():
+    try:
+        if not hasattr(app.state, "db"):
+            app.state.db = Database(db_url=DB_URL)
+        items = app.state.db.get_vehicle_color_distribution()
+        if not items:
+            return Div(P("No vehicle color data."), id="vehicleColors")
+
+        def color_fn(item):
+            return COLOR_MAP.get(item["color"].lower(), "#000080")
+
+        return Div(
+            H3("By Color"),
+            vehicle_bar_chart_component(items, "color", "count", color_fn=color_fn),
+            id="vehicleColors",
+            cls="window window--panel",
+        )
+    except Exception as e:
+        logger.error(f"Error in api_vehicles_colors: {e}")
+        return Div(P("Color data unavailable."), id="vehicleColors")
+
+
+@app.get("/api/vehicles/make-models")  # type: ignore
+async def api_vehicles_make_models():
+    try:
+        if not hasattr(app.state, "db"):
+            app.state.db = Database(db_url=DB_URL)
+        items = app.state.db.get_top_make_models(limit=15)
+        if not items:
+            return Div(P("No make/model data."), id="vehicleMakeModels")
+        cards = []
+        for item in items:
+            img_url = resolve_image_url(item.get("image_path"))
+            cards.append(
+                Div(
+                    Img(src=img_url, alt=item["make_model"], cls="make-model__image", loading="lazy"),
+                    Div(
+                        Span(item["make_model"], cls="make-model__name"),
+                        Span(f"{item['count']:,} sightings", cls="make-model__count"),
+                        cls="make-model__text",
+                    ),
+                    cls="make-model__card",
+                )
+            )
+        return Div(
+            H3("Top Make / Models"),
+            Div(*cards, cls="make-model__grid"),
+            id="vehicleMakeModels",
+            cls="window window--panel",
+        )
+    except Exception as e:
+        logger.error(f"Error in api_vehicles_make_models: {e}")
+        return Div(P("Make/model data unavailable."), id="vehicleMakeModels")
+
+
+@app.get("/api/vehicles/gallery")  # type: ignore
+async def api_vehicles_gallery():
+    try:
+        if not hasattr(app.state, "db"):
+            app.state.db = Database(db_url=DB_URL)
+        items = app.state.db.get_cluster_gallery(limit=30)
+        if not items:
+            return Div(P("No cluster gallery data."), id="vehicleGallery")
+        cards = []
+        for item in items:
+            img_url = resolve_image_url(item.get("image_path"))
+            label_parts = list(filter(None, [item.get("color"), item.get("vehicle_type")]))
+            label = " ".join(label_parts).title() if label_parts else "Unknown"
+            make = item.get("make_model") or ""
+            size = item.get("cluster_size") or 0
+            cards.append(
+                Div(
+                    Img(src=img_url, alt=label, cls="gallery__image", loading="lazy"),
+                    Div(label, cls="gallery__caption"),
+                    Div(f"{make} ({size})" if make else f"({size})", cls="gallery__size") if size else "",
+                    cls="gallery__card",
+                )
+            )
+        return Div(
+            H3("Cluster Gallery"),
+            Div(*cards, cls="gallery__grid"),
+            id="vehicleGallery",
+            cls="window window--panel",
+        )
+    except Exception as e:
+        logger.error(f"Error in api_vehicles_gallery: {e}")
+        return Div(P("Gallery unavailable."), id="vehicleGallery")
 
 
 def get_minio_object_name(minio_path: str) -> str | None:
@@ -1268,20 +1474,48 @@ def get_minio_object_name(minio_path: str) -> str | None:
     return parts[3] if len(parts) >= 4 else None
 
 
-def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
+def resolve_image_url(image_path: str | None) -> str:
+    """Convert a stored image_path to a servable URL."""
+    if not image_path or not isinstance(image_path, str):
+        return "/static/placeholder.jpg"
+    if image_path.startswith("local://"):
+        filename = image_path.replace("local://", "")
+        local_file = os.path.join(LOCAL_IMAGE_DIR, filename)
+        if os.path.exists(local_file):
+            return f"/vehicle-images/{filename}"
+        return f"/vehicle-image/{filename}"
+    if image_path.startswith("bremen://"):
+        filename = image_path.replace("bremen://", "")
+        return f"/vehicle-image/{filename}"
+    if image_path.startswith("minio://"):
+        parts = image_path.split("/", 3)
+        if len(parts) >= 4 and parts[3]:
+            return f"/vehicle-image/{parts[3]}"
+    return "/static/placeholder.jpg"
+
+
+def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict, vehicle_attrs=None):
     return Div(
         H3(title),
         H4("Minimum Speed"),
         Div(
             *[
-                create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)])
+                create_pass_item(
+                    pass_data,
+                    scores_dict[(pass_data.min_speed, pass_data.time_in_zone)],
+                    vehicle_attrs=vehicle_attrs,
+                )
                 for pass_data in speed_passes
             ],
         ),
         H4("Time in Stop Zone"),
         Div(
             *[
-                create_pass_item(pass_data, scores_dict[(pass_data.min_speed, pass_data.time_in_zone)])
+                create_pass_item(
+                    pass_data,
+                    scores_dict[(pass_data.min_speed, pass_data.time_in_zone)],
+                    vehicle_attrs=vehicle_attrs,
+                )
                 for pass_data in time_passes
             ],
         ),
@@ -1290,30 +1524,8 @@ def create_pass_list(title, speed_passes, time_passes, div_id, scores_dict):
     )
 
 
-def create_pass_item(pass_data, scores):
-    # Build image URL based on path type
-    image_url = "/static/placeholder.jpg"  # Default fallback image
-    if pass_data.image_path and isinstance(pass_data.image_path, str):
-        if pass_data.image_path.startswith("local://"):
-            # Local path - serve from local static mount if file exists, else fall back to Bremen proxy
-            filename = pass_data.image_path.replace("local://", "")
-            local_file = os.path.join(LOCAL_IMAGE_DIR, filename)
-            if os.path.exists(local_file):
-                image_url = f"/vehicle-images/{filename}"
-            else:
-                # File pruned locally, try Bremen archive
-                image_url = f"/vehicle-image/{filename}"
-        elif pass_data.image_path.startswith("bremen://"):
-            # Archived to Bremen - proxy through /vehicle-image/ endpoint
-            filename = pass_data.image_path.replace("bremen://", "")
-            image_url = f"/vehicle-image/{filename}"
-        elif pass_data.image_path.startswith("minio://"):
-            # Legacy minio path - proxy through Bremen
-            parts = pass_data.image_path.split("/", 3)
-            if len(parts) >= 4 and parts[3]:
-                object_name = parts[3]
-                # Use proxy endpoint which fetches from Bremen
-                image_url = f"/vehicle-image/{object_name}"
+def create_pass_item(pass_data, scores, vehicle_attrs=None):
+    image_url = resolve_image_url(pass_data.image_path)
 
     # Format timestamp - convert UTC to Chicago time
     if hasattr(pass_data, "timestamp") and pass_data.timestamp:
@@ -1359,6 +1571,13 @@ def create_pass_item(pass_data, scores):
         else:
             return "#00FF00"  # Green - short time
 
+    # Vehicle attribute badge
+    badge = ""
+    if vehicle_attrs and hasattr(pass_data, "id"):
+        attrs = vehicle_attrs.get(pass_data.id)
+        if attrs:
+            badge = vehicle_badge_component(attrs)
+
     return Div(
         Img(
             src=image_url,
@@ -1378,6 +1597,7 @@ def create_pass_item(pass_data, scores):
                 Span(f"{pass_data.time_in_zone:.2f}s", cls="activity-feed__data"),
                 cls="activity-feed__metrics",
             ),
+            badge,
             clip_link if clip_link is not None else "",
             cls="activity-feed__content",
         ),
