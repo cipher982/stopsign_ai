@@ -27,6 +27,7 @@ ml = [
     "onnxruntime>=1.19.0; sys_platform != 'linux'",
     "prometheus-client>=0.20.0",
     "psutil>=5.9.0",
+    "pytz>=2024.1",
     "shapely>=2.0.6",
     "supervision>=0.25.0",
 ]
