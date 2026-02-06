@@ -83,7 +83,7 @@ class LocalConfig(BaseConfig):
         self.MINIO_PUBLIC_URL = get_env("MINIO_PUBLIC_URL")
 
         # AI Model (CPU-optimized for local dev)
-        self.YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME", "yolo11n.pt", required=False)
+        self.YOLO_MODEL_NAME = get_env("YOLO_MODEL_NAME", "yolo11n.onnx", required=False)
         self.YOLO_DEVICE = get_env("YOLO_DEVICE", "cpu", required=False)
 
         # FFmpeg (CPU encoding)
@@ -151,7 +151,7 @@ class ProductionConfig(BaseConfig):
     @property
     def YOLO_MODEL_NAME(self):
         if self._yolo_model_name is None:
-            self._yolo_model_name = get_env("YOLO_MODEL_NAME", "yolo11x.pt", required=False)
+            self._yolo_model_name = get_env("YOLO_MODEL_NAME", "yolo11x.onnx", required=False)
         return self._yolo_model_name
 
     @property

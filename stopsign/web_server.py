@@ -1553,7 +1553,7 @@ def about():
             "title": "video_analyzer",
             "subtitle": "Computer vision core",
             "items": [
-                "Runs Ultralytics YOLO models (configured via YOLO_MODEL_NAME/YOLO_DEVICE).",
+                "Runs YOLO via ONNX Runtime with GPU acceleration (configured via YOLO_MODEL_NAME/YOLO_DEVICE).",
                 "CarTracker + Kalman filter blend trajectories for reliable stop detection.",
                 "Persists scores to Postgres, ships annotated evidence to MinIO, and surfaces live insights.",
             ],

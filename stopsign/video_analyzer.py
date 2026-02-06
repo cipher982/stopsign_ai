@@ -1,5 +1,3 @@
-import contextlib
-import io
 import json
 import logging
 import os
@@ -25,7 +23,8 @@ from prometheus_client import Histogram
 from prometheus_client import start_http_server
 from redis import Redis
 from redis import exceptions as redis_exceptions
-from ultralytics import YOLO
+
+from stopsign.onnx_detector import OnnxYoloDetector
 
 # Debug telemetry issues
 try:
@@ -283,25 +282,17 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.exception_counter.labels(type=exception_type, method=method).inc()
 
     def initialize_model(self):
-        """Load YOLO on the best available device.
-
-        Priority:
-        1. YOLO_DEVICE env var ("cpu" / "cuda" / "cuda:0", etc.)
-        2. Auto-detect CUDA, otherwise fall back to CPU.
-        This lets the same codebase run on a GPU server and on a
-        CUDA-less laptop without edits.
-        """
-
-        logger.info("Loading YOLO model from %s", YOLO_MODEL_PATH)
-
-        # Resolve device --------------------------------------------------
+        """Load ONNX YOLO model via OnnxYoloDetector."""
+        logger.info("Loading ONNX model from %s", YOLO_MODEL_PATH)
         device = YOLO_DEVICE
-        logger.info("Using YOLO device from settings: %s", device)
-
-        # Instantiate model ----------------------------------------------
-        model = YOLO(YOLO_MODEL_PATH, task="detect").to(device)
-        logger.info("Model ready on device: %s", device)
-        return model
+        detector = OnnxYoloDetector(
+            model_path=YOLO_MODEL_PATH,
+            device=device,
+            conf_thresh=float(os.getenv("YOLO_CONF_THRESH", "0.25")),
+            nms_iou_thresh=float(os.getenv("YOLO_NMS_IOU_THRESH", "0.7")),
+        )
+        logger.info("ONNX model ready, providers: %s", detector.session.get_providers())
+        return detector
 
     def _parse_raw_frame(self, data: bytes) -> Tuple[Optional[np.ndarray], Optional[float]]:
         """Parse packed RAW frame with optional metadata header.
@@ -691,9 +682,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             points = []
             for i, p in enumerate(stop_zone):
                 if p is None:
-                    raise ValueError(f"Stop zone point {i+1} is None. Stop zone: {stop_zone}")
+                    raise ValueError(f"Stop zone point {i + 1} is None. Stop zone: {stop_zone}")
                 if not isinstance(p, (list, tuple)) or len(p) != 2:
-                    raise ValueError(f"Stop zone point {i+1} must be a [x, y] pair, got: {p}")
+                    raise ValueError(f"Stop zone point {i + 1} must be a [x, y] pair, got: {p}")
                 points.append((int(p[0]), int(p[1])))
             points = np.array(points, dtype=np.int32)
             cv2.polylines(frame_copy, [points], True, (0, 0, 255), 3)
@@ -760,29 +751,17 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 span.set_attribute("vehicle_classes", str(self.config.vehicle_classes))
 
                 start_time = time.time()
-                with contextlib.redirect_stdout(io.StringIO()):
-                    results = self.model.track(
-                        source=frame,
-                        tracker="./trackers/bytetrack.yaml",
-                        stream=False,
-                        persist=True,
-                        classes=self.config.vehicle_classes,
-                        verbose=False,
-                    )
+                boxes = self.model.detect_and_track(
+                    frame=frame,
+                    class_filter=self.config.vehicle_classes,
+                )
                 inference_time = time.time() - start_time
                 self.model_inference_latency.observe(inference_time)
                 metrics.yolo_inference_duration.record(inference_time)
 
                 span.set_attribute("inference.duration_seconds", inference_time)
-
-                boxes = results[0].boxes
-                if boxes:
-                    boxes = [obj for obj in boxes if obj.cls in self.config.vehicle_classes]
-                    metrics.objects_detected.add(len(boxes), {"type": "vehicle"})
-                    span.set_attribute("objects.detected_count", len(boxes))
-                else:
-                    boxes = []
-                    span.set_attribute("objects.detected_count", 0)
+                metrics.objects_detected.add(len(boxes), {"type": "vehicle"})
+                span.set_attribute("objects.detected_count", len(boxes))
 
             return frame, boxes
         except Exception as e:
