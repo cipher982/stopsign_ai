@@ -140,6 +140,7 @@ def _load_hls_segments(playlist_path: str):
         return []
 
     current_duration = None
+    current_program_time = None
     for line in lines:
         line = line.strip()
         if not line:
@@ -150,6 +151,14 @@ def _load_hls_segments(playlist_path: str):
             except ValueError:
                 current_duration = None
             continue
+        if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
+            try:
+                dt_str = line.split(":", 1)[1].strip()
+                dt = datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S.%f%z")
+                current_program_time = dt.timestamp()
+            except Exception:
+                current_program_time = None
+            continue
         if line.startswith("#"):
             continue
         if current_duration is None:
@@ -158,8 +167,12 @@ def _load_hls_segments(playlist_path: str):
         seg_path = os.path.join(stream_dir, line)
         if os.path.exists(seg_path):
             try:
-                end_ts = os.path.getmtime(seg_path)
-                start_ts = end_ts - current_duration
+                if current_program_time is not None:
+                    start_ts = current_program_time
+                    end_ts = start_ts + current_duration
+                else:
+                    end_ts = os.path.getmtime(seg_path)
+                    start_ts = end_ts - current_duration
                 segments.append(
                     {
                         "path": seg_path,
@@ -171,6 +184,7 @@ def _load_hls_segments(playlist_path: str):
             except OSError:
                 pass
         current_duration = None
+        current_program_time = None
 
     segments.sort(key=lambda s: s["start"])
     return segments
@@ -221,6 +235,10 @@ def _build_clip_for_pass(pass_data) -> bool:
 
     concat_path = os.path.join(CLIP_DIR, f"concat_{pass_data.id}.txt")
     tmp_path = os.path.join(CLIP_DIR, f".{clip_filename}.tmp")
+    base_ts = selected[0]["start"]
+    offset_start = max(0.0, clip_start - base_ts)
+    offset_end = max(offset_start, clip_end - base_ts)
+    duration = max(0.1, offset_end - offset_start)
 
     try:
         with open(concat_path, "w", encoding="utf-8") as f:
@@ -236,8 +254,17 @@ def _build_clip_for_pass(pass_data) -> bool:
             "0",
             "-i",
             concat_path,
-            "-c",
-            "copy",
+            "-ss",
+            f"{offset_start:.3f}",
+            "-t",
+            f"{duration:.3f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-an",
             "-movflags",
             "+faststart",
             "-f",
@@ -245,32 +272,6 @@ def _build_clip_for_pass(pass_data) -> bool:
             tmp_path,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            # Fallback to re-encode if stream copy fails
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                concat_path,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "23",
-                "-an",
-                "-movflags",
-                "+faststart",
-                "-f",
-                "mp4",
-                tmp_path,
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0 or not os.path.exists(tmp_path):
             error_blob = result.stderr or result.stdout or "ffmpeg_failed"
