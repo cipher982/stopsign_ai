@@ -55,7 +55,7 @@ def _bremen_upload_worker():
     """Background worker that uploads images to Bremen MinIO with retry logic."""
     while True:
         try:
-            local_path, object_name = _upload_queue.get()
+            local_path, object_name, db = _upload_queue.get()
 
             # Skip if Bremen credentials not configured
             if not BREMEN_MINIO_SECRET_KEY:
@@ -81,6 +81,19 @@ def _bremen_upload_worker():
                         content_type="image/jpeg",
                     )
                     logger.debug(f"Archived {object_name} to Bremen MinIO")
+
+                    # Flip DB path from local:// to bremen://
+                    if db is not None:
+                        try:
+                            rows = db.update_image_path(
+                                f"local://{object_name}",
+                                f"bremen://{object_name}",
+                            )
+                            if rows:
+                                logger.info(f"Updated DB path for {object_name}: local:// -> bremen://")
+                        except Exception as db_err:
+                            logger.warning(f"Failed to update DB path for {object_name}: {db_err}")
+
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -663,6 +676,7 @@ class StopDetector:
             frame=frame,
             timestamp=timestamp,
             bbox=car.state.bbox,
+            db=self.db,
         )
         car.state.image_captured = True
         car.state.image_path = image_path
@@ -672,6 +686,7 @@ def save_vehicle_image(
     frame: np.ndarray,
     timestamp: float,
     bbox: Tuple[float, float, float, float],
+    db: Optional[Database] = None,
 ) -> str:
     """Save vehicle image locally and queue upload to Bremen MinIO for archival.
 
@@ -717,7 +732,7 @@ def save_vehicle_image(
 
         # Queue upload to Bremen MinIO (non-blocking)
         try:
-            _upload_queue.put_nowait((str(local_path), filename))
+            _upload_queue.put_nowait((str(local_path), filename, db))
         except queue.Full:
             logger.warning(f"Upload queue full, skipping archive of {filename}")
 

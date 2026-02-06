@@ -220,6 +220,20 @@ class Database:
             session.commit()
 
     @log_execution_time
+    def update_image_path(self, old_path: str, new_path: str) -> int:
+        """Update image_path for a specific record. Returns rows updated."""
+        if self.read_only_mode:
+            logger.debug("🚫 Blocked update_image_path (READ-ONLY MODE)")
+            return 0
+
+        with self.Session() as session:
+            rows = (
+                session.query(VehiclePass).filter(VehiclePass.image_path == old_path).update({"image_path": new_path})
+            )
+            session.commit()
+            return rows
+
+    @log_execution_time
     def get_passes_missing_clips(self, limit: int = 10, min_exit_age_sec: float = 2.0):
         """Return recent passes that have entry/exit times but no clip yet."""
         cutoff = time.time() - min_exit_age_sec
@@ -314,7 +328,8 @@ class Database:
                 .filter(
                     or_(
                         VehiclePass.image_path.like("minio://%"),  # Legacy minio prefix
-                        VehiclePass.image_path.like("local://%"),  # New local prefix
+                        VehiclePass.image_path.like("local://%"),  # Local prefix (pre-archive)
+                        VehiclePass.image_path.like("bremen://%"),  # Bremen archive prefix
                     )
                 )
                 .filter(VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"))
@@ -395,7 +410,8 @@ class Database:
                 .filter(
                     or_(
                         VehiclePass.image_path.like("minio://%"),  # Legacy minio prefix
-                        VehiclePass.image_path.like("local://%"),  # New local prefix
+                        VehiclePass.image_path.like("local://%"),  # Local prefix (pre-archive)
+                        VehiclePass.image_path.like("bremen://%"),  # Bremen archive prefix
                     )
                 )
                 .order_by(VehiclePass.timestamp.desc())

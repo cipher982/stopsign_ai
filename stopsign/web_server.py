@@ -1290,9 +1290,18 @@ def create_pass_item(pass_data, scores):
     image_url = "/static/placeholder.jpg"  # Default fallback image
     if pass_data.image_path and isinstance(pass_data.image_path, str):
         if pass_data.image_path.startswith("local://"):
-            # New local path - serve from local static mount
+            # Local path - serve from local static mount if file exists, else fall back to Bremen proxy
             filename = pass_data.image_path.replace("local://", "")
-            image_url = f"/vehicle-images/{filename}"
+            local_file = os.path.join(LOCAL_IMAGE_DIR, filename)
+            if os.path.exists(local_file):
+                image_url = f"/vehicle-images/{filename}"
+            else:
+                # File pruned locally, try Bremen archive
+                image_url = f"/vehicle-image/{filename}"
+        elif pass_data.image_path.startswith("bremen://"):
+            # Archived to Bremen - proxy through /vehicle-image/ endpoint
+            filename = pass_data.image_path.replace("bremen://", "")
+            image_url = f"/vehicle-image/{filename}"
         elif pass_data.image_path.startswith("minio://"):
             # Legacy minio path - proxy through Bremen
             parts = pass_data.image_path.split("/", 3)
