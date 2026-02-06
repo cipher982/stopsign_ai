@@ -240,6 +240,8 @@ def _build_clip_for_pass(pass_data) -> bool:
             "copy",
             "-movflags",
             "+faststart",
+            "-f",
+            "mp4",
             tmp_path,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -264,6 +266,8 @@ def _build_clip_for_pass(pass_data) -> bool:
                 "-an",
                 "-movflags",
                 "+faststart",
+                "-f",
+                "mp4",
                 tmp_path,
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
