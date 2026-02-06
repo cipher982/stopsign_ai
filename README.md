@@ -14,7 +14,7 @@ Runs end-to-end from an RTSP camera to a web dashboard with nothing more than Do
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/) 
 [![Ruff](https://img.shields.io/badge/style-Ruff-000000.svg)](https://github.com/astral-sh/ruff) 
 [![UV](https://img.shields.io/badge/deps-UV-4A4A4A.svg)](https://github.com/astral-sh/uv) 
-[![YOLOv8](https://img.shields.io/badge/AI-YOLOv8-green.svg)](https://github.com/ultralytics/ultralytics) 
+[![YOLO11](https://img.shields.io/badge/AI-YOLO11-green.svg)](https://github.com/ultralytics/ultralytics) 
 [![FastHTML](https://img.shields.io/badge/frontend-FastHTML-orange.svg)](https://github.com/answerdotai/fasthtml) 
 [![Redis](https://img.shields.io/badge/cache-Redis-red.svg)](https://redis.io/) 
 [![PostgreSQL](https://img.shields.io/badge/database-PostgreSQL-blue.svg)](https://www.postgresql.org/) 
@@ -71,7 +71,7 @@ graph LR
 Service | Purpose | Code | Docker image (local)
 ---|---|---|---
 RTSP → Redis | Grabs frames from an RTSP feed (or sample .mp4) and publishes JPEGs to Redis with SSFM frame headers containing capture timestamps | `rtsp_to_redis/rtsp_to_redis.py` | `Dockerfile.rtsp.local`
-Video Analyzer | YOLOv8 inference + object tracking + stop-sign logic. Uses capture timestamps for accurate timing. Stores metadata in Postgres and images in MinIO. Publishes annotated frames. | `stopsign/video_analyzer.py` | `Dockerfile.processor.local`
+Video Analyzer | YOLO11 inference + object tracking + stop-sign logic. Uses capture timestamps for accurate timing. Stores metadata in Postgres and images in MinIO. Publishes annotated frames. | `stopsign/video_analyzer.py` | `Dockerfile.processor.local`
 FFmpeg Service | Converts annotated frames → HLS stream (m3u8 + .ts) with Redis resilience and auto-recovery watchdog | `stopsign/ffmpeg_service.py` | `Dockerfile.ffmpeg.local`
 Web Server | Simple FastAPI + FastHTML UI that shows the live stream & recent violations | `stopsign/web_server.py` | `Dockerfile.web.local`
 Infrastructure | Redis, Postgres, MinIO (+ console) | Official upstream images | –
@@ -95,14 +95,14 @@ Local (`docker/local/.env`):
 ```env
 ENV=local
 RTSP_URL=file:///app/sample_data/sample.mp4  # uses sample video
-YOLO_MODEL_NAME=yolov8n.pt                   # light-weight CPU model
+YOLO_MODEL_NAME=yolo11n.pt                   # light-weight CPU model
 REDIS_URL=redis://redis:6379/0
 DB_URL=postgresql://postgres:password@postgres:5432/stopsign
 MINIO_ENDPOINT=minio:9000
 # … see template for all options
 ```
 
-Production: supply the same variables via your orchestrator (Docker Swarm, Kubernetes, Fly.io, etc.).  GPU models (`yolov8x.pt`) & NVIDIA runtimes are fully supported.
+Production: supply the same variables via your orchestrator (Docker Swarm, Kubernetes, Fly.io, etc.).  GPU models (`yolo11x.pt`) & NVIDIA runtimes are fully supported.
 
 ### Configuration Management
 
