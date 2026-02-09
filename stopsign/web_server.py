@@ -142,7 +142,6 @@ def _load_hls_segments(playlist_path: str):
         return []
 
     current_duration = None
-    current_program_time = None
     for line in lines:
         line = line.strip()
         if not line:
@@ -153,14 +152,6 @@ def _load_hls_segments(playlist_path: str):
             except ValueError:
                 current_duration = None
             continue
-        if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
-            try:
-                dt_str = line.split(":", 1)[1].strip()
-                dt = datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S.%f%z")
-                current_program_time = dt.timestamp()
-            except Exception:
-                current_program_time = None
-            continue
         if line.startswith("#"):
             continue
         if current_duration is None:
@@ -169,12 +160,13 @@ def _load_hls_segments(playlist_path: str):
         seg_path = os.path.join(stream_dir, line)
         if os.path.exists(seg_path):
             try:
-                if current_program_time is not None:
-                    start_ts = current_program_time
-                    end_ts = start_ts + current_duration
-                else:
-                    end_ts = os.path.getmtime(seg_path)
-                    start_ts = end_ts - current_duration
+                # Use file mtime (wall clock when segment was written) rather than
+                # PDT tags. PDT drifts from wall clock because ffmpeg bases it on
+                # stream PTS (frame-count / declared-FPS) which diverges when actual
+                # throughput != declared FPS. Entry/exit timestamps from the tracker
+                # use time.time() so mtime is the matching clock source.
+                end_ts = os.path.getmtime(seg_path)
+                start_ts = end_ts - current_duration
                 segments.append(
                     {
                         "path": seg_path,
@@ -186,7 +178,6 @@ def _load_hls_segments(playlist_path: str):
             except OSError:
                 pass
         current_duration = None
-        current_program_time = None
 
     segments.sort(key=lambda s: s["start"])
     return segments
@@ -231,6 +222,14 @@ def _build_clip_for_pass(pass_data) -> bool:
     selected = _select_segments_for_window(segments, clip_start, clip_end)
 
     if not selected:
+        seg_window = f"{segments[0]['start']:.0f}-{segments[-1]['end']:.0f}" if segments else "none"
+        logger.debug(
+            "No segments for pass %s (clip=[%.0f,%.0f] segs=%s)",
+            pass_data.id,
+            clip_start,
+            clip_end,
+            seg_window,
+        )
         if time.time() - exit_ts > CLIP_EXPIRY_SEC:
             app.state.db.update_clip_status(pass_data.id, "expired", clip_error="segments_expired")
         return False
@@ -284,6 +283,7 @@ def _build_clip_for_pass(pass_data) -> bool:
 
         Path(tmp_path).rename(clip_path)
         app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
+        logger.info("Clip ready: pass %s -> %s (%.1fs)", pass_data.id, clip_filename, duration)
         return True
     except Exception as e:
         app.state.db.update_clip_status(pass_data.id, "failed", clip_error=str(e)[:500])
