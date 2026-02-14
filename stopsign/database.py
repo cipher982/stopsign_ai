@@ -516,6 +516,24 @@ class Database:
             ]
 
     # ==========================================
+    # Full Config Backup/Restore
+    # ==========================================
+
+    def save_full_config(self, yaml_string: str) -> None:
+        """Persist the full config YAML to the database for disaster recovery."""
+        self.update_config_setting(
+            category="system",
+            key="full_config_yaml",
+            value=yaml_string,
+            updated_by="config_save",
+            change_reason="Config file saved",
+        )
+
+    def load_full_config(self) -> str | None:
+        """Load the most recent full config YAML from the database."""
+        return self.get_config_setting(category="system", key="full_config_yaml")
+
+    # ==========================================
     # Vehicle Attributes Methods
     # ==========================================
 

@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import tempfile
@@ -6,6 +7,8 @@ from datetime import datetime
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 # Shared shutdown flag
 shutdown_flag = threading.Event()
@@ -30,13 +33,32 @@ class Config:
         self.load_config()
 
     def _ensure_config_exists(self) -> None:
-        """Ensure the config file exists by seeding from an example if available."""
+        """Ensure the config file exists by restoring from DB or seeding from template."""
         if os.path.exists(self.config_path):
             return
 
         config_dir = os.path.dirname(self.config_path) or "."
         os.makedirs(config_dir, exist_ok=True)
 
+        # Try restoring from database first (survives volume recreation)
+        db_url = os.environ.get("DB_URL")
+        if db_url:
+            try:
+                from stopsign.database import Database
+
+                db = Database(db_url)
+                yaml_string = db.load_full_config()
+                if yaml_string:
+                    with tempfile.NamedTemporaryFile(mode="w", dir=config_dir, delete=False) as tmp_file:
+                        tmp_file.write(yaml_string)
+                        tmp_path = tmp_file.name
+                    os.replace(tmp_path, self.config_path)
+                    logger.info("Config restored from database -> %s", self.config_path)
+                    return
+            except Exception as e:
+                logger.warning("Failed to restore config from database: %s", e)
+
+        # Fall back to example template
         example_candidates = [
             os.path.join(config_dir, "config.example.yaml"),
             "/app/config.example.yaml",
@@ -53,7 +75,7 @@ class Config:
                     tmp_path = tmp_file.name
 
                 os.replace(tmp_path, self.config_path)
-                print(f"Config seeded from template: {candidate} -> {self.config_path}")
+                logger.info("Config seeded from template: %s -> %s", candidate, self.config_path)
                 return
 
         raise FileNotFoundError(
@@ -190,6 +212,9 @@ class Config:
     def _save_atomic(self, config_data: dict) -> str:
         """Save configuration atomically using temp file + rename.
 
+        Also persists the full YAML to the database so config survives
+        Docker volume recreation on redeploy.
+
         Args:
             config_data: Configuration dictionary to save
 
@@ -202,12 +227,24 @@ class Config:
 
         # Write to temp file in same directory (for atomic rename)
         config_dir = os.path.dirname(self.config_path)
+        yaml_string = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
         with tempfile.NamedTemporaryFile(mode="w", dir=config_dir, delete=False) as tmp_file:
-            yaml.dump(config_data, tmp_file, default_flow_style=False, sort_keys=False)
+            tmp_file.write(yaml_string)
             tmp_path = tmp_file.name
 
         # Atomic rename
         os.replace(tmp_path, self.config_path)
+
+        # Persist to database for disaster recovery
+        db_url = os.environ.get("DB_URL")
+        if db_url:
+            try:
+                from stopsign.database import Database
+
+                db = Database(db_url)
+                db.save_full_config(yaml_string)
+            except Exception as e:
+                logger.warning("Failed to persist config to database: %s", e)
 
         print(f"✅ Config saved atomically. New version: {new_version}")
         return new_version
