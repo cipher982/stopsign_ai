@@ -3,23 +3,25 @@
 {% block title %}Performance Debug{% endblock %}
 
 {% block content %}
-<div class="space-y-5 max-w-3xl mx-auto">
-    <h1 class="text-2xl font-bold text-t1">Performance Debugging</h1>
-
-    <div class="bg-bg-raised rounded-xl border border-line p-5">
+<div class="window" style="max-width: 800px; margin: 0 auto;">
+    <div class="title-bar">
+        <span class="title-bar-text">Performance Debugging</span>
+        <div class="title-bar-controls">
+            <button>&#9472;</button>
+            <button>&#9723;</button>
+        </div>
+    </div>
+    <div class="window-body">
         <button hx-get="/debug-performance"
                 hx-target="#perf-results"
                 hx-indicator="#loading"
-                class="px-3 py-1.5 text-xs font-mono rounded bg-accent/10 text-accent border border-accent/20 hover:bg-accent/20 transition-colors">
+                class="btn98 btn98-primary" style="font-size: 12px;">
             Run Performance Test
         </button>
-        <div id="loading" class="htmx-indicator mt-2">
-            <svg class="w-4 h-4 animate-spin text-t3 inline mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-            <span class="text-xs text-t3">Running...</span>
+        <div id="loading" class="htmx-indicator" style="margin-top: 6px; font-size: 11px; color: var(--text-muted);">
+            Running...
         </div>
-        <pre class="bg-bg rounded-lg p-4 mt-4 text-[11px] font-mono text-t2 overflow-auto max-h-96 border border-line">
-            <code id="perf-results"></code>
-        </pre>
+        <pre class="sunken mono" style="font-size: 11px; padding: 6px; margin-top: 8px; max-height: 400px; overflow: auto; white-space: pre-wrap;"><code id="perf-results"></code></pre>
     </div>
 </div>
 

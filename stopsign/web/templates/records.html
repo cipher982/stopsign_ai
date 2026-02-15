@@ -7,23 +7,36 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <div class="flex items-center gap-3">
-        <h1 class="text-2xl font-bold text-t1">Records</h1>
-        <span class="text-xs font-mono bg-bg-active text-accent px-2.5 py-1 rounded-full">7 days</span>
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <div id="worstPasses" hx-get="/api/worst-passes" hx-trigger="load" class="fade-in">
-            <div class="bg-bg-raised rounded-xl border border-line p-8 flex items-center justify-center min-h-[300px]">
-                <span class="text-t3 text-sm">Loading worst passes...</span>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+    <div id="worstPasses" hx-get="/api/worst-passes" hx-trigger="load">
+        <div class="window">
+            <div class="title-bar">
+                <span class="title-bar-text">Loading...</span>
+            </div>
+            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px;">
+                Loading worst passes...
             </div>
         </div>
-        <div id="bestPasses" hx-get="/api/best-passes" hx-trigger="load" class="fade-in fade-in-1">
-            <div class="bg-bg-raised rounded-xl border border-line p-8 flex items-center justify-center min-h-[300px]">
-                <span class="text-t3 text-sm">Loading best passes...</span>
+    </div>
+    <div id="bestPasses" hx-get="/api/best-passes" hx-trigger="load">
+        <div class="window">
+            <div class="title-bar title-bar-inactive">
+                <span class="title-bar-text">Loading...</span>
+            </div>
+            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px;">
+                Loading best passes...
             </div>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+    @media (max-width: 768px) {
+        div[style*="grid-template-columns: 1fr 1fr"] {
+            grid-template-columns: 1fr !important;
+        }
+    }
+</style>
 {% endblock %}
