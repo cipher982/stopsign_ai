@@ -1,22 +1,22 @@
-<div id="vehicleMakeModels" class="card-panel p-4">
-    <h3 class="text-base font-semibold text-txt mb-4">Top Make / Models</h3>
+<div id="vehicleMakeModels" class="panel p-5">
+    <h3 class="font-display text-base font-700 text-ink mb-4">Top Make / Models</h3>
     {% if items %}
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
         {% for item in items %}
         <div class="group">
-            <div class="rounded-lg overflow-hidden border border-border">
+            <div class="rounded overflow-hidden border border-border hover:border-border-strong transition-colors">
                 <img src="{{ item.image_url }}" alt="{{ item.make_model }}"
-                     class="h-24 w-full object-cover bg-panel group-hover:scale-105 transition-transform duration-300"
+                     class="h-20 w-full object-cover bg-page-alt group-hover:scale-105 transition-transform duration-300"
                      loading="lazy">
             </div>
             <div class="mt-1.5">
-                <p class="text-sm text-txt truncate">{{ item.make_model }}</p>
-                <p class="text-xs font-mono text-txt-3">{{ "{:,}".format(item.count) }}</p>
+                <p class="text-sm text-ink truncate font-medium">{{ item.make_model }}</p>
+                <p class="text-xs font-mono text-ink-3">{{ "{:,}".format(item.count) }}</p>
             </div>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <p class="text-sm text-txt-3">No make/model data.</p>
+    <p class="text-sm text-ink-3">No make/model data.</p>
     {% endif %}
 </div>

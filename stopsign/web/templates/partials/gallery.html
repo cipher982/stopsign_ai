@@ -1,13 +1,13 @@
-<div id="vehicleGallery" class="card-panel p-4">
-    <h3 class="text-base font-semibold text-txt mb-4">Cluster Gallery</h3>
+<div id="vehicleGallery" class="panel p-5">
+    <h3 class="font-display text-base font-700 text-ink mb-4">Cluster Gallery</h3>
     {% if items %}
-    <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+    <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2">
         {% for item in items %}
-        <div class="group relative rounded-lg overflow-hidden border border-border">
+        <div class="group relative rounded overflow-hidden border border-border hover:border-border-strong transition-colors">
             <img src="{{ item.image_url }}" alt="{{ item.label }}"
-                 class="w-full aspect-square object-cover bg-panel group-hover:scale-105 transition-transform duration-300"
+                 class="w-full aspect-square object-cover bg-page-alt group-hover:scale-105 transition-transform duration-300"
                  loading="lazy">
-            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-1.5 pt-4">
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-1.5 pt-4">
                 <p class="text-[11px] text-white truncate font-medium">{{ item.label }}</p>
                 {% if item.make_model or item.size %}
                 <p class="text-[10px] text-white/60">{{ item.make_model }}{% if item.size %} ({{ item.size }}){% endif %}</p>
@@ -17,6 +17,6 @@
         {% endfor %}
     </div>
     {% else %}
-    <p class="text-sm text-txt-3">No cluster gallery data.</p>
+    <p class="text-sm text-ink-3">No cluster gallery data.</p>
     {% endif %}
 </div>

@@ -8,40 +8,40 @@
 
 {% block content %}
 <div class="space-y-5">
-    <h1 class="text-lg font-semibold text-txt">Vehicle Classification</h1>
+    <h1 class="font-display text-xl font-700 text-ink">Vehicle Classification</h1>
 
     {# Summary stats #}
-    <div id="vehicleSummary" hx-get="/api/vehicles/summary" hx-trigger="load">
+    <div id="vehicleSummary" hx-get="/api/vehicles/summary" hx-trigger="load" class="animate-in">
         <div class="flex justify-center py-6">
-            <svg class="w-5 h-5 animate-spin text-txt-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            <span class="text-ink-3 text-sm">Loading summary...</span>
         </div>
     </div>
 
-    {# Type and Color charts #}
+    {# Type and Color charts side by side #}
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div id="vehicleTypes" hx-get="/api/vehicles/types" hx-trigger="load">
-            <div class="card-panel p-6 flex items-center justify-center min-h-[200px]">
-                <svg class="w-5 h-5 animate-spin text-txt-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+        <div id="vehicleTypes" hx-get="/api/vehicles/types" hx-trigger="load" class="animate-in animate-in-1">
+            <div class="panel p-6 flex items-center justify-center min-h-[200px]">
+                <span class="text-ink-3 text-sm">Loading types...</span>
             </div>
         </div>
-        <div id="vehicleColors" hx-get="/api/vehicles/colors" hx-trigger="load">
-            <div class="card-panel p-6 flex items-center justify-center min-h-[200px]">
-                <svg class="w-5 h-5 animate-spin text-txt-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+        <div id="vehicleColors" hx-get="/api/vehicles/colors" hx-trigger="load" class="animate-in animate-in-2">
+            <div class="panel p-6 flex items-center justify-center min-h-[200px]">
+                <span class="text-ink-3 text-sm">Loading colors...</span>
             </div>
         </div>
     </div>
 
     {# Make/Models #}
-    <div id="vehicleMakeModels" hx-get="/api/vehicles/make-models" hx-trigger="load">
-        <div class="card-panel p-6 flex items-center justify-center min-h-[200px]">
-            <svg class="w-5 h-5 animate-spin text-txt-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+    <div id="vehicleMakeModels" hx-get="/api/vehicles/make-models" hx-trigger="load" class="animate-in animate-in-3">
+        <div class="panel p-6 flex items-center justify-center min-h-[200px]">
+            <span class="text-ink-3 text-sm">Loading make/models...</span>
         </div>
     </div>
 
     {# Gallery #}
     <div id="vehicleGallery" hx-get="/api/vehicles/gallery" hx-trigger="load">
-        <div class="card-panel p-6 flex items-center justify-center min-h-[200px]">
-            <svg class="w-5 h-5 animate-spin text-txt-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+        <div class="panel p-6 flex items-center justify-center min-h-[200px]">
+            <span class="text-ink-3 text-sm">Loading gallery...</span>
         </div>
     </div>
 </div>
