@@ -63,7 +63,7 @@
         </a>
 
         {# Mobile menu toggle #}
-        <button onclick="document.getElementById('mobileMenu').classList.toggle('hidden')" class="taskbar-btn" style="display:none;" id="mobileMenuBtn">
+        <button onclick="toggleMobileMenu()" class="taskbar-btn" style="display:none;" id="mobileMenuBtn" aria-expanded="false" aria-controls="mobileMenu" aria-label="Toggle navigation menu">
             &#9776;
         </button>
 
@@ -104,17 +104,27 @@
         updateClock();
         setInterval(updateClock, 30000);
 
+        // Mobile menu toggle with aria-expanded
+        function toggleMobileMenu() {
+            var menu = document.getElementById('mobileMenu');
+            var btn = document.getElementById('mobileMenuBtn');
+            menu.classList.toggle('hidden');
+            var expanded = !menu.classList.contains('hidden');
+            btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        }
+
         // Mobile menu: show hamburger on small screens
         function checkMobile() {
-            const btn = document.getElementById('mobileMenuBtn');
-            const navBtns = document.querySelectorAll('.taskbar > .taskbar-btn:not(#mobileMenuBtn)');
+            var btn = document.getElementById('mobileMenuBtn');
+            var navBtns = document.querySelectorAll('.taskbar > .taskbar-btn:not(#mobileMenuBtn)');
             if (window.innerWidth < 640) {
                 btn.style.display = 'flex';
-                navBtns.forEach(b => { if (!b.closest('.taskbar-clock')) b.style.display = 'none'; });
+                navBtns.forEach(function(b) { if (!b.closest('.taskbar-clock')) b.style.display = 'none'; });
             } else {
                 btn.style.display = 'none';
                 document.getElementById('mobileMenu').classList.add('hidden');
-                navBtns.forEach(b => b.style.display = 'flex');
+                btn.setAttribute('aria-expanded', 'false');
+                navBtns.forEach(function(b) { b.style.display = 'flex'; });
             }
         }
         checkMobile();

@@ -17,69 +17,78 @@
 <div class="window" style="height: calc(100vh - 62px);">
     <div class="title-bar">
         <span class="title-bar-text">Stop Sign Nanny &mdash; Crestwood Intersection</span>
-        <div style="display: flex; align-items: center; gap: 6px;">
-            <span style="display: flex; align-items: center; gap: 3px;">
-                <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--ok);" class="live-pulse"></span>
-                <span style="font-size: 11px;">Live</span>
-            </span>
+        <div class="stream-status" id="streamStatus">
+            <span class="stream-status-dot live-pulse"></span>
+            <span class="stream-status-label">Connecting...</span>
         </div>
         <div class="title-bar-controls">
-            <button>&#9472;</button>
-            <button>&#9723;</button>
+            <button aria-hidden="true" tabindex="-1">&#9472;</button>
+            <button aria-hidden="true" tabindex="-1">&#9723;</button>
         </div>
     </div>
 
     {# Main content area — video left, passes right #}
-    <div style="display: flex; flex: 1; overflow: hidden; margin: 2px; gap: 0;">
-        {# Left: Video + stats strip stacked #}
+    <div class="home-layout">
+        {# Left: Hero + Video + stats strip stacked #}
         <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+            {# Hero narrative #}
+            <div class="hero-bar">
+                <div class="hero-bar-text">
+                    <strong>AI-powered stop sign monitoring in Crestwood, St. Louis.</strong>
+                    Watch real-time vehicle detection, see who stops and who doesn't, and explore neighborhood traffic patterns.
+                    <a href="/about" class="hero-link">How it works &rarr;</a>
+                </div>
+            </div>
+
             {# Video — fills available space #}
             <div id="videoContainer"
                  hx-get="/load-video"
                  hx-trigger="load"
                  class="sunken-dark"
                  style="flex: 1; display: flex; align-items: center; justify-content: center; position: relative; min-height: 0;">
-                <span style="color: var(--text-muted); font-size: 12px;" class="mono">Loading feed...</span>
+                <span style="color: var(--text-muted); font-size: 13px;" class="mono">Loading feed...</span>
             </div>
 
             {# Stats — horizontal strip below video #}
-            <div class="raised" style="display: flex; align-items: center; gap: 0; padding: 0; flex-shrink: 0; border-top: none;">
-                <div style="padding: 3px 10px; border-right: 1px solid var(--shadow);">
-                    <span style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Compliance</span>
-                    <span class="mono" style="font-size: 15px; font-weight: 700; margin-left: 4px;" id="complianceRate">--</span>
+            <div class="stats-strip raised" aria-live="polite">
+                <div class="stats-strip-item">
+                    <span class="stats-strip-label">Compliance</span>
+                    <span class="mono stats-strip-value" id="complianceRate">--</span>
+                    <span class="stats-strip-hint" title="Percentage of vehicles stopping for 2+ seconds in the last 100 passes">last 100</span>
                 </div>
-                <div style="padding: 3px 10px; border-right: 1px solid var(--shadow);">
-                    <span style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Violations</span>
-                    <span class="mono" style="font-size: 13px; font-weight: 600; color: var(--bad); margin-left: 4px;" id="violationCount">--</span>
-                    <span style="font-size: 9px; color: var(--text-muted);">24h</span>
+                <div class="stats-strip-item">
+                    <span class="stats-strip-label">Violations</span>
+                    <span class="mono stats-strip-value" style="color: var(--bad);" id="violationCount">--</span>
+                    <span class="stats-strip-hint">24h</span>
                 </div>
-                <div style="padding: 3px 10px; border-right: 1px solid var(--shadow);">
-                    <span style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Vehicles</span>
-                    <span class="mono" style="font-size: 13px; font-weight: 600; margin-left: 4px;" id="vehicleCount">--</span>
-                    <span style="font-size: 9px; color: var(--text-muted);">24h</span>
+                <div class="stats-strip-item">
+                    <span class="stats-strip-label">Vehicles</span>
+                    <span class="mono stats-strip-value" id="vehicleCount">--</span>
+                    <span class="stats-strip-hint">24h</span>
                 </div>
-                <div style="padding: 3px 10px; border-right: 1px solid var(--shadow);">
-                    <span style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Last Seen</span>
-                    <span class="mono" style="font-size: 12px; color: var(--ok); margin-left: 4px;" id="lastDetection">--</span>
+                <div class="stats-strip-item">
+                    <span class="stats-strip-label">Last Seen</span>
+                    <span class="mono stats-strip-value stats-strip-value-sm" style="color: var(--ok);" id="lastDetection">--</span>
                 </div>
-                <div style="padding: 3px 10px; flex: 1; font-size: 11px; color: var(--text-secondary);">
+                <div class="stats-strip-item stats-strip-insight">
                     <span id="trendArrow">&rarr;</span>
                     <span id="rotatingInsight">Loading...</span>
                 </div>
             </div>
         </div>
 
-        {# Right: Recent passes table — scrollable, fills height #}
-        <div style="width: 380px; flex-shrink: 0; display: flex; flex-direction: column; border-left: 1px solid var(--dark);">
-            <div class="raised" style="padding: 2px 6px; font-size: 11px; font-weight: 700; border-bottom: 1px solid var(--shadow); flex-shrink: 0;">
+        {# Right: Recent passes — scrollable, fills height #}
+        <div class="recent-passes-panel">
+            <div class="raised recent-passes-header">
                 Recent Passes
             </div>
             <div class="sunken" style="flex: 1; overflow-y: auto; padding: 0;">
                 <div id="recentPasses"
                      hx-get="/api/recent-vehicle-passes"
                      hx-trigger="load"
-                     hx-swap="innerHTML">
-                    <div style="text-align: center; padding: 16px; color: var(--text-muted); font-size: 12px;">Loading...</div>
+                     hx-swap="innerHTML"
+                     aria-live="polite">
+                    <div style="text-align: center; padding: 16px; color: var(--text-muted); font-size: 13px;">Loading...</div>
                 </div>
             </div>
         </div>
@@ -98,11 +107,10 @@
 {% block scripts %}
 <style>
     @media (max-width: 900px) {
-        {# Stack vertically on narrow screens #}
-        .window > div[style*="display: flex; flex: 1; overflow: hidden"] {
+        .home-layout {
             flex-direction: column !important;
         }
-        .window > div[style*="display: flex; flex: 1; overflow: hidden"] > div[style*="width: 380px"] {
+        .recent-passes-panel {
             width: 100% !important;
             border-left: none !important;
             border-top: 1px solid var(--dark);
