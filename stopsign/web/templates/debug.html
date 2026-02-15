@@ -10,59 +10,59 @@
 
 {% block content %}
 <div class="space-y-5">
-    <h1 class="font-display text-xl font-700 text-ink">Debug Interface</h1>
+    <h1 class="text-2xl font-bold text-t1">Debug Interface</h1>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {# Video stream #}
         <div class="lg:col-span-2">
-            <div class="panel p-3">
-                <div class="section-label mb-2">Video Stream</div>
+            <div class="bg-bg-raised rounded-xl border border-line p-3">
+                <div class="text-xs font-mono text-t3 uppercase tracking-wider mb-2">Video Stream</div>
                 <div hx-get="/load-video" hx-trigger="load"
-                     class="aspect-video bg-ink rounded overflow-hidden flex items-center justify-center ring-1 ring-border">
-                    <span class="text-ink-3 text-sm font-mono">Loading...</span>
+                     class="aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center ring-1 ring-line">
+                    <span class="text-t3 text-sm font-mono">Loading...</span>
                 </div>
             </div>
         </div>
 
         {# Controls #}
         <div class="space-y-3">
-            <div class="panel p-4">
-                <h3 class="text-xs font-medium text-ink mb-2">1. Select Zone</h3>
+            <div class="bg-bg-raised rounded-xl border border-line p-4">
+                <h3 class="text-xs font-medium text-t1 mb-2">1. Select Zone</h3>
                 <div class="flex flex-wrap gap-1.5">
                     <button id="zone-stop-line" onclick="selectZoneType('stop-line')"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-civic-light text-civic border border-civic/20 hover:bg-civic/10 transition-colors">Stop Line</button>
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-accent/10 text-accent border border-accent/20 hover:bg-accent/20 transition-colors">Stop Line</button>
                     <button id="zone-pre-stop" onclick="selectZoneType('pre-stop')"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-page-alt text-ink-2 border border-border hover:bg-border transition-colors">Pre-Stop</button>
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Pre-Stop</button>
                     <button id="zone-capture" onclick="selectZoneType('capture')"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-page-alt text-ink-2 border border-border hover:bg-border transition-colors">Capture</button>
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Capture</button>
                 </div>
-                <p id="zone-instructions" class="text-[10px] text-ink-3 mt-1.5"></p>
+                <p id="zone-instructions" class="text-[10px] text-t3 mt-1.5"></p>
             </div>
 
-            <div class="panel p-4">
-                <h3 class="text-xs font-medium text-ink mb-2">2. Visualization</h3>
+            <div class="bg-bg-raised rounded-xl border border-line p-4">
+                <h3 class="text-xs font-medium text-t1 mb-2">2. Visualization</h3>
                 <button id="debugZonesBtn" onclick="toggleDebugZones()"
-                        class="px-2.5 py-1 text-[10px] font-mono rounded bg-page-alt text-ink-2 border border-border hover:bg-border transition-colors">Show Zones</button>
+                        class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Show Zones</button>
             </div>
 
-            <div class="panel p-4">
-                <h3 class="text-xs font-medium text-ink mb-2">3. Edit Zone</h3>
+            <div class="bg-bg-raised rounded-xl border border-line p-4">
+                <h3 class="text-xs font-medium text-t1 mb-2">3. Edit Zone</h3>
                 <div class="flex flex-wrap gap-1.5">
                     <button id="adjustmentModeBtn" onclick="toggleAdjustmentMode()"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-page-alt text-ink-2 border border-border hover:bg-border transition-colors">Adjust</button>
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Adjust</button>
                     <button onclick="resetPoints()"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-page-alt text-ink-2 border border-border hover:bg-border transition-colors">Reset</button>
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Reset</button>
                     <button id="submitBtn" onclick="updateZoneFromClicks()"
                             style="display: none;" disabled
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-signal-green-bg text-signal-green border border-signal-green/30">SUBMIT</button>
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-ok/10 text-ok border border-ok/30">SUBMIT</button>
                 </div>
             </div>
 
-            <div class="panel p-4">
-                <h3 class="text-xs font-medium text-ink mb-2">4. Status</h3>
-                <div id="config-version" class="font-mono text-[10px] text-ink-3 bg-page rounded p-2 border border-border"></div>
-                <div id="status" class="font-mono text-[10px] text-ink-3 bg-page rounded p-2 mt-1 border border-border"></div>
-                <p class="text-[10px] text-ink-3 mt-1.5">
+            <div class="bg-bg-raised rounded-xl border border-line p-4">
+                <h3 class="text-xs font-medium text-t1 mb-2">4. Status</h3>
+                <div id="config-version" class="font-mono text-[10px] text-t3 bg-bg rounded p-2 border border-line"></div>
+                <div id="status" class="font-mono text-[10px] text-t3 bg-bg rounded p-2 mt-1 border border-line"></div>
+                <p class="text-[10px] text-t3 mt-1.5">
                     Select zone &rarr; Show zones &rarr; Adjust &rarr; Click points &rarr; Submit
                 </p>
             </div>
@@ -70,16 +70,16 @@
     </div>
 
     {# Debug Tools #}
-    <div class="panel p-4">
-        <h3 class="text-xs font-medium text-ink mb-2">Debug Tools</h3>
+    <div class="bg-bg-raised rounded-xl border border-line p-4">
+        <h3 class="text-xs font-medium text-t1 mb-2">Debug Tools</h3>
         <div class="flex gap-1.5">
             <button onclick="showCoordinateInfo()"
-                    class="px-2.5 py-1 text-[10px] font-mono rounded bg-page-alt text-ink-2 border border-border hover:bg-border transition-colors">Coord Info</button>
+                    class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Coord Info</button>
             <button onclick="debugCoordinates()"
-                    class="px-2.5 py-1 text-[10px] font-mono rounded bg-page-alt text-ink-2 border border-border hover:bg-border transition-colors">Debug Transforms</button>
+                    class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Debug Transforms</button>
         </div>
-        <div id="coordOutput" class="font-mono text-[10px] text-ink-3 bg-page rounded p-2 mt-2 max-h-40 overflow-auto whitespace-pre-wrap border border-border"></div>
-        <div id="debugOutput" class="font-mono text-[10px] text-ink-3 bg-page rounded p-2 mt-1 max-h-40 overflow-auto whitespace-pre-wrap border border-border"></div>
+        <div id="coordOutput" class="font-mono text-[10px] text-t3 bg-bg rounded p-2 mt-2 max-h-40 overflow-auto whitespace-pre-wrap border border-line"></div>
+        <div id="debugOutput" class="font-mono text-[10px] text-t3 bg-bg rounded p-2 mt-1 max-h-40 overflow-auto whitespace-pre-wrap border border-line"></div>
     </div>
 </div>
 {% endblock %}

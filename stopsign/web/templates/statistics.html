@@ -4,10 +4,10 @@
 
 {% block content %}
 <div class="space-y-5">
-    <h1 class="font-display text-xl font-700 text-ink">Statistics</h1>
-    <div class="panel overflow-hidden">
+    <h1 class="text-2xl font-bold text-t1">Statistics</h1>
+    <div class="bg-bg-raised rounded-xl border border-line overflow-hidden">
         <iframe src="{{ grafana_url }}" width="100%" height="600" frameborder="0"
-                class="rounded-md"></iframe>
+                class="rounded-xl"></iframe>
     </div>
 </div>
 {% endblock %}

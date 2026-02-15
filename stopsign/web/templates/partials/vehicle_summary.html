@@ -1,22 +1,20 @@
 <div id="vehicleSummary">
     {% if summary %}
-    <div class="panel">
-        <div class="grid grid-cols-3 divide-x divide-border">
-            <div class="px-5 py-4">
-                <div class="text-xs text-ink-3 mb-1">Vehicles Classified</div>
-                <div class="font-mono text-data-xl text-ink">{{ "{:,}".format(summary.total_classified) }}</div>
-            </div>
-            <div class="px-5 py-4">
-                <div class="text-xs text-ink-3 mb-1">Unique Clusters</div>
-                <div class="font-mono text-data-xl text-ink">{{ "{:,}".format(summary.cluster_count) }}</div>
-            </div>
-            <div class="px-5 py-4">
-                <div class="text-xs text-ink-3 mb-1">Coverage</div>
-                <div class="font-mono text-data-xl text-civic">{{ summary.coverage_pct }}%</div>
-            </div>
+    <div class="grid grid-cols-3 gap-3">
+        <div class="bg-bg-raised rounded-xl border border-line p-5">
+            <div class="text-xs text-t3 uppercase tracking-wider mb-1">Classified</div>
+            <div class="font-mono text-3xl font-bold text-t1">{{ "{:,}".format(summary.total_classified) }}</div>
+        </div>
+        <div class="bg-bg-raised rounded-xl border border-line p-5">
+            <div class="text-xs text-t3 uppercase tracking-wider mb-1">Clusters</div>
+            <div class="font-mono text-3xl font-bold text-t1">{{ "{:,}".format(summary.cluster_count) }}</div>
+        </div>
+        <div class="bg-bg-raised rounded-xl border border-line p-5">
+            <div class="text-xs text-t3 uppercase tracking-wider mb-1">Coverage</div>
+            <div class="font-mono text-3xl font-bold text-accent">{{ summary.coverage_pct }}%</div>
         </div>
     </div>
     {% else %}
-    <p class="text-sm text-ink-3">Vehicle classification data not yet available.</p>
+    <p class="text-sm text-t3">Vehicle classification data not yet available.</p>
     {% endif %}
 </div>
