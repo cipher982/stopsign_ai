@@ -28,7 +28,7 @@
     {# Fonts #}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
     {# Tailwind CSS via CDN #}
     <script src="https://cdn.tailwindcss.com"></script>
@@ -37,23 +37,19 @@
             theme: {
                 extend: {
                     colors: {
-                        surface: {
-                            '0': '#0a0a0c',
-                            '1': '#111114',
-                            '2': '#18181c',
-                            '3': '#222228',
-                            '4': '#2a2a32',
-                        },
-                        amber: {
-                            '400': '#f6b93b',
-                            '500': '#e8a317',
-                        },
-                        signal: {
-                            red: '#ef4444',
-                            green: '#22c55e',
-                            yellow: '#f6b93b',
-                        },
-                        muted: '#6b7280',
+                        bg: '#0f1117',
+                        panel: '#1a1d27',
+                        'panel-alt': '#222633',
+                        border: '#2a2e3a',
+                        'border-light': '#353a48',
+                        accent: '#f0b429',
+                        'accent-dim': '#c89318',
+                        'txt': '#e8eaed',
+                        'txt-2': '#9ba1b0',
+                        'txt-3': '#6b7185',
+                        'v-red': '#f44336',
+                        'v-green': '#4caf50',
+                        'v-amber': '#ff9800',
                     },
                     fontFamily: {
                         sans: ['DM Sans', 'system-ui', 'sans-serif'],
@@ -75,90 +71,46 @@
     <style>
         body {
             font-family: 'DM Sans', system-ui, sans-serif;
-            background: #0a0a0c;
-            color: #e4e4e7;
+            background: #0f1117;
+            color: #e8eaed;
         }
 
-        /* Subtle noise texture overlay */
-        body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        /* Everything above the noise layer */
-        body > * { position: relative; z-index: 1; }
-
-        /* HTMX loading states */
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline; }
         .htmx-request.htmx-indicator { display: inline; }
 
-        /* Custom scrollbar */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #111114; }
-        ::-webkit-scrollbar-thumb { background: #2a2a32; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #3a3a44; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f1117; }
+        ::-webkit-scrollbar-thumb { background: #353a48; border-radius: 4px; }
 
-        /* Panel styling */
-        .panel {
-            background: #111114;
-            border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 8px;
+        .card-panel {
+            background: #1a1d27;
+            border: 1px solid #2a2e3a;
+            border-radius: 10px;
         }
 
-        .panel-inset {
-            background: #0d0d10;
-            border: 1px solid rgba(255,255,255,0.04);
-            border-radius: 6px;
+        @keyframes pulse-live {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
         }
-
-        /* Glow effect for live indicator */
-        @keyframes pulse-glow {
-            0%, 100% { box-shadow: 0 0 4px rgba(34, 197, 94, 0.4); }
-            50% { box-shadow: 0 0 12px rgba(34, 197, 94, 0.7); }
-        }
-        .live-dot {
-            animation: pulse-glow 2s ease-in-out infinite;
-        }
-
-        /* Active nav link */
-        .nav-link-active {
-            color: #f6b93b;
-            border-bottom: 2px solid #f6b93b;
-        }
-
-        /* Bar chart bars */
-        .bar-fill {
-            transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        /* Fade in animation for HTMX content */
-        @keyframes fadeSlideIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .htmx-added { animation: fadeSlideIn 0.3s ease-out; }
+        .live-pulse { animation: pulse-live 2s ease-in-out infinite; }
     </style>
 </head>
 <body class="min-h-screen flex flex-col antialiased">
-    {# Navbar #}
-    <nav class="border-b border-white/[0.06] bg-surface-1/80 backdrop-blur-md sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-            <a href="/" class="flex items-center gap-2.5 group">
-                <div class="w-2 h-2 rounded-full bg-signal-green live-dot"></div>
-                <span class="font-semibold text-sm tracking-tight text-white group-hover:text-amber-400 transition-colors">STOP SIGN NANNY</span>
+    {# Navbar — compact, functional #}
+    <nav class="bg-panel border-b border-border sticky top-0 z-50">
+        <div class="max-w-[1400px] mx-auto px-4 h-12 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2 group">
+                <div class="w-2 h-2 rounded-full bg-v-green live-pulse"></div>
+                <span class="font-bold text-sm text-txt group-hover:text-accent transition-colors tracking-tight">STOP SIGN NANNY</span>
             </a>
 
-            <div class="hidden md:flex items-center gap-1">
+            <div class="hidden md:flex items-center gap-0.5">
                 {% set nav_items = [('/', 'home', 'Home'), ('/records', 'records', 'Records'), ('/vehicles', 'vehicles', 'Vehicles'), ('/about', 'about', 'About')] %}
                 {% for href, page, label in nav_items %}
                 <a href="{{ href }}"
-                   class="px-3 py-1.5 text-xs font-medium tracking-wide uppercase transition-colors
-                          {% if active_page == page %}nav-link-active text-amber-400{% else %}text-white/50 hover:text-white/80{% endif %}">
+                   class="px-3 py-1 text-sm font-medium rounded-md transition-colors
+                          {% if active_page == page %}bg-panel-alt text-accent{% else %}text-txt-2 hover:text-txt hover:bg-panel-alt{% endif %}">
                     {{ label }}
                 </a>
                 {% endfor %}
@@ -166,38 +118,30 @@
 
             <div class="flex items-center gap-3">
                 <a href="https://github.com/cipher982/stopsign_ai" target="_blank"
-                   class="text-white/30 hover:text-white/60 transition-colors">
+                   class="text-txt-3 hover:text-txt-2 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                 </a>
-                {# Mobile menu #}
                 <button onclick="document.getElementById('mobileMenu').classList.toggle('hidden')"
-                        class="md:hidden text-white/50 hover:text-white/80">
+                        class="md:hidden text-txt-2">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h8m-8 6h16" /></svg>
                 </button>
             </div>
         </div>
-
-        {# Mobile dropdown #}
-        <div id="mobileMenu" class="hidden md:hidden border-t border-white/[0.06] bg-surface-1 pb-3">
+        <div id="mobileMenu" class="hidden md:hidden border-t border-border bg-panel pb-2">
             {% for href, page, label in nav_items %}
-            <a href="{{ href }}"
-               class="block px-6 py-2 text-sm {% if active_page == page %}text-amber-400{% else %}text-white/60 hover:text-white{% endif %}">
-                {{ label }}
-            </a>
+            <a href="{{ href }}" class="block px-4 py-2 text-sm {% if active_page == page %}text-accent{% else %}text-txt-2{% endif %}">{{ label }}</a>
             {% endfor %}
         </div>
     </nav>
 
-    {# Main content #}
-    <main class="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-5">
+    <main class="flex-1 max-w-[1400px] mx-auto w-full px-4 py-4">
         {% block content %}{% endblock %}
     </main>
 
-    {# Footer #}
-    <footer class="border-t border-white/[0.04] py-4 mt-auto">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between">
-            <span class="text-xs text-white/20 font-mono">David Rose</span>
-            <span class="text-xs text-white/20 font-mono">Crestwood &middot; STL</span>
+    <footer class="border-t border-border py-3">
+        <div class="max-w-[1400px] mx-auto px-4 flex items-center justify-between text-xs text-txt-3 font-mono">
+            <span>David Rose</span>
+            <span>Crestwood &middot; STL</span>
         </div>
     </footer>
 

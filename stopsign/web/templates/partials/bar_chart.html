@@ -1,21 +1,21 @@
-<div id="{{ div_id }}" class="panel p-4">
-    <h3 class="text-sm font-semibold text-white mb-4">{{ title }}</h3>
+<div id="{{ div_id }}" class="card-panel p-4">
+    <h3 class="text-base font-semibold text-txt mb-4">{{ title }}</h3>
     {% if items %}
     <div class="space-y-2.5">
         {% for item in items %}
         <div>
             <div class="flex justify-between items-baseline mb-1">
-                <span class="text-xs text-white/60">{{ item.label | title }}</span>
-                <span class="text-[10px] font-mono text-white/30">{{ "{:,}".format(item.value) }}</span>
+                <span class="text-sm text-txt">{{ item.label | title }}</span>
+                <span class="text-xs font-mono text-txt-2">{{ "{:,}".format(item.value) }}</span>
             </div>
-            <div class="w-full bg-white/[0.04] rounded-full h-1.5">
-                <div class="h-1.5 rounded-full bar-fill"
-                     style="width: {{ item.pct }}%; background-color: {{ item.color | default('#f6b93b') }};"></div>
+            <div class="w-full bg-border rounded-full h-2">
+                <div class="h-2 rounded-full transition-all duration-500"
+                     style="width: {{ item.pct }}%; background-color: {{ item.color | default('#f0b429') }};"></div>
             </div>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <p class="text-xs text-white/40">No data available.</p>
+    <p class="text-sm text-txt-3">No data available.</p>
     {% endif %}
 </div>

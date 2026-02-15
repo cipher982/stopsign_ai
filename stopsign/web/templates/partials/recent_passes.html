@@ -1,5 +1,5 @@
 <div id="recentPasses">
-    <div id="passes-list" class="space-y-2">
+    <div id="passes-list" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
         {% for item in passes %}
         {% include "partials/pass_item.html" %}
         {% endfor %}

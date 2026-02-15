@@ -1,18 +1,18 @@
-<div id="{{ div_id }}" class="panel p-4">
-    <h3 class="text-sm font-semibold text-white mb-4">{{ title }}</h3>
+<div id="{{ div_id }}" class="card-panel p-4">
+    <h3 class="text-base font-semibold text-txt mb-4">{{ title }}</h3>
 
-    <div class="mb-3">
-        <h4 class="text-[10px] font-mono uppercase tracking-wider text-amber-400/50 mb-2">Minimum Speed</h4>
-        <div class="space-y-0.5">
+    <div class="mb-4">
+        <h4 class="text-xs font-mono text-accent uppercase tracking-wider mb-2">Minimum Speed</h4>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {% for item in speed_passes %}
             {% include "partials/pass_item.html" %}
             {% endfor %}
         </div>
     </div>
 
-    <div class="border-t border-white/[0.04] pt-3">
-        <h4 class="text-[10px] font-mono uppercase tracking-wider text-amber-400/50 mb-2">Time in Stop Zone</h4>
-        <div class="space-y-0.5">
+    <div class="border-t border-border pt-4">
+        <h4 class="text-xs font-mono text-accent uppercase tracking-wider mb-2">Time in Stop Zone</h4>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {% for item in time_passes %}
             {% include "partials/pass_item.html" %}
             {% endfor %}
