@@ -130,7 +130,7 @@ async def get_live_stats(request: Request):
 async def get_recent_vehicle_passes(request: Request):
     try:
         db = _ensure_db(request)
-        recent_passes = db.get_recent_vehicle_passes(limit=10)
+        recent_passes = db.get_recent_vehicle_passes(limit=50)
         pass_ids = [p.id for p in recent_passes]
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
 

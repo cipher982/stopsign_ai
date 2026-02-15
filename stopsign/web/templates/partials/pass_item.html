@@ -1,8 +1,17 @@
-{# Vehicle pass — single compact row, everything on one line #}
-<div style="display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-bottom: 1px solid #d0d0d0;">
-    <img src="{{ item.image_url }}" alt="" style="width: 44px; height: 32px; object-fit: cover; display: block; flex-shrink: 0; border: 1px solid #ccc;" loading="lazy" decoding="async">
-    <span style="font-size: 12px; font-weight: 600; white-space: nowrap;">{{ item.time_str }}</span>
-    <span class="mono" style="font-size: 11px; white-space: nowrap;"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }}</span>
-    <span class="mono" style="font-size: 11px; white-space: nowrap;"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
-    {% if item.clip_url %}<a href="{{ item.clip_url }}" target="_blank" style="font-size: 10px; color: #1F3A93; margin-left: auto; white-space: nowrap;">Clip</a>{% endif %}
-</div>
+{# Vehicle pass — image-forward row, zero dead space #}
+<a href="{{ item.clip_url or '#' }}" {% if item.clip_url %}target="_blank"{% endif %}
+   style="display: flex; gap: 0; border-bottom: 1px solid #d4d4d4; text-decoration: none; color: inherit; background: {% if item.speed_color == '#c41e1e' or item.speed_color == 'var(--bad)' %}#fff0f0{% else %}#fff{% endif %};">
+    <img src="{{ item.image_url }}" alt=""
+         style="width: 100px; height: 56px; object-fit: cover; display: block; flex-shrink: 0;"
+         loading="lazy" decoding="async">
+    <div style="flex: 1; padding: 3px 6px; display: flex; flex-direction: column; justify-content: center; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="font-size: 12px; font-weight: 600;">{{ item.time_str }}</span>
+            {% if item.clip_url %}<span style="font-size: 9px; color: var(--text-muted);">▶</span>{% endif %}
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 1px;">
+            <span class="mono" style="font-size: 11px;"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }} mph</span>
+            <span class="mono" style="font-size: 11px;"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
+        </div>
+    </div>
+</a>
