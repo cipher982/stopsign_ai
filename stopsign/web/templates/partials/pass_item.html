@@ -1,13 +1,14 @@
-{# Vehicle pass — full-width image card, info bar below #}
+{# Vehicle pass row — image left, large text right, fills its box #}
 <a href="{{ item.clip_url or '#' }}" {% if item.clip_url %}target="_blank"{% endif %}
-   style="display: block; border-bottom: 2px solid var(--face); text-decoration: none; color: inherit;">
+   style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #d0d0d0; text-decoration: none; color: inherit;">
     <img src="{{ item.image_url }}" alt=""
-         style="width: 100%; height: 80px; object-fit: cover; display: block;"
+         style="width: 80px; height: 56px; object-fit: cover; display: block; flex-shrink: 0; border: 1px solid #ccc;"
          loading="lazy" decoding="async">
-    <div style="display: flex; align-items: center; gap: 6px; padding: 2px 4px; background: {% if item.speed_color == '#c41e1e' %}#ffe0e0{% else %}var(--face){% endif %}; font-size: 11px;">
-        <span style="font-weight: 600;">{{ item.time_str }}</span>
-        <span class="mono"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }}</span>
-        <span class="mono"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
-        {% if item.clip_url %}<span style="margin-left: auto; font-size: 9px;">▶</span>{% endif %}
+    <div style="flex: 1; min-width: 0;">
+        <div style="font-size: 16px; font-weight: 700;">{{ item.time_str }}</div>
+        <div style="display: flex; gap: 12px; margin-top: 2px;">
+            <span class="mono" style="font-size: 15px;"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }} mph</span>
+            <span class="mono" style="font-size: 15px;"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
+        </div>
     </div>
 </a>
