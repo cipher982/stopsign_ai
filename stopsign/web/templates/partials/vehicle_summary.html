@@ -1,21 +1,22 @@
 <div id="vehicleSummary">
     {% if summary %}
-    <div class="stats stats-vertical sm:stats-horizontal shadow w-full">
-        <div class="stat">
-            <div class="stat-title">Vehicles Classified</div>
-            <div class="stat-value text-xl">{{ "{:,}".format(summary.total_classified) }}</div>
-        </div>
-        <div class="stat">
-            <div class="stat-title">Unique Clusters</div>
-            <div class="stat-value text-xl">{{ "{:,}".format(summary.cluster_count) }}</div>
-        </div>
-        <div class="stat">
-            <div class="stat-title">Coverage</div>
-            <div class="stat-value text-xl">{{ summary.coverage_pct }}%</div>
-            <div class="stat-desc">of all passes</div>
+    <div class="panel p-4">
+        <div class="grid grid-cols-3 divide-x divide-white/[0.06]">
+            <div class="px-4 first:pl-0">
+                <div class="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Classified</div>
+                <div class="text-xl font-mono font-semibold text-white">{{ "{:,}".format(summary.total_classified) }}</div>
+            </div>
+            <div class="px-4">
+                <div class="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Clusters</div>
+                <div class="text-xl font-mono font-semibold text-white">{{ "{:,}".format(summary.cluster_count) }}</div>
+            </div>
+            <div class="px-4">
+                <div class="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Coverage</div>
+                <div class="text-xl font-mono font-semibold text-amber-400">{{ summary.coverage_pct }}%</div>
+            </div>
         </div>
     </div>
     {% else %}
-    <p class="text-sm opacity-60">Vehicle classification data not yet available.</p>
+    <p class="text-xs text-white/40">Vehicle classification data not yet available.</p>
     {% endif %}
 </div>

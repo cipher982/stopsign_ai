@@ -1,23 +1,22 @@
-<div id="vehicleMakeModels" class="card bg-base-100 shadow-md">
-    <div class="card-body p-5">
-        <h3 class="card-title text-base">Top Make / Models</h3>
-        {% if items %}
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 mt-3">
-            {% for item in items %}
-            <div class="card bg-base-200 shadow-sm hover:shadow-md transition-shadow">
-                <figure class="px-2 pt-2">
-                    <img src="{{ item.image_url }}" alt="{{ item.make_model }}"
-                         class="rounded-md h-20 w-full object-cover bg-base-300" loading="lazy">
-                </figure>
-                <div class="card-body p-2">
-                    <p class="text-xs font-semibold truncate">{{ item.make_model }}</p>
-                    <p class="text-xs opacity-60">{{ "{:,}".format(item.count) }} sightings</p>
-                </div>
+<div id="vehicleMakeModels" class="panel p-4">
+    <h3 class="text-sm font-semibold text-white mb-4">Top Make / Models</h3>
+    {% if items %}
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        {% for item in items %}
+        <div class="group">
+            <div class="rounded-lg overflow-hidden bg-surface-3 ring-1 ring-white/[0.06]">
+                <img src="{{ item.image_url }}" alt="{{ item.make_model }}"
+                     class="h-20 w-full object-cover group-hover:scale-105 transition-transform duration-300"
+                     loading="lazy">
             </div>
-            {% endfor %}
+            <div class="mt-1.5">
+                <p class="text-xs font-medium text-white/80 truncate">{{ item.make_model }}</p>
+                <p class="text-[10px] font-mono text-white/30">{{ "{:,}".format(item.count) }}</p>
+            </div>
         </div>
-        {% else %}
-        <p class="text-sm opacity-60">No make/model data.</p>
-        {% endif %}
+        {% endfor %}
     </div>
+    {% else %}
+    <p class="text-xs text-white/40">No make/model data.</p>
+    {% endif %}
 </div>

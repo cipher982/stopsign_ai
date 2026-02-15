@@ -3,24 +3,23 @@
 {% block title %}Performance Debug{% endblock %}
 
 {% block content %}
-<div class="space-y-6 max-w-3xl mx-auto">
-    <h1 class="text-2xl font-bold">Performance Debugging</h1>
+<div class="space-y-5 max-w-3xl mx-auto">
+    <h1 class="text-lg font-semibold text-white">Performance Debugging</h1>
 
-    <div class="card bg-base-100 shadow-md">
-        <div class="card-body">
-            <button hx-get="/debug-performance"
-                    hx-target="#perf-results"
-                    hx-indicator="#loading"
-                    class="btn btn-primary btn-sm">
-                Run Performance Test
-            </button>
-            <div id="loading" class="htmx-indicator mt-2">
-                <span class="loading loading-spinner loading-sm"></span> Running...
-            </div>
-            <pre class="bg-base-200 rounded-lg p-4 mt-4 text-xs font-mono overflow-auto max-h-96">
-                <code id="perf-results"></code>
-            </pre>
+    <div class="panel p-5">
+        <button hx-get="/debug-performance"
+                hx-target="#perf-results"
+                hx-indicator="#loading"
+                class="px-3 py-1.5 text-xs font-mono rounded bg-amber-400/20 text-amber-400 border border-amber-400/30 hover:bg-amber-400/30 transition-colors">
+            Run Performance Test
+        </button>
+        <div id="loading" class="htmx-indicator mt-2">
+            <svg class="w-4 h-4 animate-spin text-white/30 inline mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            <span class="text-xs text-white/40">Running...</span>
         </div>
+        <pre class="bg-surface-0 rounded-md p-4 mt-4 text-[11px] font-mono text-white/60 overflow-auto max-h-96 border border-white/[0.04]">
+            <code id="perf-results"></code>
+        </pre>
     </div>
 </div>
 
