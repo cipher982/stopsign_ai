@@ -1,18 +1,20 @@
-{# Vehicle pass — table row #}
-<tr>
-    <td><img src="{{ item.image_url }}" alt="Vehicle" class="thumb" loading="lazy" decoding="async"></td>
-    <td style="white-space: nowrap;">{{ item.time_str }}</td>
-    <td class="mono">
-        <span class="dot" style="background-color: {{ item.speed_color }};"></span>
-        {{ "%.1f"|format(item.min_speed) }}
-    </td>
-    <td class="mono">
-        <span class="dot" style="background-color: {{ item.time_color }};"></span>
-        {{ "%.1f"|format(item.time_in_zone) }}s
-    </td>
-    <td>
+{# Vehicle pass — compact row with image filling left side #}
+<div style="display: flex; border-bottom: 1px solid #d0d0d0; overflow: hidden;">
+    <img src="{{ item.image_url }}" alt="Vehicle"
+         style="width: 120px; height: 68px; object-fit: cover; display: block; flex-shrink: 0;"
+         loading="lazy" decoding="async">
+    <div style="flex: 1; padding: 4px 8px; display: flex; flex-direction: column; justify-content: center; min-width: 0;">
+        <div style="font-size: 12px; font-weight: 600;">{{ item.time_str }}</div>
+        <div style="display: flex; gap: 10px; margin-top: 2px;">
+            <span class="mono" style="font-size: 11px;">
+                <span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }} mph
+            </span>
+            <span class="mono" style="font-size: 11px;">
+                <span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s
+            </span>
+        </div>
         {% if item.clip_url %}
-        <a href="{{ item.clip_url }}" target="_blank" class="btn98" style="font-size: 10px; padding: 1px 6px; min-height: 18px;">Clip</a>
+        <a href="{{ item.clip_url }}" target="_blank" style="font-size: 10px; color: #1F3A93; margin-top: 2px;">Replay</a>
         {% endif %}
-    </td>
-</tr>
+    </div>
+</div>

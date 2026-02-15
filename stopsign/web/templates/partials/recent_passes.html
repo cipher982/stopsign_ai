@@ -1,18 +1,5 @@
 <div id="recentPasses">
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th style="width: 50px;"></th>
-                <th>Time</th>
-                <th>Speed</th>
-                <th>Duration</th>
-                <th style="width: 50px;"></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in passes %}
-            {% include "partials/pass_item.html" %}
-            {% endfor %}
-        </tbody>
-    </table>
+    {% for item in passes %}
+    {% include "partials/pass_item.html" %}
+    {% endfor %}
 </div>
