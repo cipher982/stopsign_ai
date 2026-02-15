@@ -539,10 +539,12 @@ def main():
 
 
 def clean_stream_directory():
-    """Clean up the stream directory by removing all files."""
+    """Clean up the stream directory by removing stale HLS files (preserves clips/)."""
     logger.info("Cleaning up stream directory...")
     os.makedirs(STREAM_DIR, exist_ok=True)
     for filename in os.listdir(STREAM_DIR):
+        if filename == "clips":
+            continue
         file_path = os.path.join(STREAM_DIR, filename)
         try:
             if os.path.isfile(file_path) or os.path.islink(file_path):
