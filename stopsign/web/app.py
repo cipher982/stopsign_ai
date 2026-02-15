@@ -26,10 +26,12 @@ logger = logging.getLogger(__name__)
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"
 STREAM_URL = "/stream/stream.m3u8"
 WEB_START_TIME = time.time()
+ASSET_VERSION = os.getenv("ASSET_VERSION") or str(int(WEB_START_TIME))
 
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+templates.env.globals["asset_version"] = ASSET_VERSION
 
 
 def create_app() -> FastAPI:

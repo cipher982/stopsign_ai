@@ -94,7 +94,12 @@ async def add_cache_headers(request, call_next):
                 metrics.db_operations.add(1, {"operation": "http_error", "status": str(response.status_code)})
     else:
         response = await call_next(request)
-        if request.url.path.startswith("/vehicle-image/"):
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("text/html"):
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        elif request.url.path.startswith("/vehicle-image/"):
             response.headers["Cache-Control"] = "public, max-age=3600"
             response.headers["ETag"] = f'"{hash(request.url.path)}"'
 

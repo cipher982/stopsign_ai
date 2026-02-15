@@ -4,8 +4,8 @@
 
 {% block head_extra %}
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest" defer></script>
-<script src="/static/js/video-player.js" defer></script>
-<script src="/static/js/debug.js" defer></script>
+<script src="/static/js/video-player.js?v={{ asset_version }}" defer></script>
+<script src="/static/js/debug.js?v={{ asset_version }}" defer></script>
 {% endblock %}
 
 {% block content %}
