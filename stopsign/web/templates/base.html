@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -25,47 +25,40 @@
     {# JSON-LD structured data #}
     {% block json_ld %}{% endblock %}
 
-    {# Fonts — Bricolage Grotesque (display) + Source Sans 3 (body) + JetBrains Mono (data) #}
+    {# Inter — one font for everything #}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Source+Sans+3:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     {# Tailwind CSS via CDN #}
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwindcss.config = {
+            darkMode: 'class',
             theme: {
                 extend: {
                     colors: {
-                        surface: '#FFFFFF',
-                        page: '#F7F7F5',
-                        'page-alt': '#EFEEEB',
-                        border: '#E2E1DC',
-                        'border-strong': '#C8C7C1',
-                        ink: '#1A1A18',
-                        'ink-2': '#5C5C58',
-                        'ink-3': '#8A8A85',
-                        civic: '#1E40AF',
-                        'civic-light': '#EFF6FF',
-                        'civic-dim': '#1E3A8A',
-                        signal: {
-                            red: '#B91C1C',
-                            green: '#15803D',
-                            amber: '#B45309',
-                            'red-bg': '#FEF2F2',
-                            'green-bg': '#F0FDF4',
-                            'amber-bg': '#FFFBEB',
-                        },
+                        bg: '#0B0B0F',
+                        'bg-raised': '#15151A',
+                        'bg-hover': '#1C1C24',
+                        'bg-active': '#24242E',
+                        line: '#2A2A35',
+                        'line-strong': '#3A3A48',
+                        't1': '#F0F0F3',
+                        't2': '#A0A0B0',
+                        't3': '#65657A',
+                        accent: '#F59E0B',
+                        'accent-dim': '#D97706',
+                        ok: '#34D399',
+                        'ok-dim': '#065F46',
+                        warn: '#FBBF24',
+                        'warn-dim': '#78350F',
+                        bad: '#F87171',
+                        'bad-dim': '#7F1D1D',
                     },
                     fontFamily: {
-                        display: ['"Bricolage Grotesque"', 'Georgia', 'serif'],
-                        body: ['"Source Sans 3"', 'system-ui', 'sans-serif'],
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
                         mono: ['"JetBrains Mono"', 'monospace'],
-                    },
-                    fontSize: {
-                        'data-xl': ['2rem', { lineHeight: '1', fontWeight: '500', letterSpacing: '-0.02em' }],
-                        'data-lg': ['1.5rem', { lineHeight: '1', fontWeight: '500', letterSpacing: '-0.01em' }],
-                        'data-sm': ['0.8125rem', { lineHeight: '1.2', fontWeight: '400' }],
                     },
                 },
             },
@@ -81,112 +74,64 @@
     {% block head_extra %}{% endblock %}
 
     <style>
+        * { font-family: 'Inter', system-ui, sans-serif; }
+
         body {
-            font-family: 'Source Sans 3', system-ui, sans-serif;
-            background: #F7F7F5;
-            color: #1A1A18;
+            background: #0B0B0F;
+            color: #F0F0F3;
+            -webkit-font-smoothing: antialiased;
         }
 
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline; }
         .htmx-request.htmx-indicator { display: inline; }
 
-        /* Subtle noise grain on page background */
-        body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            opacity: 0.03;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-            z-index: 9999;
-        }
-
-        /* Refined scrollbar */
+        /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #C8C7C1; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #8A8A85; }
+        ::-webkit-scrollbar-thumb { background: #2A2A35; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3A3A48; }
 
-        /* Panel — clean, flat, warm */
-        .panel {
-            background: #FFFFFF;
-            border: 1px solid #E2E1DC;
-            border-radius: 6px;
+        /* Live pulse */
+        @keyframes pulse-live {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .live-pulse {
+            animation: pulse-live 2s ease-in-out infinite;
         }
 
-        /* Staggered entrance animation */
-        @keyframes fade-up {
-            from { opacity: 0; transform: translateY(8px); }
+        /* Fade in */
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(6px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        .animate-in {
-            animation: fade-up 0.4s ease-out both;
-        }
-        .animate-in-1 { animation-delay: 0.05s; }
-        .animate-in-2 { animation-delay: 0.1s; }
-        .animate-in-3 { animation-delay: 0.15s; }
+        .fade-in { animation: fade-in 0.35s ease-out both; }
+        .fade-in-1 { animation-delay: 0.05s; }
+        .fade-in-2 { animation-delay: 0.1s; }
+        .fade-in-3 { animation-delay: 0.15s; }
 
-        /* Live indicator */
-        @keyframes pulse-dot {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.5; transform: scale(0.85); }
-        }
-        .live-dot {
-            width: 6px; height: 6px;
-            border-radius: 50%;
-            background: #15803D;
-            animation: pulse-dot 2s ease-in-out infinite;
-        }
-
-        /* Data table rows */
-        .data-row {
-            display: grid;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.5rem 0.75rem;
-            border-bottom: 1px solid #EFEEEB;
-            transition: background-color 0.15s;
-        }
-        .data-row:hover {
-            background: #FAFAF8;
-        }
-        .data-row:last-child {
-            border-bottom: none;
-        }
-
-        /* Section label */
-        .section-label {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.6875rem;
-            font-weight: 500;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #8A8A85;
-        }
-
-        /* Accent underline for nav */
-        .nav-active {
-            color: #1E40AF;
-            box-shadow: inset 0 -2px 0 #1E40AF;
+        /* Glow for accent numbers */
+        .glow-amber {
+            text-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
         }
     </style>
 </head>
-<body class="min-h-screen flex flex-col antialiased">
-    {# Navbar — editorial, light #}
-    <nav class="bg-surface border-b border-border sticky top-0 z-50">
-        <div class="max-w-[1200px] mx-auto px-5 h-14 flex items-center justify-between">
+<body class="min-h-screen flex flex-col">
+    {# Navigation — minimal, dark #}
+    <nav class="sticky top-0 z-50 bg-bg/80 backdrop-blur-xl border-b border-line">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
             <a href="/" class="flex items-center gap-2.5 group">
-                <div class="live-dot"></div>
-                <span class="font-display text-base font-700 text-ink tracking-tight group-hover:text-civic transition-colors">Stop Sign Nanny</span>
+                <span class="w-2 h-2 rounded-full bg-ok live-pulse"></span>
+                <span class="text-[15px] font-bold tracking-tight text-t1 group-hover:text-accent transition-colors">Stop Sign Nanny</span>
             </a>
 
-            <div class="hidden md:flex items-center gap-1">
-                {% set nav_items = [('/', 'home', 'Home'), ('/records', 'records', 'Records'), ('/vehicles', 'vehicles', 'Vehicles'), ('/about', 'about', 'About')] %}
+            <div class="hidden md:flex items-center gap-0.5">
+                {% set nav_items = [('/', 'home', 'Live'), ('/records', 'records', 'Records'), ('/vehicles', 'vehicles', 'Vehicles'), ('/about', 'about', 'About')] %}
                 {% for href, page, label in nav_items %}
                 <a href="{{ href }}"
-                   class="px-3 py-4 text-sm font-medium transition-colors
-                          {% if active_page == page %}nav-active{% else %}text-ink-2 hover:text-ink{% endif %}">
+                   class="px-3 py-1.5 rounded-lg text-sm font-medium transition-all
+                          {% if active_page == page %}bg-bg-active text-t1{% else %}text-t3 hover:text-t2 hover:bg-bg-hover{% endif %}">
                     {{ label }}
                 </a>
                 {% endfor %}
@@ -194,30 +139,30 @@
 
             <div class="flex items-center gap-3">
                 <a href="https://github.com/cipher982/stopsign_ai" target="_blank"
-                   class="text-ink-3 hover:text-ink-2 transition-colors">
+                   class="text-t3 hover:text-t2 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                 </a>
                 <button onclick="document.getElementById('mobileMenu').classList.toggle('hidden')"
-                        class="md:hidden text-ink-2">
+                        class="md:hidden text-t3">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h8m-8 6h16" /></svg>
                 </button>
             </div>
         </div>
-        <div id="mobileMenu" class="hidden md:hidden border-t border-border bg-surface pb-2">
+        <div id="mobileMenu" class="hidden md:hidden border-t border-line bg-bg px-4 pb-2">
             {% for href, page, label in nav_items %}
-            <a href="{{ href }}" class="block px-5 py-2.5 text-sm font-medium {% if active_page == page %}text-civic{% else %}text-ink-2{% endif %}">{{ label }}</a>
+            <a href="{{ href }}" class="block py-2.5 text-sm font-medium {% if active_page == page %}text-accent{% else %}text-t3 hover:text-t2{% endif %}">{{ label }}</a>
             {% endfor %}
         </div>
     </nav>
 
-    <main class="flex-1 max-w-[1200px] mx-auto w-full px-5 py-5">
+    <main class="flex-1 max-w-6xl mx-auto w-full px-4 sm:px-6 py-6">
         {% block content %}{% endblock %}
     </main>
 
-    <footer class="border-t border-border bg-surface mt-8">
-        <div class="max-w-[1200px] mx-auto px-5 py-4 flex items-center justify-between text-xs text-ink-3">
-            <span class="font-body">David Rose</span>
-            <span class="font-mono text-[11px]">Crestwood &middot; STL</span>
+    <footer class="border-t border-line mt-auto">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between text-xs text-t3">
+            <span>David Rose</span>
+            <span class="font-mono">Crestwood &middot; STL</span>
         </div>
     </footer>
 

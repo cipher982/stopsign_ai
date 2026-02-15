@@ -13,55 +13,53 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-5">
-    {# Row 1: Video + Stats #}
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-in">
-        {# Video — 2/3 width #}
-        <div class="lg:col-span-2 relative">
+<div class="space-y-6">
+    {# Hero: Video + Stats side by side #}
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 fade-in">
+        {# Video — dominant #}
+        <div class="relative">
             <div id="videoContainer"
                  hx-get="/load-video"
                  hx-trigger="load"
-                 class="aspect-video bg-ink rounded-md overflow-hidden flex items-center justify-center ring-1 ring-border">
-                <span class="text-ink-3 text-sm font-mono">Loading feed...</span>
+                 class="aspect-video bg-black rounded-xl overflow-hidden flex items-center justify-center ring-1 ring-line">
+                <span class="text-t3 text-sm font-mono">Loading feed...</span>
             </div>
-            <div class="absolute top-2.5 left-2.5 flex items-center gap-1.5 bg-white/90 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-sm">
-                <div class="live-dot"></div>
-                <span class="text-[11px] font-mono font-medium text-ink uppercase">Live</span>
+            <div class="absolute top-3 left-3 flex items-center gap-2 bg-black/70 backdrop-blur-sm rounded-full px-3 py-1.5">
+                <span class="w-2 h-2 rounded-full bg-ok live-pulse"></span>
+                <span class="text-xs font-mono font-medium text-t1 uppercase tracking-wide">Live</span>
             </div>
         </div>
 
-        {# Stats — 1/3 width, stacked vertically #}
-        <div class="panel p-5 flex flex-col justify-between animate-in animate-in-1">
-            <div>
-                <div class="section-label mb-4">System Status</div>
-                <div class="space-y-4">
-                    <div>
-                        <div class="text-xs text-ink-3 mb-1">Compliance Rate</div>
-                        <div class="font-mono text-data-xl text-ink" id="complianceRate">--</div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <div class="text-xs text-ink-3 mb-1">Violations</div>
-                            <div class="font-mono text-data-lg text-signal-red" id="violationCount">--</div>
-                        </div>
-                        <div>
-                            <div class="text-xs text-ink-3 mb-1">Vehicles (24h)</div>
-                            <div class="font-mono text-data-lg text-ink" id="vehicleCount">--</div>
-                        </div>
-                    </div>
-                    <div>
-                        <div class="text-xs text-ink-3 mb-1">Last Detected</div>
-                        <div class="font-mono text-sm text-signal-green" id="lastDetection">--</div>
-                    </div>
+        {# Stats sidebar #}
+        <div class="flex flex-col gap-4 fade-in fade-in-1">
+            {# Big compliance number #}
+            <div class="bg-bg-raised rounded-xl p-5 border border-line">
+                <div class="text-xs font-medium text-t3 uppercase tracking-wider mb-2">Compliance Rate</div>
+                <div class="font-mono text-5xl font-bold text-accent glow-amber leading-none" id="complianceRate">--</div>
+                <div class="mt-3 flex items-center gap-2">
+                    <span class="text-lg" id="trendArrow">&rarr;</span>
+                    <span class="text-sm text-t2 leading-snug" id="rotatingInsight">Loading...</span>
                 </div>
             </div>
 
-            <div class="mt-4 pt-3 border-t border-border">
-                <div class="flex items-center gap-2 mb-1">
-                    <span class="section-label">Trend</span>
-                    <span class="text-sm text-ink-2" id="trendArrow">&rarr;</span>
+            {# Stat cards #}
+            <div class="grid grid-cols-2 gap-3">
+                <div class="bg-bg-raised rounded-xl p-4 border border-line">
+                    <div class="text-xs text-t3 uppercase tracking-wider mb-1">Violations</div>
+                    <div class="font-mono text-2xl font-bold text-bad" id="violationCount">--</div>
+                    <div class="text-[11px] text-t3 mt-0.5">24h</div>
                 </div>
-                <p class="text-sm text-ink-2 leading-relaxed" id="rotatingInsight">Loading insight...</p>
+                <div class="bg-bg-raised rounded-xl p-4 border border-line">
+                    <div class="text-xs text-t3 uppercase tracking-wider mb-1">Vehicles</div>
+                    <div class="font-mono text-2xl font-bold text-t1" id="vehicleCount">--</div>
+                    <div class="text-[11px] text-t3 mt-0.5">24h</div>
+                </div>
+            </div>
+
+            {# Last detection #}
+            <div class="bg-bg-raised rounded-xl p-4 border border-line">
+                <div class="text-xs text-t3 uppercase tracking-wider mb-1">Last Detected</div>
+                <div class="font-mono text-lg font-medium text-ok" id="lastDetection">--</div>
             </div>
 
             <div id="statsUpdater"
@@ -73,18 +71,21 @@
         </div>
     </div>
 
-    {# Row 2: Recent Passes — compact data table, NOT card grid #}
-    <div class="panel animate-in animate-in-2">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-border">
-            <h2 class="font-display text-base font-700 text-ink">Recent Passes</h2>
-            <span class="section-label text-signal-green">Live Feed</span>
+    {# Recent Passes — the activity feed #}
+    <div class="fade-in fade-in-2">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-bold text-t1">Recent Passes</h2>
+            <span class="flex items-center gap-1.5 text-xs text-ok font-medium">
+                <span class="w-1.5 h-1.5 rounded-full bg-ok live-pulse"></span>
+                Live
+            </span>
         </div>
         <div id="recentPasses"
              hx-get="/api/recent-vehicle-passes"
              hx-trigger="load"
              hx-swap="innerHTML">
-            <div class="flex justify-center py-8">
-                <span class="text-ink-3 text-sm">Loading recent passes...</span>
+            <div class="flex justify-center py-12">
+                <span class="text-t3 text-sm">Loading recent passes...</span>
             </div>
         </div>
     </div>

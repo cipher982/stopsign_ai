@@ -1,26 +1,23 @@
-<div id="{{ div_id }}" class="panel">
-    <div class="px-4 py-3 border-b border-border">
-        <h3 class="font-display text-base font-700 text-ink">{{ title }}</h3>
+<div id="{{ div_id }}" class="bg-bg-raised rounded-xl border border-line">
+    <div class="px-5 py-4 border-b border-line">
+        <h3 class="text-base font-bold text-t1">{{ title }}</h3>
     </div>
 
-    <div class="px-4 py-3">
-        <div class="section-label mb-2">Minimum Speed</div>
-        {# Table header #}
-        <div class="data-row text-xs font-mono text-ink-3 !py-1.5" style="grid-template-columns: 48px 1fr 100px 100px 80px;">
-            <span></span><span>Time</span><span>Speed</span><span>Duration</span><span></span>
+    <div class="p-4">
+        <div class="text-xs font-mono text-t3 uppercase tracking-wider mb-3">By Speed</div>
+        <div class="grid grid-cols-1 sm:grid-cols-5 gap-2">
+            {% for item in speed_passes %}
+            {% include "partials/pass_item.html" %}
+            {% endfor %}
         </div>
-        {% for item in speed_passes %}
-        {% include "partials/pass_item.html" %}
-        {% endfor %}
     </div>
 
-    <div class="px-4 py-3 border-t border-border">
-        <div class="section-label mb-2">Time in Stop Zone</div>
-        <div class="data-row text-xs font-mono text-ink-3 !py-1.5" style="grid-template-columns: 48px 1fr 100px 100px 80px;">
-            <span></span><span>Time</span><span>Speed</span><span>Duration</span><span></span>
+    <div class="p-4 border-t border-line">
+        <div class="text-xs font-mono text-t3 uppercase tracking-wider mb-3">By Time in Zone</div>
+        <div class="grid grid-cols-1 sm:grid-cols-5 gap-2">
+            {% for item in time_passes %}
+            {% include "partials/pass_item.html" %}
+            {% endfor %}
         </div>
-        {% for item in time_passes %}
-        {% include "partials/pass_item.html" %}
-        {% endfor %}
     </div>
 </div>

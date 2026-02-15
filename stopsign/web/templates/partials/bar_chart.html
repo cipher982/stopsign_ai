@@ -1,21 +1,21 @@
-<div id="{{ div_id }}" class="panel p-5">
-    <h3 class="font-display text-base font-700 text-ink mb-4">{{ title }}</h3>
+<div id="{{ div_id }}" class="bg-bg-raised rounded-xl border border-line p-5">
+    <h3 class="text-base font-bold text-t1 mb-5">{{ title }}</h3>
     {% if items %}
     <div class="space-y-3">
         {% for item in items %}
         <div>
-            <div class="flex justify-between items-baseline mb-1">
-                <span class="text-sm text-ink">{{ item.label | title }}</span>
-                <span class="text-xs font-mono text-ink-3">{{ "{:,}".format(item.value) }}</span>
+            <div class="flex justify-between items-baseline mb-1.5">
+                <span class="text-sm text-t2">{{ item.label | title }}</span>
+                <span class="text-xs font-mono text-t3">{{ "{:,}".format(item.value) }}</span>
             </div>
-            <div class="w-full bg-page-alt rounded-full h-2">
+            <div class="w-full bg-bg-active rounded-full h-2">
                 <div class="h-2 rounded-full transition-all duration-500"
-                     style="width: {{ item.pct }}%; background-color: {{ item.color | default('#1E40AF') }};"></div>
+                     style="width: {{ item.pct }}%; background-color: {{ item.color | default('#F59E0B') }};"></div>
             </div>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <p class="text-sm text-ink-3">No data available.</p>
+    <p class="text-sm text-t3">No data available.</p>
     {% endif %}
 </div>
