@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Vehicles - Stop Sign Nanny{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">{{ json_ld | tojson }}</script>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <h1 class="text-2xl font-bold">Vehicle Classification</h1>
+
+    {# Summary stats #}
+    <div id="vehicleSummary" hx-get="/api/vehicles/summary" hx-trigger="load">
+        <div class="flex justify-center py-6">
+            <span class="loading loading-spinner loading-md"></span>
+        </div>
+    </div>
+
+    {# Type and Color charts side by side #}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div id="vehicleTypes" hx-get="/api/vehicles/types" hx-trigger="load">
+            <div class="card bg-base-100 shadow-md">
+                <div class="card-body flex items-center justify-center py-12">
+                    <span class="loading loading-spinner loading-md"></span>
+                </div>
+            </div>
+        </div>
+        <div id="vehicleColors" hx-get="/api/vehicles/colors" hx-trigger="load">
+            <div class="card bg-base-100 shadow-md">
+                <div class="card-body flex items-center justify-center py-12">
+                    <span class="loading loading-spinner loading-md"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Make/Models #}
+    <div id="vehicleMakeModels" hx-get="/api/vehicles/make-models" hx-trigger="load">
+        <div class="card bg-base-100 shadow-md">
+            <div class="card-body flex items-center justify-center py-12">
+                <span class="loading loading-spinner loading-md"></span>
+            </div>
+        </div>
+    </div>
+
+    {# Gallery #}
+    <div id="vehicleGallery" hx-get="/api/vehicles/gallery" hx-trigger="load">
+        <div class="card bg-base-100 shadow-md">
+            <div class="card-body flex items-center justify-center py-12">
+                <span class="loading loading-spinner loading-md"></span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

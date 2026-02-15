@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Records - Stop Sign Nanny{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">{{ json_ld | tojson }}</script>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex items-center gap-3">
+        <h1 class="text-2xl font-bold">Vehicle Records</h1>
+        <span class="badge badge-outline">Last 7 Days</span>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div id="worstPasses" hx-get="/api/worst-passes" hx-trigger="load">
+            <div class="card bg-base-100 shadow-md">
+                <div class="card-body flex items-center justify-center py-12">
+                    <span class="loading loading-spinner loading-md"></span>
+                </div>
+            </div>
+        </div>
+        <div id="bestPasses" hx-get="/api/best-passes" hx-trigger="load">
+            <div class="card bg-base-100 shadow-md">
+                <div class="card-body flex items-center justify-center py-12">
+                    <span class="loading loading-spinner loading-md"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

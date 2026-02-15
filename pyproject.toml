@@ -45,8 +45,22 @@ storage = [
 # Web UI (web_server only)
 web = [
     "psutil>=5.9.0",
-    "python-fasthtml>=0.6.2",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "jinja2>=3.1.0",
     "opentelemetry-instrumentation-fastapi>=0.55b1",
+]
+# Offline vehicle clustering & labeling (scripts/cluster_vehicles.py)
+clustering = [
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "transformers>=4.40.0",
+    "hdbscan>=0.8.33",
+    "openai>=1.30.0",
+    "click>=8.1.0",
+    "tqdm>=4.66.0",
+    "scikit-learn>=1.4.0",
+    "umap-learn>=0.5.5",
 ]
 # Development tools
 dev = [

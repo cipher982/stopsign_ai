@@ -1,0 +1,23 @@
+<div id="{{ div_id }}" class="card bg-base-100 shadow-md">
+    <div class="card-body p-5">
+        <h3 class="card-title text-base">{{ title }}</h3>
+        {% if items %}
+        <div class="space-y-3 mt-2">
+            {% for item in items %}
+            <div>
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="font-medium">{{ item.label | title }}</span>
+                    <span class="font-mono opacity-60">{{ "{:,}".format(item.value) }}</span>
+                </div>
+                <div class="w-full bg-base-200 rounded-full h-3">
+                    <div class="h-3 rounded-full transition-all duration-300"
+                         style="width: {{ item.pct }}%; background-color: {{ item.color | default('#6366f1') }};"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm opacity-60">No data available.</p>
+        {% endif %}
+    </div>
+</div>
