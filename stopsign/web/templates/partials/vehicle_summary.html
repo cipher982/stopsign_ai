@@ -1,22 +1,22 @@
 <div id="vehicleSummary">
     {% if summary %}
-    <div class="card-panel p-4">
-        <div class="grid grid-cols-3 gap-4">
-            <div>
-                <div class="text-xs text-txt-2 mb-0.5">Vehicles Classified</div>
-                <div class="text-2xl font-mono font-bold text-txt">{{ "{:,}".format(summary.total_classified) }}</div>
+    <div class="panel">
+        <div class="grid grid-cols-3 divide-x divide-border">
+            <div class="px-5 py-4">
+                <div class="text-xs text-ink-3 mb-1">Vehicles Classified</div>
+                <div class="font-mono text-data-xl text-ink">{{ "{:,}".format(summary.total_classified) }}</div>
             </div>
-            <div>
-                <div class="text-xs text-txt-2 mb-0.5">Unique Clusters</div>
-                <div class="text-2xl font-mono font-bold text-txt">{{ "{:,}".format(summary.cluster_count) }}</div>
+            <div class="px-5 py-4">
+                <div class="text-xs text-ink-3 mb-1">Unique Clusters</div>
+                <div class="font-mono text-data-xl text-ink">{{ "{:,}".format(summary.cluster_count) }}</div>
             </div>
-            <div>
-                <div class="text-xs text-txt-2 mb-0.5">Coverage</div>
-                <div class="text-2xl font-mono font-bold text-accent">{{ summary.coverage_pct }}%</div>
+            <div class="px-5 py-4">
+                <div class="text-xs text-ink-3 mb-1">Coverage</div>
+                <div class="font-mono text-data-xl text-civic">{{ summary.coverage_pct }}%</div>
             </div>
         </div>
     </div>
     {% else %}
-    <p class="text-sm text-txt-3">Vehicle classification data not yet available.</p>
+    <p class="text-sm text-ink-3">Vehicle classification data not yet available.</p>
     {% endif %}
 </div>

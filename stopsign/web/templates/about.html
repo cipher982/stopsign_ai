@@ -7,55 +7,55 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-5 max-w-5xl mx-auto">
+<div class="space-y-6 max-w-5xl mx-auto">
     {# Hero #}
-    <section class="card-panel p-6 sm:p-8">
-        <div class="text-[10px] font-mono uppercase tracking-wider text-accent/60 mb-3">Stop Sign Nanny</div>
-        <h1 class="text-2xl sm:text-3xl font-semibold text-txt leading-tight">Real-time stop sign accountability</h1>
-        <p class="text-sm text-txt-2 mt-3 leading-relaxed max-w-2xl">
+    <section class="panel p-6 sm:p-8 animate-in">
+        <div class="section-label mb-3">Stop Sign Nanny</div>
+        <h1 class="font-display text-2xl sm:text-3xl font-800 text-ink leading-tight">Real-time stop sign accountability</h1>
+        <p class="text-sm text-ink-2 mt-3 leading-relaxed max-w-2xl">
             StopSign AI watches a live intersection feed and detects vehicles with YOLO while
             measuring true stop compliance using capture-time data.
             Every hop in the pipeline is tuned for low latency and instrumented for observability.
         </p>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6">
             {% for m in hero_metrics %}
-            <div class="bg-panel-alt rounded-lg p-4 border border-border">
-                <div class="text-lg font-mono font-semibold text-accent">{{ m.value }}</div>
-                <div class="text-[10px] font-mono text-txt-3 mt-0.5">{{ m.label }}</div>
+            <div class="bg-page rounded-md p-4 border border-border">
+                <div class="font-mono text-data-lg text-civic">{{ m.value }}</div>
+                <div class="text-xs text-ink-3 mt-1">{{ m.label }}</div>
             </div>
             {% endfor %}
         </div>
     </section>
 
     {# Pipeline #}
-    <section class="card-panel p-6">
-        <h2 class="text-base font-semibold text-txt mb-1">Pipeline at a glance</h2>
-        <p class="text-xs text-txt-3 mb-5">
+    <section class="panel p-6 animate-in animate-in-1">
+        <h2 class="font-display text-lg font-700 text-ink mb-1">Pipeline at a glance</h2>
+        <p class="text-xs text-ink-3 mb-5">
             Frames take a deterministic path from the curb to the browser.
             Each boundary is backed by Redis queues, explicit health checks, and
             Prometheus metrics so issues are easy to trace.
         </p>
         <div class="space-y-5">
             <div>
-                <h3 class="text-[10px] font-mono uppercase tracking-wider text-accent/50 mb-3">Main Pipeline</h3>
+                <div class="section-label mb-3">Main Pipeline</div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                     {% for node in pipeline_nodes %}
-                    <div class="bg-panel-alt rounded-lg p-3 border border-border">
-                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent/70">{{ node.badge }}</span>
-                        <h4 class="font-medium text-sm text-txt mt-2">{{ node.name }}</h4>
-                        <p class="text-[11px] text-txt-3 mt-0.5">{{ node.detail }}</p>
+                    <div class="bg-page rounded-md p-3 border border-border">
+                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-civic-light text-civic">{{ node.badge }}</span>
+                        <h4 class="font-medium text-sm text-ink mt-2">{{ node.name }}</h4>
+                        <p class="text-[11px] text-ink-3 mt-0.5">{{ node.detail }}</p>
                     </div>
                     {% endfor %}
                 </div>
             </div>
             <div>
-                <h3 class="text-[10px] font-mono uppercase tracking-wider text-txt-3 mb-3">Support Services</h3>
+                <div class="section-label mb-3">Support Services</div>
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     {% for node in support_nodes %}
-                    <div class="bg-panel-alt rounded-lg p-3 border border-border">
-                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-border text-txt-3">{{ node.badge }}</span>
-                        <h4 class="font-medium text-sm text-txt mt-2">{{ node.name }}</h4>
-                        <p class="text-[11px] text-txt-3 mt-0.5">{{ node.detail }}</p>
+                    <div class="bg-page rounded-md p-3 border border-border">
+                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-page-alt text-ink-3">{{ node.badge }}</span>
+                        <h4 class="font-medium text-sm text-ink mt-2">{{ node.name }}</h4>
+                        <p class="text-[11px] text-ink-3 mt-0.5">{{ node.detail }}</p>
                     </div>
                     {% endfor %}
                 </div>
@@ -64,17 +64,17 @@
     </section>
 
     {# Service Cards #}
-    <section class="card-panel p-6">
-        <h2 class="text-base font-semibold text-txt mb-4">What each service owns</h2>
+    <section class="panel p-6 animate-in animate-in-2">
+        <h2 class="font-display text-lg font-700 text-ink mb-4">What each service owns</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             {% for card in service_cards %}
-            <div class="bg-panel-alt rounded-lg p-4 border border-border">
-                <h3 class="font-mono text-xs font-medium text-accent">{{ card.title }}</h3>
-                <p class="text-[10px] text-txt-3 mb-2">{{ card.subtitle }}</p>
-                <ul class="text-[11px] space-y-1 text-txt-2">
+            <div class="bg-page rounded-md p-4 border border-border">
+                <h3 class="font-mono text-xs font-medium text-civic">{{ card.title }}</h3>
+                <p class="text-[10px] text-ink-3 mb-2">{{ card.subtitle }}</p>
+                <ul class="text-[11px] space-y-1 text-ink-2">
                     {% for item in card["items"] %}
                     <li class="flex items-start gap-1.5">
-                        <span class="text-txt-3 mt-0.5">&rsaquo;</span>
+                        <span class="text-ink-3 mt-0.5">&rsaquo;</span>
                         {{ item }}
                     </li>
                     {% endfor %}
@@ -85,26 +85,26 @@
     </section>
 
     {# Operations #}
-    <section class="card-panel p-6">
-        <h2 class="text-base font-semibold text-txt mb-4">Operational guardrails</h2>
+    <section class="panel p-6">
+        <h2 class="font-display text-lg font-700 text-ink mb-4">Operational guardrails</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-                <h3 class="text-[10px] font-mono uppercase tracking-wider text-accent/50 mb-2">Observability</h3>
-                <ul class="text-[11px] space-y-1.5 text-txt-2">
+                <div class="section-label mb-2">Observability</div>
+                <ul class="text-[11px] space-y-1.5 text-ink-2">
                     {% for item in observability_items %}
                     <li class="flex items-start gap-1.5">
-                        <span class="text-txt-3 mt-0.5">&rsaquo;</span>
+                        <span class="text-ink-3 mt-0.5">&rsaquo;</span>
                         {{ item }}
                     </li>
                     {% endfor %}
                 </ul>
             </div>
             <div>
-                <h3 class="text-[10px] font-mono uppercase tracking-wider text-accent/50 mb-2">Resilience</h3>
-                <ul class="text-[11px] space-y-1.5 text-txt-2">
+                <div class="section-label mb-2">Resilience</div>
+                <ul class="text-[11px] space-y-1.5 text-ink-2">
                     {% for item in resilience_items %}
                     <li class="flex items-start gap-1.5">
-                        <span class="text-txt-3 mt-0.5">&rsaquo;</span>
+                        <span class="text-ink-3 mt-0.5">&rsaquo;</span>
                         {{ item }}
                     </li>
                     {% endfor %}
@@ -114,16 +114,16 @@
     </section>
 
     {# Developer #}
-    <section class="card-panel p-6">
-        <h2 class="text-base font-semibold text-txt mb-1">Build & extend it</h2>
-        <p class="text-xs text-txt-3 mb-3">
+    <section class="panel p-6">
+        <h2 class="font-display text-lg font-700 text-ink mb-1">Build & extend it</h2>
+        <p class="text-xs text-ink-3 mb-3">
             The repository doubles as a reference implementation for real-time computer
             vision pipelines.
         </p>
-        <ul class="text-[11px] space-y-1.5 text-txt-2">
+        <ul class="text-[11px] space-y-1.5 text-ink-2">
             {% for item in developer_items %}
             <li class="flex items-start gap-1.5">
-                <span class="text-txt-3 mt-0.5">&rsaquo;</span>
+                <span class="text-ink-3 mt-0.5">&rsaquo;</span>
                 {{ item }}
             </li>
             {% endfor %}
@@ -131,15 +131,15 @@
     </section>
 
     {# CTA #}
-    <section class="card-panel p-6 text-center">
-        <h2 class="text-base font-semibold text-txt">Next steps</h2>
-        <p class="text-xs text-txt-3 mt-1 mb-4">
+    <section class="panel p-6 text-center">
+        <h2 class="font-display text-lg font-700 text-ink">Next steps</h2>
+        <p class="text-xs text-ink-3 mt-1 mb-4">
             Explore the code, adapt the stop-zone logic to your intersection, or plug in
             new models.
         </p>
         <a href="https://github.com/cipher982/stopsign_ai" target="_blank"
            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium
-                  bg-accent text-bg hover:bg-accent-dim transition-colors">
+                  bg-civic text-white hover:bg-civic-dim transition-colors">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
             View on GitHub
         </a>

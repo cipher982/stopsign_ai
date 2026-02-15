@@ -4,20 +4,20 @@
 
 {% block content %}
 <div class="space-y-5 max-w-3xl mx-auto">
-    <h1 class="text-lg font-semibold text-txt">Performance Debugging</h1>
+    <h1 class="font-display text-xl font-700 text-ink">Performance Debugging</h1>
 
-    <div class="card-panel p-5">
+    <div class="panel p-5">
         <button hx-get="/debug-performance"
                 hx-target="#perf-results"
                 hx-indicator="#loading"
-                class="px-3 py-1.5 text-xs font-mono rounded bg-accent/20 text-accent border border-accent/30 hover:bg-accent/30 transition-colors">
+                class="px-3 py-1.5 text-xs font-mono rounded bg-civic-light text-civic border border-civic/20 hover:bg-civic/10 transition-colors">
             Run Performance Test
         </button>
         <div id="loading" class="htmx-indicator mt-2">
-            <svg class="w-4 h-4 animate-spin text-txt-3 inline mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-            <span class="text-xs text-txt-3">Running...</span>
+            <svg class="w-4 h-4 animate-spin text-ink-3 inline mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            <span class="text-xs text-ink-3">Running...</span>
         </div>
-        <pre class="bg-bg rounded-md p-4 mt-4 text-[11px] font-mono text-txt-2 overflow-auto max-h-96 border border-border">
+        <pre class="bg-page rounded-md p-4 mt-4 text-[11px] font-mono text-ink-2 overflow-auto max-h-96 border border-border">
             <code id="perf-results"></code>
         </pre>
     </div>

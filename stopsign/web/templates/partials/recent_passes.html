@@ -1,5 +1,13 @@
 <div id="recentPasses">
-    <div id="passes-list" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+    {# Table header #}
+    <div class="data-row grid-cols-[48px_1fr_100px_100px_80px] text-xs font-mono text-ink-3 !border-b-border !py-2" style="grid-template-columns: 48px 1fr 100px 100px 80px;">
+        <span></span>
+        <span>Time</span>
+        <span>Speed</span>
+        <span>Duration</span>
+        <span></span>
+    </div>
+    <div id="passes-list">
         {% for item in passes %}
         {% include "partials/pass_item.html" %}
         {% endfor %}

@@ -7,21 +7,21 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-4">
-    <div class="flex items-center gap-3">
-        <h1 class="text-lg font-semibold text-txt">Vehicle Records</h1>
-        <span class="text-xs font-mono px-2 py-0.5 rounded bg-accent/10 text-accent border border-accent/20">7 DAYS</span>
+<div class="space-y-5">
+    <div class="flex items-baseline gap-3">
+        <h1 class="font-display text-xl font-700 text-ink">Vehicle Records</h1>
+        <span class="section-label bg-civic-light text-civic px-2 py-0.5 rounded">7 Days</span>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div id="worstPasses" hx-get="/api/worst-passes" hx-trigger="load">
-            <div class="card-panel p-6 flex items-center justify-center min-h-[300px]">
-                <span class="text-txt-3 text-sm">Loading worst passes...</span>
+        <div id="worstPasses" hx-get="/api/worst-passes" hx-trigger="load" class="animate-in">
+            <div class="panel p-6 flex items-center justify-center min-h-[300px]">
+                <span class="text-ink-3 text-sm">Loading worst passes...</span>
             </div>
         </div>
-        <div id="bestPasses" hx-get="/api/best-passes" hx-trigger="load">
-            <div class="card-panel p-6 flex items-center justify-center min-h-[300px]">
-                <span class="text-txt-3 text-sm">Loading best passes...</span>
+        <div id="bestPasses" hx-get="/api/best-passes" hx-trigger="load" class="animate-in animate-in-1">
+            <div class="panel p-6 flex items-center justify-center min-h-[300px]">
+                <span class="text-ink-3 text-sm">Loading best passes...</span>
             </div>
         </div>
     </div>

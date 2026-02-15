@@ -25,10 +25,10 @@
     {# JSON-LD structured data #}
     {% block json_ld %}{% endblock %}
 
-    {# Fonts #}
+    {# Fonts — Bricolage Grotesque (display) + Source Sans 3 (body) + JetBrains Mono (data) #}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Source+Sans+3:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     {# Tailwind CSS via CDN #}
     <script src="https://cdn.tailwindcss.com"></script>
@@ -37,23 +37,35 @@
             theme: {
                 extend: {
                     colors: {
-                        bg: '#0f1117',
-                        panel: '#1a1d27',
-                        'panel-alt': '#222633',
-                        border: '#2a2e3a',
-                        'border-light': '#353a48',
-                        accent: '#f0b429',
-                        'accent-dim': '#c89318',
-                        'txt': '#e8eaed',
-                        'txt-2': '#9ba1b0',
-                        'txt-3': '#6b7185',
-                        'v-red': '#f44336',
-                        'v-green': '#4caf50',
-                        'v-amber': '#ff9800',
+                        surface: '#FFFFFF',
+                        page: '#F7F7F5',
+                        'page-alt': '#EFEEEB',
+                        border: '#E2E1DC',
+                        'border-strong': '#C8C7C1',
+                        ink: '#1A1A18',
+                        'ink-2': '#5C5C58',
+                        'ink-3': '#8A8A85',
+                        civic: '#1E40AF',
+                        'civic-light': '#EFF6FF',
+                        'civic-dim': '#1E3A8A',
+                        signal: {
+                            red: '#B91C1C',
+                            green: '#15803D',
+                            amber: '#B45309',
+                            'red-bg': '#FEF2F2',
+                            'green-bg': '#F0FDF4',
+                            'amber-bg': '#FFFBEB',
+                        },
                     },
                     fontFamily: {
-                        sans: ['DM Sans', 'system-ui', 'sans-serif'],
-                        mono: ['IBM Plex Mono', 'monospace'],
+                        display: ['"Bricolage Grotesque"', 'Georgia', 'serif'],
+                        body: ['"Source Sans 3"', 'system-ui', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'monospace'],
+                    },
+                    fontSize: {
+                        'data-xl': ['2rem', { lineHeight: '1', fontWeight: '500', letterSpacing: '-0.02em' }],
+                        'data-lg': ['1.5rem', { lineHeight: '1', fontWeight: '500', letterSpacing: '-0.01em' }],
+                        'data-sm': ['0.8125rem', { lineHeight: '1.2', fontWeight: '400' }],
                     },
                 },
             },
@@ -70,47 +82,111 @@
 
     <style>
         body {
-            font-family: 'DM Sans', system-ui, sans-serif;
-            background: #0f1117;
-            color: #e8eaed;
+            font-family: 'Source Sans 3', system-ui, sans-serif;
+            background: #F7F7F5;
+            color: #1A1A18;
         }
 
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline; }
         .htmx-request.htmx-indicator { display: inline; }
 
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #0f1117; }
-        ::-webkit-scrollbar-thumb { background: #353a48; border-radius: 4px; }
-
-        .card-panel {
-            background: #1a1d27;
-            border: 1px solid #2a2e3a;
-            border-radius: 10px;
+        /* Subtle noise grain on page background */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+            z-index: 9999;
         }
 
-        @keyframes pulse-live {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
+        /* Refined scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #C8C7C1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #8A8A85; }
+
+        /* Panel — clean, flat, warm */
+        .panel {
+            background: #FFFFFF;
+            border: 1px solid #E2E1DC;
+            border-radius: 6px;
         }
-        .live-pulse { animation: pulse-live 2s ease-in-out infinite; }
+
+        /* Staggered entrance animation */
+        @keyframes fade-up {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-in {
+            animation: fade-up 0.4s ease-out both;
+        }
+        .animate-in-1 { animation-delay: 0.05s; }
+        .animate-in-2 { animation-delay: 0.1s; }
+        .animate-in-3 { animation-delay: 0.15s; }
+
+        /* Live indicator */
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.85); }
+        }
+        .live-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: #15803D;
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+
+        /* Data table rows */
+        .data-row {
+            display: grid;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid #EFEEEB;
+            transition: background-color 0.15s;
+        }
+        .data-row:hover {
+            background: #FAFAF8;
+        }
+        .data-row:last-child {
+            border-bottom: none;
+        }
+
+        /* Section label */
+        .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6875rem;
+            font-weight: 500;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #8A8A85;
+        }
+
+        /* Accent underline for nav */
+        .nav-active {
+            color: #1E40AF;
+            box-shadow: inset 0 -2px 0 #1E40AF;
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col antialiased">
-    {# Navbar — compact, functional #}
-    <nav class="bg-panel border-b border-border sticky top-0 z-50">
-        <div class="max-w-[1400px] mx-auto px-4 h-12 flex items-center justify-between">
-            <a href="/" class="flex items-center gap-2 group">
-                <div class="w-2 h-2 rounded-full bg-v-green live-pulse"></div>
-                <span class="font-bold text-sm text-txt group-hover:text-accent transition-colors tracking-tight">STOP SIGN NANNY</span>
+    {# Navbar — editorial, light #}
+    <nav class="bg-surface border-b border-border sticky top-0 z-50">
+        <div class="max-w-[1200px] mx-auto px-5 h-14 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2.5 group">
+                <div class="live-dot"></div>
+                <span class="font-display text-base font-700 text-ink tracking-tight group-hover:text-civic transition-colors">Stop Sign Nanny</span>
             </a>
 
-            <div class="hidden md:flex items-center gap-0.5">
+            <div class="hidden md:flex items-center gap-1">
                 {% set nav_items = [('/', 'home', 'Home'), ('/records', 'records', 'Records'), ('/vehicles', 'vehicles', 'Vehicles'), ('/about', 'about', 'About')] %}
                 {% for href, page, label in nav_items %}
                 <a href="{{ href }}"
-                   class="px-3 py-1 text-sm font-medium rounded-md transition-colors
-                          {% if active_page == page %}bg-panel-alt text-accent{% else %}text-txt-2 hover:text-txt hover:bg-panel-alt{% endif %}">
+                   class="px-3 py-4 text-sm font-medium transition-colors
+                          {% if active_page == page %}nav-active{% else %}text-ink-2 hover:text-ink{% endif %}">
                     {{ label }}
                 </a>
                 {% endfor %}
@@ -118,30 +194,30 @@
 
             <div class="flex items-center gap-3">
                 <a href="https://github.com/cipher982/stopsign_ai" target="_blank"
-                   class="text-txt-3 hover:text-txt-2 transition-colors">
+                   class="text-ink-3 hover:text-ink-2 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                 </a>
                 <button onclick="document.getElementById('mobileMenu').classList.toggle('hidden')"
-                        class="md:hidden text-txt-2">
+                        class="md:hidden text-ink-2">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h8m-8 6h16" /></svg>
                 </button>
             </div>
         </div>
-        <div id="mobileMenu" class="hidden md:hidden border-t border-border bg-panel pb-2">
+        <div id="mobileMenu" class="hidden md:hidden border-t border-border bg-surface pb-2">
             {% for href, page, label in nav_items %}
-            <a href="{{ href }}" class="block px-4 py-2 text-sm {% if active_page == page %}text-accent{% else %}text-txt-2{% endif %}">{{ label }}</a>
+            <a href="{{ href }}" class="block px-5 py-2.5 text-sm font-medium {% if active_page == page %}text-civic{% else %}text-ink-2{% endif %}">{{ label }}</a>
             {% endfor %}
         </div>
     </nav>
 
-    <main class="flex-1 max-w-[1400px] mx-auto w-full px-4 py-4">
+    <main class="flex-1 max-w-[1200px] mx-auto w-full px-5 py-5">
         {% block content %}{% endblock %}
     </main>
 
-    <footer class="border-t border-border py-3">
-        <div class="max-w-[1400px] mx-auto px-4 flex items-center justify-between text-xs text-txt-3 font-mono">
-            <span>David Rose</span>
-            <span>Crestwood &middot; STL</span>
+    <footer class="border-t border-border bg-surface mt-8">
+        <div class="max-w-[1200px] mx-auto px-5 py-4 flex items-center justify-between text-xs text-ink-3">
+            <span class="font-body">David Rose</span>
+            <span class="font-mono text-[11px]">Crestwood &middot; STL</span>
         </div>
     </footer>
 
