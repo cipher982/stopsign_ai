@@ -3,7 +3,7 @@
    style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #d0d0d0; text-decoration: none; color: inherit;"
    title="{{ item.time_absolute }}">
     <img src="{{ item.image_url }}" alt="Vehicle pass {{ item.time_str }}{% if item.badge_text %} — {{ item.badge_text }}{% endif %}"
-         style="width: 80px; height: 56px; object-fit: cover; display: block; flex-shrink: 0; border: 1px solid #ccc;"
+         style="width: 80px; object-fit: contain; display: block; flex-shrink: 0; border: 1px solid #ccc; background: #f0f0f0;"
          loading="lazy" decoding="async">
     <div style="flex: 1; min-width: 0;">
         <div style="font-size: 16px; font-weight: 700;">{{ item.time_str }}</div>

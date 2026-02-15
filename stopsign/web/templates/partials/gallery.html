@@ -12,7 +12,7 @@
             {% for item in items %}
             <div style="border: 1px solid #e0e0e0; background: #fff; position: relative;">
                 <img src="{{ item.image_url }}" alt="{{ item.label }}"
-                     style="width: 100%; aspect-ratio: 1; object-fit: cover; display: block;"
+                     style="width: 100%; object-fit: contain; display: block; background: #f0f0f0;"
                      loading="lazy">
                 <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); padding: 2px 3px;">
                     <div style="font-size: 9px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ item.label }}</div>
