@@ -182,7 +182,7 @@ async def get_worst_passes(request: Request):
             "partials/pass_list.html",
             {
                 "request": request,
-                "title": "Worst Passes (7 Days)",
+                "title": "Worst Passes — Last 7 Days",
                 "div_id": "worstPasses",
                 "speed_passes": [_format_pass_item(p, vehicle_attrs) for p in worst_speed_passes],
                 "time_passes": [_format_pass_item(p, vehicle_attrs) for p in worst_time_passes],
@@ -211,7 +211,7 @@ async def get_best_passes(request: Request):
             "partials/pass_list.html",
             {
                 "request": request,
-                "title": "Best Passes (7 Days)",
+                "title": "Best Passes — Last 7 Days",
                 "div_id": "bestPasses",
                 "speed_passes": [_format_pass_item(p, vehicle_attrs) for p in best_speed_passes],
                 "time_passes": [_format_pass_item(p, vehicle_attrs) for p in best_time_passes],

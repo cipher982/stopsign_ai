@@ -7,13 +7,13 @@
 {% endblock %}
 
 {% block content %}
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+<div class="records-grid">
     <div id="worstPasses" hx-get="/api/worst-passes" hx-trigger="load">
         <div class="window">
             <div class="title-bar">
                 <span class="title-bar-text">Loading...</span>
             </div>
-            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px;">
+            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-muted);">
                 Loading worst passes...
             </div>
         </div>
@@ -23,20 +23,10 @@
             <div class="title-bar title-bar-inactive">
                 <span class="title-bar-text">Loading...</span>
             </div>
-            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px;">
+            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-muted);">
                 Loading best passes...
             </div>
         </div>
     </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<style>
-    @media (max-width: 768px) {
-        div[style*="grid-template-columns: 1fr 1fr"] {
-            grid-template-columns: 1fr !important;
-        }
-    }
-</style>
 {% endblock %}

@@ -11,127 +11,144 @@
     <div class="title-bar">
         <span class="title-bar-text">About - Stop Sign Nanny</span>
         <div class="title-bar-controls">
-            <button>&#9472;</button>
-            <button>&#9723;</button>
-            <button>&#10005;</button>
+            <button aria-hidden="true" tabindex="-1">&#9472;</button>
+            <button aria-hidden="true" tabindex="-1">&#9723;</button>
+            <button aria-hidden="true" tabindex="-1">&#10005;</button>
         </div>
     </div>
-    <div class="window-body" style="max-height: calc(100vh - 120px); overflow-y: auto; font-size: 13px; line-height: 1.6;">
-        {# Hero #}
+    <div class="window-body about-body" style="max-height: calc(100vh - 120px); overflow-y: auto;">
+        {# Community Story — leads the page #}
         <div style="margin-bottom: 16px;">
-            <div class="mono" style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Stop Sign Nanny</div>
-            <h1 style="font-size: 20px; font-weight: 800; margin: 0 0 8px;">Real-time stop sign accountability</h1>
-            <p style="color: var(--text-secondary); font-size: 13px; max-width: 580px;">
-                An AI system that watches a live intersection feed, detects vehicles with YOLO,
-                and measures true stop compliance using capture-time data. Every hop in the pipeline
-                is tuned for low latency and instrumented for observability.
+            <div class="mono about-label">Stop Sign Nanny</div>
+            <h1 class="about-hero-title">Making our neighborhood safer, one stop at a time</h1>
+            <p style="color: var(--text-secondary); max-width: 580px;">
+                At the Crestwood intersection in south St. Louis, drivers regularly blow through the stop sign.
+                Neighbors have complained for years but data was anecdotal. Stop Sign Nanny changes that: an AI camera
+                watches the intersection 24/7, measures whether each vehicle actually stops, and publishes the results
+                for everyone to see.
             </p>
+            <p style="color: var(--text-secondary); max-width: 580px; margin-top: 8px;">
+                The goal is simple: give the neighborhood real numbers to take to the city.
+                When 40% of cars don't stop, that's not a feeling &mdash; it's a fact.
+            </p>
+        </div>
+
+        {# What the stats mean #}
+        <div class="raised" style="padding: 10px 12px; margin-bottom: 16px;">
+            <div class="about-section-title" style="margin-bottom: 6px;">Understanding the data</div>
+            <ul class="about-list" style="margin-bottom: 0;">
+                <li><strong>Compliance rate</strong> &mdash; percentage of vehicles that stop for at least 2 seconds in the stop zone (based on the last 100 passes).</li>
+                <li><strong>Speed value</strong> &mdash; relative motion score from the AI tracker. Lower numbers mean the vehicle slowed down more. Not miles per hour.</li>
+                <li><strong>Time in zone</strong> &mdash; how many seconds the vehicle spent inside the stop zone. Longer is better.</li>
+                <li><strong>"Best" passes</strong> &mdash; vehicles that stopped the longest or moved the slowest. Doing the right thing.</li>
+                <li><strong>"Worst" passes</strong> &mdash; vehicles that blew through fastest or spent the least time stopped.</li>
+            </ul>
         </div>
 
         {# Hero metrics #}
         {% if hero_metrics %}
         <div style="display: flex; gap: 8px; margin-bottom: 16px;">
             {% for m in hero_metrics %}
-            <div class="raised" style="padding: 6px 10px; flex: 1;">
-                <div class="mono" style="font-size: 16px; font-weight: 700;">{{ m.value }}</div>
-                <div style="font-size: 11px; color: var(--text-muted);">{{ m.label }}</div>
+            <div class="raised" style="padding: 8px 12px; flex: 1;">
+                <div class="mono" style="font-size: 18px; font-weight: 700;">{{ m.value }}</div>
+                <div style="font-size: 12px; color: var(--text-muted);">{{ m.label }}</div>
             </div>
             {% endfor %}
         </div>
         {% endif %}
 
-        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 12px 0;">
+        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 16px 0;">
 
-        {# Pipeline #}
-        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 4px;">Pipeline</h2>
-        <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 8px;">
-            Frames take a deterministic path from curb to browser. Each boundary is backed
+        {# Technical: Pipeline #}
+        <h2 class="about-section-title">How it works</h2>
+        <p style="color: var(--text-muted); margin: 0 0 8px;">
+            Frames travel a deterministic path from curb to browser. Each boundary is backed
             by Redis queues, health checks, and Prometheus metrics.
         </p>
 
         <div style="margin-bottom: 12px;">
-            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="mono">Main Pipeline</div>
+            <div class="mono about-label">Main Pipeline</div>
             <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;">
                 {% for node in pipeline_nodes %}
                 <div class="raised" style="padding: 6px;">
-                    <span class="mono" style="font-size: 9px; background: rgba(31,58,147,0.15); color: #1F3A93; padding: 1px 4px;">{{ node.badge }}</span>
-                    <div style="font-size: 12px; font-weight: 600; margin-top: 3px;">{{ node.name }}</div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">{{ node.detail }}</div>
+                    <span class="about-badge about-badge-blue">{{ node.badge }}</span>
+                    <div style="font-size: 13px; font-weight: 600; margin-top: 3px;">{{ node.name }}</div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">{{ node.detail }}</div>
                 </div>
                 {% endfor %}
             </div>
         </div>
 
         <div style="margin-bottom: 12px;">
-            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="mono">Support Services</div>
+            <div class="mono about-label">Support Services</div>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;">
                 {% for node in support_nodes %}
                 <div class="raised" style="padding: 6px;">
-                    <span class="mono" style="font-size: 9px; background: #e0e0e0; color: var(--text-secondary); padding: 1px 4px;">{{ node.badge }}</span>
-                    <div style="font-size: 12px; font-weight: 600; margin-top: 3px;">{{ node.name }}</div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">{{ node.detail }}</div>
+                    <span class="about-badge about-badge-grey">{{ node.badge }}</span>
+                    <div style="font-size: 13px; font-weight: 600; margin-top: 3px;">{{ node.name }}</div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">{{ node.detail }}</div>
                 </div>
                 {% endfor %}
             </div>
         </div>
 
-        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 12px 0;">
+        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 16px 0;">
 
         {# Services #}
-        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 8px;">Services</h2>
+        <h2 class="about-section-title" style="margin-bottom: 8px;">Services</h2>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px;">
             {% for card in service_cards %}
             <div class="raised" style="padding: 8px;">
-                <div class="mono" style="font-size: 12px; font-weight: 600; color: #1F3A93;">{{ card.title }}</div>
-                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">{{ card.subtitle }}</div>
-                <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
+                <div class="about-card-title">{{ card.title }}</div>
+                <div class="about-card-subtitle">{{ card.subtitle }}</div>
+                <ul class="about-list">
                     {% for item in card["items"] %}
-                    <li style="margin-bottom: 2px;">{{ item }}</li>
+                    <li>{{ item }}</li>
                     {% endfor %}
                 </ul>
             </div>
             {% endfor %}
         </div>
 
-        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 12px 0;">
+        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 16px 0;">
 
         {# Operations #}
-        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 8px;">Operational Guardrails</h2>
+        <h2 class="about-section-title" style="margin-bottom: 8px;">Operational Guardrails</h2>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
             <div>
-                <div class="mono" style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Observability</div>
-                <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
+                <div class="mono about-label">Observability</div>
+                <ul class="about-list">
                     {% for item in observability_items %}
-                    <li style="margin-bottom: 2px;">{{ item }}</li>
+                    <li>{{ item }}</li>
                     {% endfor %}
                 </ul>
             </div>
             <div>
-                <div class="mono" style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Resilience</div>
-                <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
+                <div class="mono about-label">Resilience</div>
+                <ul class="about-list">
                     {% for item in resilience_items %}
-                    <li style="margin-bottom: 2px;">{{ item }}</li>
+                    <li>{{ item }}</li>
                     {% endfor %}
                 </ul>
             </div>
         </div>
 
-        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 12px 0;">
+        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 16px 0;">
 
         {# Developer #}
-        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 4px;">Build & Extend</h2>
-        <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 6px;">
+        <h2 class="about-section-title">Build & Extend</h2>
+        <p style="color: var(--text-muted); margin: 0 0 6px;">
             The repository doubles as a reference implementation for real-time computer vision pipelines.
         </p>
-        <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
+        <ul class="about-list">
             {% for item in developer_items %}
-            <li style="margin-bottom: 2px;">{{ item }}</li>
+            <li>{{ item }}</li>
             {% endfor %}
         </ul>
 
         {# CTA #}
         <div style="text-align: center; margin-top: 16px; padding: 8px 0;">
-            <a href="https://github.com/cipher982/stopsign_ai" target="_blank" class="btn98 btn98-primary" style="font-size: 13px; padding: 4px 16px;">
+            <a href="https://github.com/cipher982/stopsign_ai" target="_blank" class="btn98 btn98-primary" style="padding: 4px 16px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                 View on GitHub
             </a>
