@@ -1,27 +1,27 @@
-{# Vehicle pass card — image-forward design #}
-<div class="group bg-bg-raised rounded-xl border border-line overflow-hidden hover:border-line-strong transition-all">
+{# Vehicle pass card — compact, image-forward #}
+<div class="group bg-bg-raised rounded-lg border border-line overflow-hidden hover:border-line-strong transition-all">
     <div class="relative">
         <img src="{{ item.image_url }}" alt="Vehicle"
-             class="w-full aspect-[4/3] object-cover bg-bg-active group-hover:scale-[1.03] transition-transform duration-300"
+             class="w-full aspect-[16/10] object-cover bg-bg-active group-hover:scale-[1.03] transition-transform duration-300"
              loading="lazy" decoding="async">
         {% if item.clip_url %}
         <a href="{{ item.clip_url }}" target="_blank"
-           class="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-t1 text-xs font-mono px-2 py-1 rounded-lg hover:bg-black/80 transition-colors">
+           class="absolute top-1.5 right-1.5 bg-black/60 backdrop-blur-sm text-t1 text-[10px] font-mono px-1.5 py-0.5 rounded hover:bg-black/80 transition-colors">
             Replay
         </a>
         {% endif %}
     </div>
-    <div class="p-3 space-y-1.5">
-        <div class="text-sm font-medium text-t1">{{ item.time_str }}</div>
-        <div class="flex items-center justify-between text-xs">
-            <span class="flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {{ item.speed_color }};"></span>
-                <span class="font-mono text-t2">{{ "%.1f"|format(item.min_speed) }} <span class="text-t3">px/s</span></span>
+    <div class="px-2.5 py-2 flex items-center justify-between text-[11px]">
+        <span class="font-medium text-t1">{{ item.time_str }}</span>
+        <span class="flex items-center gap-2.5 font-mono">
+            <span class="flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: {{ item.speed_color }};"></span>
+                <span class="text-t2">{{ "%.1f"|format(item.min_speed) }}</span>
             </span>
-            <span class="flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {{ item.time_color }};"></span>
-                <span class="font-mono text-t2">{{ "%.1f"|format(item.time_in_zone) }} <span class="text-t3">sec</span></span>
+            <span class="flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: {{ item.time_color }};"></span>
+                <span class="text-t2">{{ "%.1f"|format(item.time_in_zone) }}s</span>
             </span>
-        </div>
+        </span>
     </div>
 </div>
