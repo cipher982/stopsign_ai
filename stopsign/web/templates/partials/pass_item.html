@@ -1,14 +1,15 @@
 {# Vehicle pass row — image left, large text right, fills its box #}
 <a href="{{ item.clip_url or '#' }}" {% if item.clip_url %}target="_blank"{% endif %}
-   style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #d0d0d0; text-decoration: none; color: inherit;">
-    <img src="{{ item.image_url }}" alt=""
+   class="pass-item"
+   title="{{ item.time_absolute }}">
+    <img src="{{ item.image_url }}" alt="Vehicle pass {{ item.time_str }}{% if item.badge_text %} — {{ item.badge_text }}{% endif %}"
          style="width: 80px; height: 56px; object-fit: cover; display: block; flex-shrink: 0; border: 1px solid #ccc;"
          loading="lazy" decoding="async">
     <div style="flex: 1; min-width: 0;">
-        <div style="font-size: 16px; font-weight: 700;">{{ item.time_str }}</div>
+        <div class="pass-item-time">{{ item.time_str }}</div>
         <div style="display: flex; gap: 12px; margin-top: 2px;">
-            <span class="mono" style="font-size: 15px;"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }} mph</span>
-            <span class="mono" style="font-size: 15px;"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
+            <span class="mono pass-item-metric"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }}</span>
+            <span class="mono pass-item-metric"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
         </div>
     </div>
 </a>

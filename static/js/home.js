@@ -4,23 +4,23 @@
  */
 
 function updateLiveStats(data) {
-    if (data.complianceData) {
-        document.getElementById('complianceRate').textContent = data.complianceData;
+    if (data.compliance) {
+        document.getElementById('complianceRate').textContent = data.compliance;
     }
-    if (data.violationData) {
-        document.getElementById('violationCount').textContent = data.violationData;
+    if (data.violations) {
+        document.getElementById('violationCount').textContent = data.violations;
     }
-    if (data.vehicleData) {
-        document.getElementById('vehicleCount').textContent = data.vehicleData;
+    if (data.vehicles) {
+        document.getElementById('vehicleCount').textContent = data.vehicles;
     }
-    if (data.lastDetectionData) {
-        document.getElementById('lastDetection').textContent = data.lastDetectionData;
+    if (data.lastDetection) {
+        document.getElementById('lastDetection').textContent = data.lastDetection;
     }
-    if (data.trendData) {
-        document.getElementById('trendArrow').textContent = data.trendData;
+    if (data.trend) {
+        document.getElementById('trendArrow').textContent = data.trend;
     }
-    if (data.insightData) {
-        document.getElementById('rotatingInsight').textContent = data.insightData;
+    if (data.insight) {
+        document.getElementById('rotatingInsight').textContent = data.insight;
     }
 }
 
@@ -29,26 +29,26 @@ document.addEventListener('htmx:afterRequest', function(event) {
         return;
     }
 
-    const requestUrl = event.detail.xhr.responseURL || '';
+    var requestUrl = event.detail.xhr.responseURL || '';
     if (!requestUrl.includes('/api/live-stats')) {
         return;
     }
 
-    const response = event.detail.xhr.response;
+    var response = event.detail.xhr.response;
     if (!response) {
         return;
     }
 
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(response, 'text/html');
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(response, 'text/html');
 
-    const statsData = {
-        complianceData: doc.getElementById('complianceData')?.textContent,
-        violationData: doc.getElementById('violationData')?.textContent,
-        vehicleData: doc.getElementById('vehicleData')?.textContent,
-        lastDetectionData: doc.getElementById('lastDetectionData')?.textContent,
-        trendData: doc.getElementById('trendData')?.textContent,
-        insightData: doc.getElementById('insightData')?.textContent,
+    var statsData = {
+        compliance: doc.querySelector('[data-stat="compliance"]')?.textContent,
+        violations: doc.querySelector('[data-stat="violations"]')?.textContent,
+        vehicles: doc.querySelector('[data-stat="vehicles"]')?.textContent,
+        lastDetection: doc.querySelector('[data-stat="lastDetection"]')?.textContent,
+        trend: doc.querySelector('[data-stat="trend"]')?.textContent,
+        insight: doc.querySelector('[data-stat="insight"]')?.textContent,
     };
 
     updateLiveStats(statsData);

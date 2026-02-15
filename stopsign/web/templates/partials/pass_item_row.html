@@ -1,0 +1,15 @@
+{# Vehicle pass table row — valid inside <tbody> #}
+<tr class="pass-row" title="{{ item.time_absolute }}">
+    <td>
+        <img src="{{ item.image_url }}" alt="Vehicle pass {{ item.time_str }}{% if item.badge_text %} — {{ item.badge_text }}{% endif %}"
+             class="thumb" loading="lazy" decoding="async">
+    </td>
+    <td class="pass-item-time">{{ item.time_str }}</td>
+    <td class="mono"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }}</td>
+    <td class="mono"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</td>
+    <td>
+        {% if item.clip_url %}
+        <a href="{{ item.clip_url }}" target="_blank" class="btn98" style="font-size: 11px; padding: 1px 6px;">View</a>
+        {% endif %}
+    </td>
+</tr>

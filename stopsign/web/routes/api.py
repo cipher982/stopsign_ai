@@ -35,9 +35,24 @@ def _format_pass_item(pass_data, vehicle_attrs=None):
     if hasattr(pass_data, "timestamp") and pass_data.timestamp:
         utc_time = pass_data.timestamp.replace(tzinfo=ZoneInfo("UTC"))
         chicago_time = utc_time.astimezone(ZoneInfo("America/Chicago"))
-        time_str = chicago_time.strftime("%H:%M:%S")
+        # Relative time for display
+        seconds_ago = int(time.time() - utc_time.timestamp())
+        if seconds_ago < 60:
+            time_str = "just now"
+        elif seconds_ago < 3600:
+            mins = seconds_ago // 60
+            time_str = f"{mins} min{'s' if mins != 1 else ''} ago"
+        elif seconds_ago < 86400:
+            hrs = seconds_ago // 3600
+            time_str = f"{hrs} hr{'s' if hrs != 1 else ''} ago"
+        else:
+            days = seconds_ago // 86400
+            time_str = f"{days} day{'s' if days != 1 else ''} ago"
+        # Keep absolute time for tooltip
+        time_absolute = chicago_time.strftime("%-I:%M %p")
     else:
         time_str = "N/A"
+        time_absolute = ""
 
     badge_text = ""
     if vehicle_attrs and hasattr(pass_data, "id"):
@@ -61,6 +76,7 @@ def _format_pass_item(pass_data, vehicle_attrs=None):
     return {
         "image_url": image_url,
         "time_str": time_str,
+        "time_absolute": time_absolute,
         "min_speed": pass_data.min_speed,
         "time_in_zone": pass_data.time_in_zone,
         "speed_color": get_speed_color(pass_data.min_speed),

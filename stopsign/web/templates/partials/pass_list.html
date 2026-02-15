@@ -2,17 +2,17 @@
     <div class="title-bar {% if 'Best' in title %}title-bar-inactive{% endif %}">
         <span class="title-bar-text">{{ title }}</span>
         <div class="title-bar-controls">
-            <button>&#9472;</button>
-            <button>&#9723;</button>
+            <button aria-hidden="true" tabindex="-1">&#9472;</button>
+            <button aria-hidden="true" tabindex="-1">&#9723;</button>
         </div>
     </div>
     <div class="window-body" style="padding: 4px;">
-        <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">By Speed</div>
+        <div class="pass-list-label">By Speed</div>
         <table class="data-table">
             <thead>
                 <tr>
                     <th style="width: 50px;"></th>
-                    <th>Time</th>
+                    <th>When</th>
                     <th>Speed</th>
                     <th>Duration</th>
                     <th style="width: 50px;"></th>
@@ -20,17 +20,17 @@
             </thead>
             <tbody>
                 {% for item in speed_passes %}
-                {% include "partials/pass_item.html" %}
+                {% include "partials/pass_item_row.html" %}
                 {% endfor %}
             </tbody>
         </table>
 
-        <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin: 8px 0 4px;">By Time in Zone</div>
+        <div class="pass-list-label" style="margin-top: 8px;">By Time in Zone</div>
         <table class="data-table">
             <thead>
                 <tr>
                     <th style="width: 50px;"></th>
-                    <th>Time</th>
+                    <th>When</th>
                     <th>Speed</th>
                     <th>Duration</th>
                     <th style="width: 50px;"></th>
@@ -38,7 +38,7 @@
             </thead>
             <tbody>
                 {% for item in time_passes %}
-                {% include "partials/pass_item.html" %}
+                {% include "partials/pass_item_row.html" %}
                 {% endfor %}
             </tbody>
         </table>
