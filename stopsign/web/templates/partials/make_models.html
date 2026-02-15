@@ -1,20 +1,28 @@
-<div id="vehicleMakeModels">
-    <h3 class="text-lg font-bold text-t1 mb-4">Top Make / Models</h3>
-    {% if items %}
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-        {% for item in items %}
-        <div class="group bg-bg-raised rounded-xl border border-line overflow-hidden hover:border-line-strong transition-colors">
-            <img src="{{ item.image_url }}" alt="{{ item.make_model }}"
-                 class="w-full aspect-[4/3] object-cover bg-bg-active group-hover:scale-[1.03] transition-transform duration-300"
-                 loading="lazy">
-            <div class="p-3">
-                <p class="text-sm text-t1 truncate font-medium">{{ item.make_model }}</p>
-                <p class="text-xs font-mono text-t3">{{ "{:,}".format(item.count) }}</p>
-            </div>
+<div id="vehicleMakeModels" class="window">
+    <div class="title-bar">
+        <span class="title-bar-text">Top Make / Models</span>
+        <div class="title-bar-controls">
+            <button>&#9472;</button>
+            <button>&#9723;</button>
         </div>
-        {% endfor %}
     </div>
-    {% else %}
-    <p class="text-sm text-t3">No make/model data.</p>
-    {% endif %}
+    <div class="window-body">
+        {% if items %}
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px;">
+            {% for item in items %}
+            <div style="border: 1px solid #e0e0e0; background: #fff;">
+                <img src="{{ item.image_url }}" alt="{{ item.make_model }}"
+                     style="width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block;"
+                     loading="lazy">
+                <div style="padding: 3px 4px;">
+                    <div style="font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ item.make_model }}</div>
+                    <div class="mono" style="font-size: 10px; color: var(--text-muted);">{{ "{:,}".format(item.count) }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div style="font-size: 12px; color: var(--text-muted);">No make/model data.</div>
+        {% endif %}
+    </div>
 </div>

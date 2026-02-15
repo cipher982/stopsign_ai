@@ -1,20 +1,38 @@
 <div id="vehicleSummary">
     {% if summary %}
-    <div class="grid grid-cols-3 gap-3">
-        <div class="bg-bg-raised rounded-xl border border-line p-5">
-            <div class="text-xs text-t3 uppercase tracking-wider mb-1">Classified</div>
-            <div class="font-mono text-3xl font-bold text-t1">{{ "{:,}".format(summary.total_classified) }}</div>
+    <div class="window">
+        <div class="title-bar">
+            <span class="title-bar-text">Vehicle Classification Summary</span>
+            <div class="title-bar-controls">
+                <button>&#9472;</button>
+                <button>&#9723;</button>
+            </div>
         </div>
-        <div class="bg-bg-raised rounded-xl border border-line p-5">
-            <div class="text-xs text-t3 uppercase tracking-wider mb-1">Clusters</div>
-            <div class="font-mono text-3xl font-bold text-t1">{{ "{:,}".format(summary.cluster_count) }}</div>
-        </div>
-        <div class="bg-bg-raised rounded-xl border border-line p-5">
-            <div class="text-xs text-t3 uppercase tracking-wider mb-1">Coverage</div>
-            <div class="font-mono text-3xl font-bold text-accent">{{ summary.coverage_pct }}%</div>
+        <div class="window-body">
+            <div style="display: flex; gap: 24px;">
+                <div class="stat-readout">
+                    <span class="stat-label">Classified</span>
+                    <span class="stat-value">{{ "{:,}".format(summary.total_classified) }}</span>
+                </div>
+                <div class="stat-readout">
+                    <span class="stat-label">Clusters</span>
+                    <span class="stat-value">{{ "{:,}".format(summary.cluster_count) }}</span>
+                </div>
+                <div class="stat-readout">
+                    <span class="stat-label">Coverage</span>
+                    <span class="stat-value" style="color: var(--ok);">{{ summary.coverage_pct }}%</span>
+                </div>
+            </div>
         </div>
     </div>
     {% else %}
-    <p class="text-sm text-t3">Vehicle classification data not yet available.</p>
+    <div class="window">
+        <div class="title-bar title-bar-inactive">
+            <span class="title-bar-text">Vehicle Classification Summary</span>
+        </div>
+        <div class="window-body" style="font-size: 12px; color: var(--text-muted);">
+            Vehicle classification data not yet available.
+        </div>
+    </div>
     {% endif %}
 </div>

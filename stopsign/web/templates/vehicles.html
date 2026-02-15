@@ -7,42 +7,59 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <h1 class="text-2xl font-bold text-t1">Vehicles</h1>
-
+<div style="display: flex; flex-direction: column; gap: 8px;">
     {# Summary stats #}
-    <div id="vehicleSummary" hx-get="/api/vehicles/summary" hx-trigger="load" class="fade-in">
-        <div class="flex justify-center py-8">
-            <span class="text-t3 text-sm">Loading summary...</span>
+    <div id="vehicleSummary" hx-get="/api/vehicles/summary" hx-trigger="load">
+        <div class="window">
+            <div class="title-bar title-bar-inactive">
+                <span class="title-bar-text">Vehicle Classification Summary</span>
+            </div>
+            <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-muted);">
+                Loading summary...
+            </div>
         </div>
     </div>
 
-    {# Type and Color charts #}
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <div id="vehicleTypes" hx-get="/api/vehicles/types" hx-trigger="load" class="fade-in fade-in-1">
-            <div class="bg-bg-raised rounded-xl border border-line p-8 flex items-center justify-center min-h-[200px]">
-                <span class="text-t3 text-sm">Loading types...</span>
+    {# Type and Color charts — side by side #}
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <div id="vehicleTypes" hx-get="/api/vehicles/types" hx-trigger="load">
+            <div class="window">
+                <div class="title-bar title-bar-inactive"><span class="title-bar-text">Loading...</span></div>
+                <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-muted);">Loading types...</div>
             </div>
         </div>
-        <div id="vehicleColors" hx-get="/api/vehicles/colors" hx-trigger="load" class="fade-in fade-in-2">
-            <div class="bg-bg-raised rounded-xl border border-line p-8 flex items-center justify-center min-h-[200px]">
-                <span class="text-t3 text-sm">Loading colors...</span>
+        <div id="vehicleColors" hx-get="/api/vehicles/colors" hx-trigger="load">
+            <div class="window">
+                <div class="title-bar title-bar-inactive"><span class="title-bar-text">Loading...</span></div>
+                <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-muted);">Loading colors...</div>
             </div>
         </div>
     </div>
 
     {# Make/Models #}
-    <div id="vehicleMakeModels" hx-get="/api/vehicles/make-models" hx-trigger="load" class="fade-in fade-in-3">
-        <div class="bg-bg-raised rounded-xl border border-line p-8 flex items-center justify-center min-h-[200px]">
-            <span class="text-t3 text-sm">Loading make/models...</span>
+    <div id="vehicleMakeModels" hx-get="/api/vehicles/make-models" hx-trigger="load">
+        <div class="window">
+            <div class="title-bar title-bar-inactive"><span class="title-bar-text">Loading...</span></div>
+            <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-muted);">Loading make/models...</div>
         </div>
     </div>
 
     {# Gallery #}
     <div id="vehicleGallery" hx-get="/api/vehicles/gallery" hx-trigger="load">
-        <div class="bg-bg-raised rounded-xl border border-line p-8 flex items-center justify-center min-h-[200px]">
-            <span class="text-t3 text-sm">Loading gallery...</span>
+        <div class="window">
+            <div class="title-bar title-bar-inactive"><span class="title-bar-text">Loading...</span></div>
+            <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-muted);">Loading gallery...</div>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+    @media (max-width: 768px) {
+        div[style*="grid-template-columns: 1fr 1fr"] {
+            grid-template-columns: 1fr !important;
+        }
+    }
+</style>
 {% endblock %}

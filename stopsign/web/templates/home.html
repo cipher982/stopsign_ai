@@ -13,53 +13,79 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-3">
-    {# Row 1: Video + Stats #}
-    <div class="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3 fade-in">
-        {# Video #}
-        <div class="relative">
+<div style="display: grid; grid-template-columns: 1fr 240px; gap: 8px;">
+    {# Video window #}
+    <div class="window">
+        <div class="title-bar">
+            <span class="title-bar-text">Live Feed &mdash; Crestwood Intersection</span>
+            <div class="title-bar-controls">
+                <button>&#9472;</button>
+                <button>&#9723;</button>
+            </div>
+        </div>
+        <div class="window-body-flush" style="position: relative;">
             <div id="videoContainer"
                  hx-get="/load-video"
                  hx-trigger="load"
-                 class="aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center ring-1 ring-line">
-                <span class="text-t3 text-sm font-mono">Loading feed...</span>
+                 class="sunken-dark"
+                 style="display: flex; align-items: center; justify-content: center; min-height: 300px; aspect-ratio: 16/9;">
+                <span style="color: var(--text-muted); font-size: 12px;" class="mono">Loading feed...</span>
             </div>
-            <div class="absolute top-2.5 left-2.5 flex items-center gap-1.5 bg-black/70 backdrop-blur-sm rounded-full px-2.5 py-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-ok live-pulse"></span>
-                <span class="text-[11px] font-mono font-medium text-t1 uppercase tracking-wide">Live</span>
+            <div style="position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 4px; background: rgba(0,0,0,0.7); padding: 2px 6px;">
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--ok);" class="live-pulse"></span>
+                <span style="font-size: 10px; color: #fff; text-transform: uppercase; letter-spacing: 0.05em;" class="mono">Live</span>
             </div>
         </div>
+    </div>
 
-        {# Stats sidebar — compact #}
-        <div class="flex flex-col gap-2 fade-in fade-in-1">
+    {# Stats window #}
+    <div class="window">
+        <div class="title-bar">
+            <span class="title-bar-text">System Status</span>
+            <div class="title-bar-controls">
+                <button>&#9472;</button>
+                <button>&#9723;</button>
+            </div>
+        </div>
+        <div class="window-body" style="display: flex; flex-direction: column; gap: 8px; font-size: 12px;">
             {# Compliance #}
-            <div class="bg-bg-raised rounded-lg p-3.5 border border-line">
-                <div class="text-[10px] font-medium text-t3 uppercase tracking-wider mb-1">Compliance Rate</div>
-                <div class="font-mono text-4xl font-bold text-accent glow-amber leading-none" id="complianceRate">--</div>
-                <div class="mt-2 flex items-center gap-1.5">
-                    <span class="text-base" id="trendArrow">&rarr;</span>
-                    <span class="text-xs text-t2 leading-snug line-clamp-2" id="rotatingInsight">Loading...</span>
-                </div>
+            <div>
+                <div style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;">Compliance</div>
+                <div class="mono" style="font-size: 28px; font-weight: 700; color: var(--text);" id="complianceRate">--</div>
             </div>
 
-            {# Violations + Vehicles #}
-            <div class="grid grid-cols-2 gap-2">
-                <div class="bg-bg-raised rounded-lg p-3 border border-line">
-                    <div class="text-[10px] text-t3 uppercase tracking-wider mb-0.5">Violations</div>
-                    <div class="font-mono text-xl font-bold text-bad" id="violationCount">--</div>
-                    <div class="text-[10px] text-t3">24h</div>
-                </div>
-                <div class="bg-bg-raised rounded-lg p-3 border border-line">
-                    <div class="text-[10px] text-t3 uppercase tracking-wider mb-0.5">Vehicles</div>
-                    <div class="font-mono text-xl font-bold text-t1" id="vehicleCount">--</div>
-                    <div class="text-[10px] text-t3">24h</div>
-                </div>
+            <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 0;">
+
+            {# Violations #}
+            <div class="stat-readout">
+                <span class="stat-label">Violations</span>
+                <span class="stat-value" style="color: var(--bad);" id="violationCount">--</span>
             </div>
 
-            {# Last detection #}
-            <div class="bg-bg-raised rounded-lg p-3 border border-line">
-                <div class="text-[10px] text-t3 uppercase tracking-wider mb-0.5">Last Detected</div>
-                <div class="font-mono text-base font-medium text-ok" id="lastDetection">--</div>
+            {# Vehicles #}
+            <div class="stat-readout">
+                <span class="stat-label">Vehicles</span>
+                <span class="stat-value" id="vehicleCount">--</span>
+            </div>
+
+            {# Period #}
+            <div class="stat-readout">
+                <span class="stat-label">Period</span>
+                <span class="stat-value" style="font-size: 11px;">24h</span>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 0;">
+
+            {# Last Detected #}
+            <div class="stat-readout">
+                <span class="stat-label">Last Seen</span>
+                <span class="stat-value" style="color: var(--ok); font-size: 11px;" id="lastDetection">--</span>
+            </div>
+
+            {# Trend / insight #}
+            <div style="font-size: 11px; color: var(--text-secondary); margin-top: auto;">
+                <span id="trendArrow">&rarr;</span>
+                <span id="rotatingInsight">Loading...</span>
             </div>
 
             <div id="statsUpdater"
@@ -67,27 +93,41 @@
                  hx-trigger="load, every 15s"
                  hx-swap="none"
                  hx-vals='{"update": "stats"}'
-                 class="hidden"></div>
+                 style="display: none;"></div>
         </div>
     </div>
+</div>
 
-    {# Row 2: Recent Passes #}
-    <div class="fade-in fade-in-2">
-        <div class="flex items-center justify-between mb-2">
-            <h2 class="text-sm font-semibold text-t1">Recent Passes</h2>
-            <span class="flex items-center gap-1.5 text-[11px] text-ok font-medium">
-                <span class="w-1.5 h-1.5 rounded-full bg-ok live-pulse"></span>
-                Live
-            </span>
+{# Recent Passes window #}
+<div class="window" style="margin-top: 8px;">
+    <div class="title-bar">
+        <span class="title-bar-text">Recent Passes</span>
+        <div style="display: flex; align-items: center; gap: 4px;">
+            <span style="width: 6px; height: 6px; border-radius: 50; background: var(--ok);" class="live-pulse"></span>
+            <span style="font-size: 11px;">Live</span>
         </div>
+        <div class="title-bar-controls">
+            <button>&#9472;</button>
+            <button>&#9723;</button>
+        </div>
+    </div>
+    <div class="window-body-flush">
         <div id="recentPasses"
              hx-get="/api/recent-vehicle-passes"
              hx-trigger="load"
              hx-swap="innerHTML">
-            <div class="flex justify-center py-8">
-                <span class="text-t3 text-sm">Loading recent passes...</span>
-            </div>
+            <div style="text-align: center; padding: 16px; color: var(--text-muted); font-size: 12px;">Loading recent passes...</div>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+    @media (max-width: 768px) {
+        div[style*="grid-template-columns: 1fr 240px"] {
+            grid-template-columns: 1fr !important;
+        }
+    }
+</style>
 {% endblock %}

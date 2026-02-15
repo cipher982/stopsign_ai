@@ -9,77 +9,98 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-5">
-    <h1 class="text-2xl font-bold text-t1">Debug Interface</h1>
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px;">
+    {# Video stream #}
+    <div class="window">
+        <div class="title-bar">
+            <span class="title-bar-text">Video Stream</span>
+            <div class="title-bar-controls">
+                <button>&#9472;</button>
+                <button>&#9723;</button>
+            </div>
+        </div>
+        <div class="window-body-flush">
+            <div hx-get="/load-video" hx-trigger="load"
+                 class="sunken-dark"
+                 style="display: flex; align-items: center; justify-content: center; min-height: 300px; aspect-ratio: 16/9;">
+                <span style="color: var(--text-muted); font-size: 12px;" class="mono">Loading...</span>
+            </div>
+        </div>
+    </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {# Video stream #}
-        <div class="lg:col-span-2">
-            <div class="bg-bg-raised rounded-xl border border-line p-3">
-                <div class="text-xs font-mono text-t3 uppercase tracking-wider mb-2">Video Stream</div>
-                <div hx-get="/load-video" hx-trigger="load"
-                     class="aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center ring-1 ring-line">
-                    <span class="text-t3 text-sm font-mono">Loading...</span>
+    {# Controls column #}
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+        {# Zone selection #}
+        <div class="window">
+            <div class="title-bar">
+                <span class="title-bar-text">1. Select Zone</span>
+            </div>
+            <div class="window-body">
+                <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                    <button id="zone-stop-line" onclick="selectZoneType('stop-line')" class="btn98" style="font-size: 10px;">Stop Line</button>
+                    <button id="zone-pre-stop" onclick="selectZoneType('pre-stop')" class="btn98" style="font-size: 10px;">Pre-Stop</button>
+                    <button id="zone-capture" onclick="selectZoneType('capture')" class="btn98" style="font-size: 10px;">Capture</button>
+                </div>
+                <p id="zone-instructions" style="font-size: 10px; color: var(--text-muted); margin: 4px 0 0;"></p>
+            </div>
+        </div>
+
+        {# Visualization #}
+        <div class="window">
+            <div class="title-bar">
+                <span class="title-bar-text">2. Visualization</span>
+            </div>
+            <div class="window-body">
+                <button id="debugZonesBtn" onclick="toggleDebugZones()" class="btn98" style="font-size: 10px;">Show Zones</button>
+            </div>
+        </div>
+
+        {# Edit zone #}
+        <div class="window">
+            <div class="title-bar">
+                <span class="title-bar-text">3. Edit Zone</span>
+            </div>
+            <div class="window-body">
+                <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                    <button id="adjustmentModeBtn" onclick="toggleAdjustmentMode()" class="btn98" style="font-size: 10px;">Adjust</button>
+                    <button onclick="resetPoints()" class="btn98" style="font-size: 10px;">Reset</button>
+                    <button id="submitBtn" onclick="updateZoneFromClicks()" style="display: none;" disabled class="btn98 btn98-primary" style="font-size: 10px;">SUBMIT</button>
                 </div>
             </div>
         </div>
 
-        {# Controls #}
-        <div class="space-y-3">
-            <div class="bg-bg-raised rounded-xl border border-line p-4">
-                <h3 class="text-xs font-medium text-t1 mb-2">1. Select Zone</h3>
-                <div class="flex flex-wrap gap-1.5">
-                    <button id="zone-stop-line" onclick="selectZoneType('stop-line')"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-accent/10 text-accent border border-accent/20 hover:bg-accent/20 transition-colors">Stop Line</button>
-                    <button id="zone-pre-stop" onclick="selectZoneType('pre-stop')"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Pre-Stop</button>
-                    <button id="zone-capture" onclick="selectZoneType('capture')"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Capture</button>
-                </div>
-                <p id="zone-instructions" class="text-[10px] text-t3 mt-1.5"></p>
+        {# Status #}
+        <div class="window">
+            <div class="title-bar">
+                <span class="title-bar-text">4. Status</span>
             </div>
-
-            <div class="bg-bg-raised rounded-xl border border-line p-4">
-                <h3 class="text-xs font-medium text-t1 mb-2">2. Visualization</h3>
-                <button id="debugZonesBtn" onclick="toggleDebugZones()"
-                        class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Show Zones</button>
-            </div>
-
-            <div class="bg-bg-raised rounded-xl border border-line p-4">
-                <h3 class="text-xs font-medium text-t1 mb-2">3. Edit Zone</h3>
-                <div class="flex flex-wrap gap-1.5">
-                    <button id="adjustmentModeBtn" onclick="toggleAdjustmentMode()"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Adjust</button>
-                    <button onclick="resetPoints()"
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Reset</button>
-                    <button id="submitBtn" onclick="updateZoneFromClicks()"
-                            style="display: none;" disabled
-                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-ok/10 text-ok border border-ok/30">SUBMIT</button>
-                </div>
-            </div>
-
-            <div class="bg-bg-raised rounded-xl border border-line p-4">
-                <h3 class="text-xs font-medium text-t1 mb-2">4. Status</h3>
-                <div id="config-version" class="font-mono text-[10px] text-t3 bg-bg rounded p-2 border border-line"></div>
-                <div id="status" class="font-mono text-[10px] text-t3 bg-bg rounded p-2 mt-1 border border-line"></div>
-                <p class="text-[10px] text-t3 mt-1.5">
+            <div class="window-body">
+                <div id="config-version" class="sunken mono" style="font-size: 10px; padding: 3px 4px; margin-bottom: 4px;"></div>
+                <div id="status" class="sunken mono" style="font-size: 10px; padding: 3px 4px;"></div>
+                <p style="font-size: 10px; color: var(--text-muted); margin: 4px 0 0;">
                     Select zone &rarr; Show zones &rarr; Adjust &rarr; Click points &rarr; Submit
                 </p>
             </div>
         </div>
     </div>
+</div>
 
-    {# Debug Tools #}
-    <div class="bg-bg-raised rounded-xl border border-line p-4">
-        <h3 class="text-xs font-medium text-t1 mb-2">Debug Tools</h3>
-        <div class="flex gap-1.5">
-            <button onclick="showCoordinateInfo()"
-                    class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Coord Info</button>
-            <button onclick="debugCoordinates()"
-                    class="px-2.5 py-1 text-[10px] font-mono rounded bg-bg-active text-t2 border border-line hover:bg-bg-hover transition-colors">Debug Transforms</button>
+{# Debug Tools #}
+<div class="window" style="margin-top: 8px;">
+    <div class="title-bar">
+        <span class="title-bar-text">Debug Tools</span>
+        <div class="title-bar-controls">
+            <button>&#9472;</button>
+            <button>&#9723;</button>
         </div>
-        <div id="coordOutput" class="font-mono text-[10px] text-t3 bg-bg rounded p-2 mt-2 max-h-40 overflow-auto whitespace-pre-wrap border border-line"></div>
-        <div id="debugOutput" class="font-mono text-[10px] text-t3 bg-bg rounded p-2 mt-1 max-h-40 overflow-auto whitespace-pre-wrap border border-line"></div>
+    </div>
+    <div class="window-body">
+        <div style="display: flex; gap: 4px; margin-bottom: 6px;">
+            <button onclick="showCoordinateInfo()" class="btn98" style="font-size: 10px;">Coord Info</button>
+            <button onclick="debugCoordinates()" class="btn98" style="font-size: 10px;">Debug Transforms</button>
+        </div>
+        <div id="coordOutput" class="sunken mono" style="font-size: 10px; padding: 4px; max-height: 150px; overflow: auto; white-space: pre-wrap;"></div>
+        <div id="debugOutput" class="sunken mono" style="font-size: 10px; padding: 4px; max-height: 150px; overflow: auto; white-space: pre-wrap; margin-top: 4px;"></div>
     </div>
 </div>
 {% endblock %}
