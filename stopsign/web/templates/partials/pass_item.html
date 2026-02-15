@@ -1,14 +1,15 @@
 {# Vehicle pass row — image left, large text right, fills its box #}
 <a href="{{ item.clip_url or '#' }}" {% if item.clip_url %}target="_blank"{% endif %}
-   class="pass-card"
+   style="display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid #d0d0d0; text-decoration: none; color: inherit;"
    title="{{ item.time_absolute }}">
     <img src="{{ item.image_url }}" alt="Vehicle pass {{ item.time_str }}{% if item.badge_text %} — {{ item.badge_text }}{% endif %}"
-         class="pass-thumb" loading="lazy" decoding="async">
-    <div class="pass-meta">
-        <div class="pass-time">{{ item.time_str }}</div>
-        <div class="pass-metrics">
-            <span class="mono"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }}</span>
-            <span class="mono"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
+         style="width: 56px; height: 42px; object-fit: cover; display: block; flex-shrink: 0; border: 1px solid #ccc; background: #f0f0f0;"
+         loading="lazy" decoding="async">
+    <div style="flex: 1; min-width: 0;">
+        <div style="font-size: 13px; font-weight: 700;">{{ item.time_str }}</div>
+        <div style="display: flex; gap: 8px; margin-top: 2px;">
+            <span class="mono" style="font-size: 12px;"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }}</span>
+            <span class="mono" style="font-size: 12px;"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
         </div>
     </div>
 </a>

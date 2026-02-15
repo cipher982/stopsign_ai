@@ -27,33 +27,21 @@
         </div>
     </div>
 
-    {# Main content area — action-first grid #}
+    {# Main content area — control-room grid #}
     <div class="home-grid">
-        <div class="home-panel home-action raised">
-            <div class="home-panel-title">Recent Action</div>
-            <div class="home-panel-body home-action-body sunken">
-                <div id="recentPasses"
-                     class="action-grid"
-                     hx-get="/api/recent-vehicle-passes"
-                     hx-trigger="load"
-                     hx-swap="innerHTML"
-                     aria-live="polite">
-                    <div style="text-align: center; padding: 12px; color: var(--text-muted); font-size: 12px;">Loading...</div>
+        <div class="home-left">
+            <div class="home-panel raised">
+                <div class="home-panel-title">Project</div>
+                <div class="home-panel-body home-about">
+                    <div class="home-tagline">
+                        <strong>AI-powered stop sign monitoring in Crestwood, Birmingham.</strong>
+                        Live vehicle detection with a public data feed for neighborhood safety.
+                    </div>
+                    <div class="home-about-link">
+                        <a href="/about">How it works &rarr;</a>
+                    </div>
                 </div>
             </div>
-        </div>
-
-        <div class="home-right">
-            <div class="home-panel home-video raised">
-                <div class="home-panel-title">Live Feed</div>
-                <div id="videoContainer"
-                     hx-get="/load-video"
-                     hx-trigger="load"
-                     class="sunken-dark home-video-frame">
-                    <span style="color: var(--text-muted); font-size: 12px;" class="mono">Loading feed...</span>
-                </div>
-            </div>
-
             <div class="home-panel raised">
                 <div class="home-panel-title">Snapshot</div>
                 <div class="home-panel-body">
@@ -77,17 +65,27 @@
                     </div>
                 </div>
             </div>
+        </div>
 
-            <div class="home-panel raised">
-                <div class="home-panel-title">Project</div>
-                <div class="home-panel-body home-about">
-                    <div class="home-tagline">
-                        <strong>AI-powered stop sign monitoring in Crestwood, Birmingham.</strong>
-                        Live vehicle detection with a public data feed for neighborhood safety.
-                    </div>
-                    <div class="home-about-link">
-                        <a href="/about">How it works &rarr;</a>
-                    </div>
+        <div class="home-panel home-video raised">
+            <div class="home-panel-title">Live Feed</div>
+            <div id="videoContainer"
+                 hx-get="/load-video"
+                 hx-trigger="load"
+                 class="sunken-dark home-video-frame">
+                <span style="color: var(--text-muted); font-size: 12px;" class="mono">Loading feed...</span>
+            </div>
+        </div>
+
+        <div class="home-panel home-recents raised">
+            <div class="home-panel-title">Recent Passes</div>
+            <div class="home-panel-body home-recents-body sunken">
+                <div id="recentPasses"
+                     hx-get="/api/recent-vehicle-passes"
+                     hx-trigger="load"
+                     hx-swap="innerHTML"
+                     aria-live="polite">
+                    <div style="text-align: center; padding: 12px; color: var(--text-muted); font-size: 12px;">Loading...</div>
                 </div>
             </div>
         </div>
@@ -117,7 +115,7 @@
 
     .home-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.85fr);
+        grid-template-columns: 260px minmax(0, 1fr) 360px;
         grid-template-rows: 1fr auto;
         gap: 2px;
         height: calc(100% - 4px);
@@ -125,9 +123,9 @@
         min-height: 0;
     }
 
-    .home-right {
+    .home-left {
         display: grid;
-        grid-template-rows: minmax(260px, 1fr) auto auto;
+        grid-template-rows: auto 1fr;
         gap: 2px;
         min-height: 0;
     }
@@ -153,10 +151,6 @@
         flex: 1;
         min-height: 0;
         overflow: auto;
-    }
-
-    .home-action-body {
-        padding: 4px;
     }
 
     .home-about {
@@ -208,53 +202,13 @@
         justify-content: center;
     }
 
-    .action-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 6px;
-        align-content: start;
+    .home-recents-body {
+        padding: 0;
+        overflow: auto;
     }
 
-    .pass-card {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        background: var(--window-bg);
-        border: 1px solid var(--shadow);
-        box-shadow: inset 1px 1px 0 var(--hi), inset -1px -1px 0 var(--shadow);
-        text-decoration: none;
-        color: inherit;
-    }
-
-    .pass-card:hover {
-        background: #f7f7f7;
-    }
-
-    .pass-thumb {
-        width: 100%;
-        height: 96px;
-        object-fit: cover;
-        border-bottom: 1px solid #c0c0c0;
-        background: #eaeaea;
-        display: block;
-    }
-
-    .pass-meta {
-        padding: 4px 6px 6px;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-    }
-
-    .pass-time {
-        font-size: 13px;
-        font-weight: 700;
-    }
-
-    .pass-metrics {
-        display: flex;
-        gap: 8px;
-        font-size: 12px;
+    .home-recents .home-panel-body {
+        padding: 0;
     }
 
     .home-ticker {
@@ -275,21 +229,27 @@
 
     @media (max-width: 1200px) {
         .home-grid {
-            grid-template-columns: 1fr;
-            grid-template-rows: auto auto auto;
+            grid-template-columns: 220px minmax(0, 1fr);
+            grid-template-rows: auto 1fr auto;
         }
-        .home-right {
-            grid-template-rows: minmax(240px, 1fr) auto auto;
+        .home-recents {
+            grid-column: 1 / -1;
+            min-height: 220px;
+            max-height: 280px;
         }
     }
 
     @media (max-width: 800px) {
         .home-grid {
             grid-template-columns: 1fr;
-            grid-template-rows: auto auto auto;
+            grid-template-rows: auto auto auto auto;
         }
-        .action-grid {
-            grid-template-columns: 1fr;
+        .home-left {
+            grid-template-rows: auto auto;
+        }
+        .home-recents {
+            min-height: 200px;
+            max-height: 260px;
         }
     }
 </style>
