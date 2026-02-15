@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Performance Debug{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-3xl mx-auto">
+    <h1 class="text-2xl font-bold">Performance Debugging</h1>
+
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <button hx-get="/debug-performance"
+                    hx-target="#perf-results"
+                    hx-indicator="#loading"
+                    class="btn btn-primary btn-sm">
+                Run Performance Test
+            </button>
+            <div id="loading" class="htmx-indicator mt-2">
+                <span class="loading loading-spinner loading-sm"></span> Running...
+            </div>
+            <pre class="bg-base-200 rounded-lg p-4 mt-4 text-xs font-mono overflow-auto max-h-96">
+                <code id="perf-results"></code>
+            </pre>
+        </div>
+    </div>
+</div>
+
+<script>
+document.body.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail.target.id === 'perf-results') {
+        try {
+            const data = JSON.parse(evt.detail.xhr.response);
+            evt.detail.target.textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+            evt.detail.target.textContent = evt.detail.xhr.response;
+        }
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Stop Sign Nanny{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">{{ json_ld | tojson }}</script>
+{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest" defer></script>
+<script src="/static/js/video-player.js" defer></script>
+<script src="/static/js/home.js" defer></script>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    {# Primary column: video + stats #}
+    <div class="lg:col-span-2 space-y-6">
+        {# Video stream #}
+        <div class="card bg-base-100 shadow-md">
+            <div class="card-body p-4">
+                <div id="videoContainer"
+                     hx-get="/load-video"
+                     hx-trigger="load"
+                     class="aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center">
+                    <span class="loading loading-spinner loading-lg text-base-content/30"></span>
+                </div>
+            </div>
+        </div>
+
+        {# System Status panel #}
+        <div class="card bg-base-100 shadow-md">
+            <div class="card-body p-5">
+                <h2 class="card-title text-sm font-semibold uppercase tracking-wider opacity-60 mb-3">System Status</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {# Today's Report #}
+                    <div class="space-y-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider opacity-50">Today's Report</h3>
+                        <div class="stat p-0">
+                            <div class="stat-title text-xs">Compliance</div>
+                            <div class="stat-value text-2xl" id="complianceRate">...</div>
+                        </div>
+                        <div class="flex items-center gap-2 text-sm">
+                            <span class="opacity-60">Violations:</span>
+                            <span class="font-mono font-semibold" id="violationCount">...</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-sm">
+                            <span class="opacity-60">Trend:</span>
+                            <span class="text-lg" id="trendArrow">&rarr;</span>
+                        </div>
+                    </div>
+
+                    {# Activity #}
+                    <div class="space-y-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider opacity-50">Activity</h3>
+                        <div class="stat p-0">
+                            <div class="stat-title text-xs">Vehicles (24h)</div>
+                            <div class="stat-value text-2xl" id="vehicleCount">...</div>
+                        </div>
+                        <div class="flex items-center gap-2 text-sm">
+                            <span class="opacity-60">Last:</span>
+                            <span class="font-mono" id="lastDetection">...</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-sm">
+                            <span class="opacity-60">Status:</span>
+                            <span class="badge badge-success badge-sm gap-1">
+                                <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+                                Online
+                            </span>
+                        </div>
+                    </div>
+
+                    {# Insight #}
+                    <div class="space-y-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider opacity-50">Insight</h3>
+                        <p class="text-sm leading-relaxed" id="rotatingInsight">Loading...</p>
+                    </div>
+                </div>
+
+                {# Hidden HTMX trigger for stats updates #}
+                <div id="statsUpdater"
+                     hx-get="/api/live-stats"
+                     hx-trigger="load, every 15s"
+                     hx-swap="none"
+                     hx-vals='{"update": "stats"}'
+                     class="hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    {# Secondary column: recent passes #}
+    <div class="space-y-6">
+        <div class="card bg-base-100 shadow-md">
+            <div class="card-body p-5">
+                <h2 class="card-title text-sm font-semibold uppercase tracking-wider opacity-60">Recent Passes</h2>
+                <div id="recentPasses"
+                     hx-get="/api/recent-vehicle-passes"
+                     hx-trigger="load"
+                     hx-swap="innerHTML"
+                     class="space-y-2">
+                    <div class="flex justify-center py-8">
+                        <span class="loading loading-dots loading-md"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

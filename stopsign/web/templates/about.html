@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}About Stop Sign Nanny{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">{{ json_ld | tojson }}</script>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8 max-w-5xl mx-auto">
+    {# Hero Section #}
+    <section class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <span class="badge badge-primary badge-outline mb-2">Stop Sign Nanny</span>
+            <h1 class="text-3xl font-bold">Real-time stop sign accountability</h1>
+            <p class="text-base-content/70 mt-2 leading-relaxed">
+                StopSign AI watches a live intersection feed and detects vehicles with YOLO while
+                measuring true stop compliance using capture-time data.
+                Every hop in the pipeline is tuned for low latency and instrumented for observability.
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
+                {% for m in hero_metrics %}
+                <div class="card bg-base-200 shadow-sm">
+                    <div class="card-body p-4">
+                        <div class="text-xl font-bold font-mono">{{ m.value }}</div>
+                        <div class="text-xs opacity-60">{{ m.label }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    {# Pipeline #}
+    <section class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h2 class="card-title text-xl">Pipeline at a glance</h2>
+            <p class="text-base-content/70 mb-4">
+                Frames take a deterministic path from the curb to the browser.
+                Each boundary is backed by Redis queues, explicit health checks, and
+                Prometheus metrics so issues are easy to trace.
+            </p>
+            <div class="space-y-6">
+                <div>
+                    <h3 class="text-sm font-bold uppercase tracking-wider opacity-50 mb-3">Main Pipeline</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {% for node in pipeline_nodes %}
+                        <div class="card bg-base-200 shadow-sm">
+                            <div class="card-body p-4">
+                                <span class="badge badge-primary badge-sm mb-1">{{ node.badge }}</span>
+                                <h4 class="font-semibold text-sm">{{ node.name }}</h4>
+                                <p class="text-xs opacity-70">{{ node.detail }}</p>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold uppercase tracking-wider opacity-50 mb-3">Support Services</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {% for node in support_nodes %}
+                        <div class="card bg-base-200 shadow-sm">
+                            <div class="card-body p-4">
+                                <span class="badge badge-secondary badge-sm mb-1">{{ node.badge }}</span>
+                                <h4 class="font-semibold text-sm">{{ node.name }}</h4>
+                                <p class="text-xs opacity-70">{{ node.detail }}</p>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    {# Service Cards #}
+    <section class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h2 class="card-title text-xl">What each service owns</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                {% for card in service_cards %}
+                <div class="card bg-base-200 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="font-bold font-mono text-sm">{{ card.title }}</h3>
+                        <p class="text-xs opacity-60 mb-2">{{ card.subtitle }}</p>
+                        <ul class="text-xs space-y-1 list-disc list-inside opacity-80">
+                            {% for item in card["items"] %}
+                            <li>{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    {# Operations #}
+    <section class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h2 class="card-title text-xl">Operational guardrails</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div>
+                    <h3 class="font-bold text-sm mb-2">Observability</h3>
+                    <ul class="text-xs space-y-1 list-disc list-inside opacity-80">
+                        {% for item in observability_items %}
+                        <li>{{ item }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="font-bold text-sm mb-2">Resilience</h3>
+                    <ul class="text-xs space-y-1 list-disc list-inside opacity-80">
+                        {% for item in resilience_items %}
+                        <li>{{ item }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    {# Developer Section #}
+    <section class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h2 class="card-title text-xl">Build & extend it</h2>
+            <p class="text-sm text-base-content/70 mb-3">
+                The repository doubles as a reference implementation for real-time computer
+                vision pipelines. Everything from configuration to deployment can be modified
+                without touching production footage.
+            </p>
+            <ul class="text-xs space-y-1 list-disc list-inside opacity-80">
+                {% for item in developer_items %}
+                <li>{{ item }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </section>
+
+    {# CTA #}
+    <section class="card bg-base-100 shadow-md">
+        <div class="card-body text-center">
+            <h2 class="text-xl font-bold">Next steps</h2>
+            <p class="text-sm text-base-content/70 mb-4">
+                Explore the code, adapt the stop-zone logic to your intersection, or plug in
+                new models — the stack is modular by design.
+            </p>
+            <a href="https://github.com/cipher982/stopsign_ai" target="_blank"
+               class="btn btn-primary">
+                View the repository on GitHub
+            </a>
+        </div>
+    </section>
+</div>
+{% endblock %}

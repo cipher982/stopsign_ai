@@ -1,0 +1,19 @@
+<div id="{{ div_id }}" class="card bg-base-100 shadow-md">
+    <div class="card-body p-5">
+        <h3 class="card-title text-base">{{ title }}</h3>
+
+        <h4 class="text-xs font-bold uppercase tracking-wider opacity-50 mt-4">Minimum Speed</h4>
+        <div class="space-y-1 mt-2">
+            {% for item in speed_passes %}
+            {% include "partials/pass_item.html" %}
+            {% endfor %}
+        </div>
+
+        <h4 class="text-xs font-bold uppercase tracking-wider opacity-50 mt-4">Time in Stop Zone</h4>
+        <div class="space-y-1 mt-2">
+            {% for item in time_passes %}
+            {% include "partials/pass_item.html" %}
+            {% endfor %}
+        </div>
+    </div>
+</div>

@@ -1,0 +1,20 @@
+<div class="flex items-center gap-3 p-2 rounded-lg hover:bg-base-200 transition-colors">
+    <img src="{{ item.image_url }}" alt="Vehicle"
+         class="w-16 h-12 object-cover rounded-md flex-shrink-0 bg-base-300"
+         loading="lazy" decoding="async">
+    <div class="flex-1 min-w-0">
+        <div class="text-xs font-mono opacity-60">{{ item.time_str }}</div>
+        <div class="flex items-center gap-2 mt-0.5">
+            <span class="w-2.5 h-2.5 rounded-sm flex-shrink-0" style="background-color: {{ item.speed_color }};"></span>
+            <span class="text-xs font-mono">{{ "%.2f"|format(item.min_speed) }} px/s</span>
+            <span class="w-2.5 h-2.5 rounded-sm flex-shrink-0 ml-1" style="background-color: {{ item.time_color }};"></span>
+            <span class="text-xs font-mono">{{ "%.2f"|format(item.time_in_zone) }}s</span>
+        </div>
+        {% if item.badge_text %}
+        <span class="badge badge-ghost badge-xs mt-0.5">{{ item.badge_text }}</span>
+        {% endif %}
+        {% if item.clip_url %}
+        <a href="{{ item.clip_url }}" target="_blank" class="link link-primary text-xs ml-2">Replay</a>
+        {% endif %}
+    </div>
+</div>
