@@ -1,24 +1,22 @@
-<div id="vehicleGallery" class="card bg-base-100 shadow-md">
-    <div class="card-body p-5">
-        <h3 class="card-title text-base">Cluster Gallery</h3>
-        {% if items %}
-        <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 mt-3">
-            {% for item in items %}
-            <div class="group relative">
-                <img src="{{ item.image_url }}" alt="{{ item.label }}"
-                     class="rounded-md w-full aspect-square object-cover bg-base-300"
-                     loading="lazy">
-                <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent rounded-b-md p-1">
-                    <p class="text-[10px] text-white truncate">{{ item.label }}</p>
-                    {% if item.make_model or item.size %}
-                    <p class="text-[9px] text-white/70">{{ item.make_model }}{% if item.size %} ({{ item.size }}){% endif %}</p>
-                    {% endif %}
-                </div>
+<div id="vehicleGallery" class="panel p-4">
+    <h3 class="text-sm font-semibold text-white mb-4">Cluster Gallery</h3>
+    {% if items %}
+    <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+        {% for item in items %}
+        <div class="group relative rounded-md overflow-hidden bg-surface-3 ring-1 ring-white/[0.06]">
+            <img src="{{ item.image_url }}" alt="{{ item.label }}"
+                 class="w-full aspect-square object-cover group-hover:scale-105 transition-transform duration-300"
+                 loading="lazy">
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1.5 pt-4">
+                <p class="text-[10px] text-white/80 truncate font-medium">{{ item.label }}</p>
+                {% if item.make_model or item.size %}
+                <p class="text-[9px] text-white/40">{{ item.make_model }}{% if item.size %} ({{ item.size }}){% endif %}</p>
+                {% endif %}
             </div>
-            {% endfor %}
         </div>
-        {% else %}
-        <p class="text-sm opacity-60">No cluster gallery data.</p>
-        {% endif %}
+        {% endfor %}
     </div>
+    {% else %}
+    <p class="text-xs text-white/40">No cluster gallery data.</p>
+    {% endif %}
 </div>

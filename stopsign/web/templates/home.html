@@ -13,94 +13,85 @@
 {% endblock %}
 
 {% block content %}
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    {# Primary column: video + stats #}
-    <div class="lg:col-span-2 space-y-6">
-        {# Video stream #}
-        <div class="card bg-base-100 shadow-md">
-            <div class="card-body p-4">
-                <div id="videoContainer"
-                     hx-get="/load-video"
-                     hx-trigger="load"
-                     class="aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                    <span class="loading loading-spinner loading-lg text-base-content/30"></span>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    {# Primary: video + status #}
+    <div class="lg:col-span-8 space-y-4">
+        {# Video — no wrapper card, let it breathe #}
+        <div class="relative">
+            <div id="videoContainer"
+                 hx-get="/load-video"
+                 hx-trigger="load"
+                 class="aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center ring-1 ring-white/[0.06]">
+                <div class="flex flex-col items-center gap-2 text-white/20">
+                    <svg class="w-8 h-8 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                    <span class="text-xs font-mono">CONNECTING TO FEED</span>
                 </div>
+            </div>
+            {# Live badge overlay #}
+            <div class="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm rounded px-2 py-1 pointer-events-none">
+                <div class="w-1.5 h-1.5 rounded-full bg-signal-red animate-pulse"></div>
+                <span class="text-[10px] font-mono font-medium text-white/80 uppercase tracking-wider">Live</span>
             </div>
         </div>
 
-        {# System Status panel #}
-        <div class="card bg-base-100 shadow-md">
-            <div class="card-body p-5">
-                <h2 class="card-title text-sm font-semibold uppercase tracking-wider opacity-60 mb-3">System Status</h2>
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    {# Today's Report #}
-                    <div class="space-y-2">
-                        <h3 class="text-xs font-bold uppercase tracking-wider opacity-50">Today's Report</h3>
-                        <div class="stat p-0">
-                            <div class="stat-title text-xs">Compliance</div>
-                            <div class="stat-value text-2xl" id="complianceRate">...</div>
-                        </div>
-                        <div class="flex items-center gap-2 text-sm">
-                            <span class="opacity-60">Violations:</span>
-                            <span class="font-mono font-semibold" id="violationCount">...</span>
-                        </div>
-                        <div class="flex items-center gap-2 text-sm">
-                            <span class="opacity-60">Trend:</span>
-                            <span class="text-lg" id="trendArrow">&rarr;</span>
-                        </div>
-                    </div>
-
-                    {# Activity #}
-                    <div class="space-y-2">
-                        <h3 class="text-xs font-bold uppercase tracking-wider opacity-50">Activity</h3>
-                        <div class="stat p-0">
-                            <div class="stat-title text-xs">Vehicles (24h)</div>
-                            <div class="stat-value text-2xl" id="vehicleCount">...</div>
-                        </div>
-                        <div class="flex items-center gap-2 text-sm">
-                            <span class="opacity-60">Last:</span>
-                            <span class="font-mono" id="lastDetection">...</span>
-                        </div>
-                        <div class="flex items-center gap-2 text-sm">
-                            <span class="opacity-60">Status:</span>
-                            <span class="badge badge-success badge-sm gap-1">
-                                <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
-                                Online
-                            </span>
-                        </div>
-                    </div>
-
-                    {# Insight #}
-                    <div class="space-y-2">
-                        <h3 class="text-xs font-bold uppercase tracking-wider opacity-50">Insight</h3>
-                        <p class="text-sm leading-relaxed" id="rotatingInsight">Loading...</p>
+        {# Status bar — compact, dense info strip #}
+        <div class="panel p-4">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {# Compliance #}
+                <div>
+                    <div class="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Compliance</div>
+                    <div class="text-2xl font-mono font-semibold text-white" id="complianceRate">--</div>
+                    <div class="flex items-center gap-1.5 mt-1">
+                        <span class="text-xs text-white/40">Trend</span>
+                        <span class="text-sm" id="trendArrow">&rarr;</span>
                     </div>
                 </div>
-
-                {# Hidden HTMX trigger for stats updates #}
-                <div id="statsUpdater"
-                     hx-get="/api/live-stats"
-                     hx-trigger="load, every 15s"
-                     hx-swap="none"
-                     hx-vals='{"update": "stats"}'
-                     class="hidden"></div>
+                {# Violations #}
+                <div>
+                    <div class="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Violations</div>
+                    <div class="text-2xl font-mono font-semibold text-signal-red" id="violationCount">--</div>
+                    <div class="text-xs text-white/40 mt-1">today</div>
+                </div>
+                {# Vehicles #}
+                <div>
+                    <div class="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Vehicles (24h)</div>
+                    <div class="text-2xl font-mono font-semibold text-white" id="vehicleCount">--</div>
+                    <div class="flex items-center gap-1.5 mt-1">
+                        <div class="w-1.5 h-1.5 rounded-full bg-signal-green live-dot"></div>
+                        <span class="text-xs text-signal-green font-mono" id="lastDetection">--</span>
+                    </div>
+                </div>
+                {# Insight #}
+                <div>
+                    <div class="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Insight</div>
+                    <p class="text-xs text-white/60 leading-relaxed" id="rotatingInsight">Loading...</p>
+                </div>
             </div>
+
+            {# Hidden HTMX trigger for stats updates #}
+            <div id="statsUpdater"
+                 hx-get="/api/live-stats"
+                 hx-trigger="load, every 15s"
+                 hx-swap="none"
+                 hx-vals='{"update": "stats"}'
+                 class="hidden"></div>
         </div>
     </div>
 
-    {# Secondary column: recent passes #}
-    <div class="space-y-6">
-        <div class="card bg-base-100 shadow-md">
-            <div class="card-body p-5">
-                <h2 class="card-title text-sm font-semibold uppercase tracking-wider opacity-60">Recent Passes</h2>
-                <div id="recentPasses"
-                     hx-get="/api/recent-vehicle-passes"
-                     hx-trigger="load"
-                     hx-swap="innerHTML"
-                     class="space-y-2">
-                    <div class="flex justify-center py-8">
-                        <span class="loading loading-dots loading-md"></span>
-                    </div>
+    {# Sidebar: recent passes #}
+    <div class="lg:col-span-4">
+        <div class="panel p-4 lg:h-full lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-[10px] font-mono uppercase tracking-wider text-white/30">Recent Passes</h2>
+                <span class="text-[10px] font-mono text-amber-400/60">LIVE</span>
+            </div>
+            <div id="recentPasses"
+                 hx-get="/api/recent-vehicle-passes"
+                 hx-trigger="load"
+                 hx-swap="innerHTML"
+                 class="space-y-1">
+                <div class="flex justify-center py-12">
+                    <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                 </div>
             </div>
         </div>

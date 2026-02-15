@@ -9,90 +9,77 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <h1 class="text-2xl font-bold">Stop Sign Debug Interface</h1>
+<div class="space-y-5">
+    <h1 class="text-lg font-semibold text-white">Debug Interface</h1>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {# Video stream #}
         <div class="lg:col-span-2">
-            <div class="card bg-base-100 shadow-md">
-                <div class="card-body p-4">
-                    <h2 class="card-title text-sm">Video Stream</h2>
-                    <div hx-get="/load-video" hx-trigger="load"
-                         class="aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                        <span class="loading loading-spinner loading-lg text-base-content/30"></span>
-                    </div>
+            <div class="panel p-3">
+                <div class="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-2">Video Stream</div>
+                <div hx-get="/load-video" hx-trigger="load"
+                     class="aspect-video bg-black rounded-md overflow-hidden flex items-center justify-center ring-1 ring-white/[0.06]">
+                    <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                 </div>
             </div>
         </div>
 
         {# Controls #}
-        <div class="space-y-4">
-            {# Zone Selection #}
-            <div class="card bg-base-100 shadow-md">
-                <div class="card-body p-4">
-                    <h3 class="font-bold text-sm">1. Select Zone</h3>
-                    <div class="flex flex-wrap gap-2 mt-2">
-                        <button id="zone-stop-line" onclick="selectZoneType('stop-line')"
-                                class="btn btn-sm btn-primary">Stop Line</button>
-                        <button id="zone-pre-stop" onclick="selectZoneType('pre-stop')"
-                                class="btn btn-sm btn-outline">Pre-Stop</button>
-                        <button id="zone-capture" onclick="selectZoneType('capture')"
-                                class="btn btn-sm btn-outline">Capture</button>
-                    </div>
-                    <p id="zone-instructions" class="text-xs opacity-60 mt-2"></p>
+        <div class="space-y-3">
+            <div class="panel p-3">
+                <h3 class="text-xs font-medium text-white mb-2">1. Select Zone</h3>
+                <div class="flex flex-wrap gap-1.5">
+                    <button id="zone-stop-line" onclick="selectZoneType('stop-line')"
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-amber-400/20 text-amber-400 border border-amber-400/30 hover:bg-amber-400/30 transition-colors">Stop Line</button>
+                    <button id="zone-pre-stop" onclick="selectZoneType('pre-stop')"
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-white/[0.06] text-white/50 border border-white/[0.08] hover:bg-white/[0.1] transition-colors">Pre-Stop</button>
+                    <button id="zone-capture" onclick="selectZoneType('capture')"
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-white/[0.06] text-white/50 border border-white/[0.08] hover:bg-white/[0.1] transition-colors">Capture</button>
+                </div>
+                <p id="zone-instructions" class="text-[10px] text-white/30 mt-1.5"></p>
+            </div>
+
+            <div class="panel p-3">
+                <h3 class="text-xs font-medium text-white mb-2">2. Visualization</h3>
+                <button id="debugZonesBtn" onclick="toggleDebugZones()"
+                        class="px-2.5 py-1 text-[10px] font-mono rounded bg-white/[0.06] text-white/50 border border-white/[0.08] hover:bg-white/[0.1] transition-colors">Show Zones</button>
+            </div>
+
+            <div class="panel p-3">
+                <h3 class="text-xs font-medium text-white mb-2">3. Edit Zone</h3>
+                <div class="flex flex-wrap gap-1.5">
+                    <button id="adjustmentModeBtn" onclick="toggleAdjustmentMode()"
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-white/[0.06] text-white/50 border border-white/[0.08] hover:bg-white/[0.1] transition-colors">Adjust</button>
+                    <button onclick="resetPoints()"
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-white/[0.06] text-white/50 border border-white/[0.08] hover:bg-white/[0.1] transition-colors">Reset</button>
+                    <button id="submitBtn" onclick="updateZoneFromClicks()"
+                            style="display: none;" disabled
+                            class="px-2.5 py-1 text-[10px] font-mono rounded bg-signal-green/20 text-signal-green border border-signal-green/30">SUBMIT</button>
                 </div>
             </div>
 
-            {# Visualization #}
-            <div class="card bg-base-100 shadow-md">
-                <div class="card-body p-4">
-                    <h3 class="font-bold text-sm">2. Visualization</h3>
-                    <button id="debugZonesBtn" onclick="toggleDebugZones()"
-                            class="btn btn-sm btn-outline mt-2">Show Zones</button>
-                </div>
-            </div>
-
-            {# Actions #}
-            <div class="card bg-base-100 shadow-md">
-                <div class="card-body p-4">
-                    <h3 class="font-bold text-sm">3. Edit Zone</h3>
-                    <div class="flex flex-wrap gap-2 mt-2">
-                        <button id="adjustmentModeBtn" onclick="toggleAdjustmentMode()"
-                                class="btn btn-sm btn-outline">Adjust</button>
-                        <button onclick="resetPoints()" class="btn btn-sm btn-outline">Reset</button>
-                        <button id="submitBtn" onclick="updateZoneFromClicks()"
-                                style="display: none;" disabled
-                                class="btn btn-sm btn-success">SUBMIT</button>
-                    </div>
-                </div>
-            </div>
-
-            {# Status #}
-            <div class="card bg-base-100 shadow-md">
-                <div class="card-body p-4">
-                    <h3 class="font-bold text-sm">4. Status</h3>
-                    <div id="config-version" class="font-mono text-xs bg-base-200 rounded p-2 mt-2"></div>
-                    <div id="status" class="font-mono text-xs bg-base-200 rounded p-2 mt-1"></div>
-                    <p class="text-xs opacity-50 mt-2">
-                        Select zone &rarr; Show zones &rarr; Adjust &rarr; Click required points (4 for stop zone) &rarr; Submit
-                    </p>
-                </div>
+            <div class="panel p-3">
+                <h3 class="text-xs font-medium text-white mb-2">4. Status</h3>
+                <div id="config-version" class="font-mono text-[10px] text-white/40 bg-surface-0 rounded p-2 border border-white/[0.04]"></div>
+                <div id="status" class="font-mono text-[10px] text-white/40 bg-surface-0 rounded p-2 mt-1 border border-white/[0.04]"></div>
+                <p class="text-[10px] text-white/20 mt-1.5">
+                    Select zone &rarr; Show zones &rarr; Adjust &rarr; Click points &rarr; Submit
+                </p>
             </div>
         </div>
     </div>
 
     {# Debug Tools #}
-    <div class="card bg-base-100 shadow-md">
-        <div class="card-body p-4">
-            <h3 class="font-bold text-sm">Debug Tools</h3>
-            <div class="flex gap-2 mt-2">
-                <button onclick="showCoordinateInfo()" class="btn btn-sm btn-outline">Coord Info</button>
-                <button onclick="debugCoordinates()" class="btn btn-sm btn-outline">Debug Transforms</button>
-            </div>
-            <div id="coordOutput" class="font-mono text-xs bg-base-200 rounded p-2 mt-2 max-h-40 overflow-auto whitespace-pre-wrap"></div>
-            <div id="debugOutput" class="font-mono text-xs bg-base-200 rounded p-2 mt-1 max-h-40 overflow-auto whitespace-pre-wrap"></div>
+    <div class="panel p-4">
+        <h3 class="text-xs font-medium text-white mb-2">Debug Tools</h3>
+        <div class="flex gap-1.5">
+            <button onclick="showCoordinateInfo()"
+                    class="px-2.5 py-1 text-[10px] font-mono rounded bg-white/[0.06] text-white/50 border border-white/[0.08] hover:bg-white/[0.1] transition-colors">Coord Info</button>
+            <button onclick="debugCoordinates()"
+                    class="px-2.5 py-1 text-[10px] font-mono rounded bg-white/[0.06] text-white/50 border border-white/[0.08] hover:bg-white/[0.1] transition-colors">Debug Transforms</button>
         </div>
+        <div id="coordOutput" class="font-mono text-[10px] text-white/40 bg-surface-0 rounded p-2 mt-2 max-h-40 overflow-auto whitespace-pre-wrap border border-white/[0.04]"></div>
+        <div id="debugOutput" class="font-mono text-[10px] text-white/40 bg-surface-0 rounded p-2 mt-1 max-h-40 overflow-auto whitespace-pre-wrap border border-white/[0.04]"></div>
     </div>
 </div>
 {% endblock %}

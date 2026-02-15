@@ -7,49 +7,41 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <h1 class="text-2xl font-bold">Vehicle Classification</h1>
+<div class="space-y-5">
+    <h1 class="text-lg font-semibold text-white">Vehicle Classification</h1>
 
     {# Summary stats #}
     <div id="vehicleSummary" hx-get="/api/vehicles/summary" hx-trigger="load">
         <div class="flex justify-center py-6">
-            <span class="loading loading-spinner loading-md"></span>
+            <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
         </div>
     </div>
 
-    {# Type and Color charts side by side #}
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    {# Type and Color charts #}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div id="vehicleTypes" hx-get="/api/vehicles/types" hx-trigger="load">
-            <div class="card bg-base-100 shadow-md">
-                <div class="card-body flex items-center justify-center py-12">
-                    <span class="loading loading-spinner loading-md"></span>
-                </div>
+            <div class="panel p-6 flex items-center justify-center min-h-[200px]">
+                <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
             </div>
         </div>
         <div id="vehicleColors" hx-get="/api/vehicles/colors" hx-trigger="load">
-            <div class="card bg-base-100 shadow-md">
-                <div class="card-body flex items-center justify-center py-12">
-                    <span class="loading loading-spinner loading-md"></span>
-                </div>
+            <div class="panel p-6 flex items-center justify-center min-h-[200px]">
+                <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
             </div>
         </div>
     </div>
 
     {# Make/Models #}
     <div id="vehicleMakeModels" hx-get="/api/vehicles/make-models" hx-trigger="load">
-        <div class="card bg-base-100 shadow-md">
-            <div class="card-body flex items-center justify-center py-12">
-                <span class="loading loading-spinner loading-md"></span>
-            </div>
+        <div class="panel p-6 flex items-center justify-center min-h-[200px]">
+            <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
         </div>
     </div>
 
     {# Gallery #}
     <div id="vehicleGallery" hx-get="/api/vehicles/gallery" hx-trigger="load">
-        <div class="card bg-base-100 shadow-md">
-            <div class="card-body flex items-center justify-center py-12">
-                <span class="loading loading-spinner loading-md"></span>
-            </div>
+        <div class="panel p-6 flex items-center justify-center min-h-[200px]">
+            <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
         </div>
     </div>
 </div>
