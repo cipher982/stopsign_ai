@@ -1,20 +1,8 @@
-{# Vehicle pass — compact row with image filling left side #}
-<div style="display: flex; border-bottom: 1px solid #d0d0d0; overflow: hidden;">
-    <img src="{{ item.image_url }}" alt="Vehicle"
-         style="width: 120px; height: 68px; object-fit: cover; display: block; flex-shrink: 0;"
-         loading="lazy" decoding="async">
-    <div style="flex: 1; padding: 4px 8px; display: flex; flex-direction: column; justify-content: center; min-width: 0;">
-        <div style="font-size: 12px; font-weight: 600;">{{ item.time_str }}</div>
-        <div style="display: flex; gap: 10px; margin-top: 2px;">
-            <span class="mono" style="font-size: 11px;">
-                <span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }} mph
-            </span>
-            <span class="mono" style="font-size: 11px;">
-                <span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s
-            </span>
-        </div>
-        {% if item.clip_url %}
-        <a href="{{ item.clip_url }}" target="_blank" style="font-size: 10px; color: #1F3A93; margin-top: 2px;">Replay</a>
-        {% endif %}
-    </div>
+{# Vehicle pass — single compact row, everything on one line #}
+<div style="display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-bottom: 1px solid #d0d0d0;">
+    <img src="{{ item.image_url }}" alt="" style="width: 44px; height: 32px; object-fit: cover; display: block; flex-shrink: 0; border: 1px solid #ccc;" loading="lazy" decoding="async">
+    <span style="font-size: 12px; font-weight: 600; white-space: nowrap;">{{ item.time_str }}</span>
+    <span class="mono" style="font-size: 11px; white-space: nowrap;"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }}</span>
+    <span class="mono" style="font-size: 11px; white-space: nowrap;"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</span>
+    {% if item.clip_url %}<a href="{{ item.clip_url }}" target="_blank" style="font-size: 10px; color: #1F3A93; margin-left: auto; white-space: nowrap;">Clip</a>{% endif %}
 </div>
