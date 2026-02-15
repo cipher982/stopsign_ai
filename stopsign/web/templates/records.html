@@ -7,21 +7,21 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-5">
+<div class="space-y-4">
     <div class="flex items-center gap-3">
-        <h1 class="text-lg font-semibold text-white">Vehicle Records</h1>
-        <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-400/10 text-amber-400/70 border border-amber-400/20">7 DAYS</span>
+        <h1 class="text-lg font-semibold text-txt">Vehicle Records</h1>
+        <span class="text-xs font-mono px-2 py-0.5 rounded bg-accent/10 text-accent border border-accent/20">7 DAYS</span>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div id="worstPasses" hx-get="/api/worst-passes" hx-trigger="load">
-            <div class="panel p-6 flex items-center justify-center min-h-[200px]">
-                <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            <div class="card-panel p-6 flex items-center justify-center min-h-[300px]">
+                <span class="text-txt-3 text-sm">Loading worst passes...</span>
             </div>
         </div>
         <div id="bestPasses" hx-get="/api/best-passes" hx-trigger="load">
-            <div class="panel p-6 flex items-center justify-center min-h-[200px]">
-                <svg class="w-5 h-5 animate-spin text-white/20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            <div class="card-panel p-6 flex items-center justify-center min-h-[300px]">
+                <span class="text-txt-3 text-sm">Loading best passes...</span>
             </div>
         </div>
     </div>

@@ -1,24 +1,28 @@
-<div class="flex items-center gap-3 p-2 rounded-md hover:bg-white/[0.03] transition-colors group">
-    <img src="{{ item.image_url }}" alt="Vehicle"
-         class="w-14 h-10 object-cover rounded flex-shrink-0 bg-surface-3 ring-1 ring-white/[0.06]"
-         loading="lazy" decoding="async">
-    <div class="flex-1 min-w-0">
-        <div class="text-[10px] font-mono text-white/30">{{ item.time_str }}</div>
-        <div class="flex items-center gap-2.5 mt-0.5">
+<div class="bg-panel-alt rounded-lg overflow-hidden border border-border hover:border-border-light transition-colors group">
+    <div class="relative">
+        <img src="{{ item.image_url }}" alt="Vehicle"
+             class="w-full aspect-[4/3] object-cover bg-panel"
+             loading="lazy" decoding="async">
+        {% if item.clip_url %}
+        <a href="{{ item.clip_url }}" target="_blank"
+           class="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors">
+            <span class="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-mono bg-black/60 px-2 py-1 rounded">REPLAY</span>
+        </a>
+        {% endif %}
+    </div>
+    <div class="p-2.5">
+        <div class="text-xs font-mono text-txt-2 mb-1.5">{{ item.time_str }}</div>
+        <div class="flex items-center gap-3">
             <div class="flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background-color: {{ item.speed_color }};"></span>
-                <span class="text-xs font-mono text-white/70">{{ "%.1f"|format(item.min_speed) }}<span class="text-white/30"> px/s</span></span>
+                <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {{ item.speed_color }};"></span>
+                <span class="text-sm font-mono text-txt font-medium">{{ "%.1f"|format(item.min_speed) }}</span>
+                <span class="text-xs text-txt-3">px/s</span>
             </div>
             <div class="flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background-color: {{ item.time_color }};"></span>
-                <span class="text-xs font-mono text-white/70">{{ "%.1f"|format(item.time_in_zone) }}<span class="text-white/30">s</span></span>
+                <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {{ item.time_color }};"></span>
+                <span class="text-sm font-mono text-txt font-medium">{{ "%.1f"|format(item.time_in_zone) }}</span>
+                <span class="text-xs text-txt-3">sec</span>
             </div>
         </div>
     </div>
-    {% if item.clip_url %}
-    <a href="{{ item.clip_url }}" target="_blank"
-       class="text-[10px] font-mono text-amber-400/50 hover:text-amber-400 transition-colors opacity-0 group-hover:opacity-100">
-        REPLAY
-    </a>
-    {% endif %}
 </div>
