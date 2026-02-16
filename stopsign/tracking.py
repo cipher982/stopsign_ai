@@ -151,6 +151,7 @@ class CarState:
     consecutive_stationary_frames: int = 0
     track: List[Tuple[Point, float]] = field(default_factory=list)
     last_update_time: float = 0.0
+    prev_update_time: float = 0.0
     in_stop_zone: bool = False
     passed_pre_stop_zone: bool = False
     entry_time: float = 0.0
@@ -194,6 +195,7 @@ class Car:
         smoothed_location = self.kalman_filter.update(np.array(location))
         self.state.location = (float(smoothed_location[0]), float(smoothed_location[1]))
         self.state.track.append((location, timestamp))
+        self.state.prev_update_time = self.state.last_update_time
         self.state.last_update_time = timestamp
 
     def _update_speed(self, current_timestamp: float) -> None:
@@ -524,7 +526,10 @@ class StopDetector:
         if car.state.raw_speed <= self.stop_speed_threshold:
             if car.state.stop_position == (0.0, 0.0):
                 car.state.stop_position = car.state.location
-            car.state.stop_duration += timestamp - car.state.last_update_time
+            # Use prev_update_time since last_update_time is already set to
+            # current timestamp by car.update() before stop detection runs.
+            dt = timestamp - car.state.prev_update_time if car.state.prev_update_time > 0 else 0.0
+            car.state.stop_duration += dt
         else:
             car.state.stop_position = (0.0, 0.0)
 
