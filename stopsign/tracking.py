@@ -41,6 +41,8 @@ class ZoneState:
     time_in_zone: float = 0.0
     consecutive_in_frames: int = 0
     consecutive_out_frames: int = 0
+    first_seen_in_zone: float = 0.0
+    first_seen_out_zone: float = 0.0
     min_speed: float = float("inf")
     speed_samples: List[float] = field(default_factory=list)
     stop_duration: float = 0.0
@@ -309,6 +311,8 @@ class StopDetector:
         self.capture_line_proc: Optional[np.ndarray] = None
         self.in_zone_frame_threshold = config.in_zone_frame_threshold
         self.out_zone_frame_threshold = config.out_zone_frame_threshold
+        self.in_zone_time_threshold = getattr(config, "in_zone_time_threshold", 0.2)
+        self.out_zone_time_threshold = getattr(config, "out_zone_time_threshold", 0.2)
         self.stop_speed_threshold = config.stop_speed_threshold
         self._video_analyzer = None  # Will be set by video analyzer
 
@@ -501,16 +505,29 @@ class StopDetector:
         if not car.state.zone.passed_pre_stop:
             return
 
-        # Update consecutive frame counters
+        # Update consecutive frame counters and time-based debounce timestamps
         if in_stop_zone:
             car.state.zone.consecutive_in_frames += 1
             car.state.zone.consecutive_out_frames = 0
+            car.state.zone.first_seen_out_zone = 0.0
+            if car.state.zone.first_seen_in_zone == 0.0:
+                car.state.zone.first_seen_in_zone = timestamp
         else:
             car.state.zone.consecutive_out_frames += 1
             car.state.zone.consecutive_in_frames = 0
+            car.state.zone.first_seen_in_zone = 0.0
+            if car.state.zone.first_seen_out_zone == 0.0:
+                car.state.zone.first_seen_out_zone = timestamp
 
-        # State transitions based on debounce counters
-        if car.state.zone.consecutive_in_frames >= self.in_zone_frame_threshold:
+        # Time-based state transitions with minimum observation guard
+        in_zone_elapsed = (
+            (timestamp - car.state.zone.first_seen_in_zone) if car.state.zone.first_seen_in_zone > 0 else 0.0
+        )
+        out_zone_elapsed = (
+            (timestamp - car.state.zone.first_seen_out_zone) if car.state.zone.first_seen_out_zone > 0 else 0.0
+        )
+
+        if in_zone_elapsed >= self.in_zone_time_threshold and car.state.zone.consecutive_in_frames >= 2:
             if not car.state.zone.in_zone:
                 car.state.zone.in_zone = True
                 car.state.zone.entry_time = timestamp
@@ -526,7 +543,7 @@ class StopDetector:
                         span.set_attribute("vehicle.location_y", car.state.location[1])
                 except Exception as e:
                     logger.warning(f"Failed to emit vehicle_zone_entered telemetry: {e}")
-        elif car.state.zone.consecutive_out_frames >= self.out_zone_frame_threshold:
+        elif out_zone_elapsed >= self.out_zone_time_threshold and car.state.zone.consecutive_out_frames >= 2:
             if car.state.zone.in_zone:
                 car.state.zone.in_zone = False
                 car.state.zone.exit_time = timestamp
