@@ -4,6 +4,8 @@ import logging
 import os
 import subprocess
 import time
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 
 from stopsign.database import Database
@@ -24,8 +26,25 @@ CLIP_EXPIRY_SEC = float(os.getenv("CLIP_EXPIRY_SEC", str(_CLIP_EXPIRY_DEFAULT)))
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"
 
 
+def _parse_program_date_time(value: str) -> float | None:
+    """Parse an ISO 8601 timestamp from #EXT-X-PROGRAM-DATE-TIME to epoch float."""
+    try:
+        # Handle 'Z' suffix which fromisoformat doesn't accept in Python <3.11
+        cleaned = value.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except (ValueError, OverflowError):
+        return None
+
+
 def _load_hls_segments(playlist_path: str):
-    """Parse HLS playlist and return segment timing metadata."""
+    """Parse HLS playlist and return segment timing metadata.
+
+    Uses #EXT-X-PROGRAM-DATE-TIME for accurate segment start times when
+    available, falling back to file mtime otherwise.
+    """
     if not os.path.exists(playlist_path):
         return []
 
@@ -39,9 +58,13 @@ def _load_hls_segments(playlist_path: str):
         return []
 
     current_duration = None
+    current_pdt = None  # program date-time epoch for current segment
     for line in lines:
         line = line.strip()
         if not line:
+            continue
+        if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
+            current_pdt = _parse_program_date_time(line.split(":", 1)[1])
             continue
         if line.startswith("#EXTINF:"):
             try:
@@ -57,8 +80,14 @@ def _load_hls_segments(playlist_path: str):
         seg_path = os.path.join(stream_dir, line)
         if os.path.exists(seg_path):
             try:
-                end_ts = os.path.getmtime(seg_path)
-                start_ts = end_ts - current_duration
+                if current_pdt is not None:
+                    # Accurate: use program date-time as segment start
+                    start_ts = current_pdt
+                    end_ts = start_ts + current_duration
+                else:
+                    # Fallback: derive from file mtime
+                    end_ts = os.path.getmtime(seg_path)
+                    start_ts = end_ts - current_duration
                 segments.append(
                     {
                         "path": seg_path,
@@ -70,6 +99,7 @@ def _load_hls_segments(playlist_path: str):
             except OSError:
                 pass
         current_duration = None
+        current_pdt = None
 
     segments.sort(key=lambda s: s["start"])
     return segments
