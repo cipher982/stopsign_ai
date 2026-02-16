@@ -30,7 +30,7 @@ stopsign_detection:
     - 837.0373867069487
   - - 1767.509025270758
     - 1061.0857250755287
-  stop_speed_threshold: 20
+  stop_speed_threshold: 50
   unparked_frame_threshold: 20
   unparked_speed_threshold: 30
 stream_settings:

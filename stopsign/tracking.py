@@ -213,15 +213,16 @@ class Car:
             self.state.velocity = (float(median_velocity[0]), float(median_velocity[1]))
             self.state.speed = float(np.linalg.norm(median_velocity))
 
-            # Calculate raw speed using the last 3 frames
-            last_3_positions = positions[-3:]
-            last_3_times = time_diffs[-3:]
-            raw_velocities = np.diff(last_3_positions, axis=0) / np.diff(last_3_times)[:, np.newaxis]
-            raw_speed = float(np.mean(np.linalg.norm(raw_velocities, axis=1)))
+            # Calculate raw speed using the last 6 frames (median filters bbox jitter)
+            if history_length >= 6:
+                last_n_positions = positions[-6:]
+                last_n_times = time_diffs[-6:]
+                raw_velocities = np.diff(last_n_positions, axis=0) / np.diff(last_n_times)[:, np.newaxis]
+                raw_speed = float(np.median(np.linalg.norm(raw_velocities, axis=1)))
 
-            # Apply light smoothing to raw speed
-            raw_alpha = 0.5
-            self.state.raw_speed = raw_alpha * raw_speed + (1 - raw_alpha) * self.state.raw_speed
+                # Apply light smoothing to raw speed
+                raw_alpha = 0.5
+                self.state.raw_speed = raw_alpha * raw_speed + (1 - raw_alpha) * self.state.raw_speed
         else:
             self.state.velocity = (0.0, 0.0)
             self.state.speed = 0.0
