@@ -1,0 +1,11 @@
+{
+  "snapshot_time": "2026-02-16T14:21:40",
+  "total_passes_7d": 131,
+  "passes_with_stop_duration": 0,
+  "avg_min_speed_7d": 63.87,
+  "median_min_speed_7d": 46.53,
+  "pct_below_20pxs": 12.2,
+  "pct_below_50pxs": 56.5,
+  "avg_time_in_zone": 4.42,
+  "compliance_rate_2s": 91.6
+}
