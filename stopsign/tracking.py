@@ -459,8 +459,11 @@ class StopDetector:
             if car.state.zone.stop_position == (0.0, 0.0):
                 car.state.zone.stop_position = car.state.location
             # Clamp prev_timestamp to entry_time so we never count time before zone entry
-            effective_prev = max(prev_timestamp, car.state.zone.entry_time) if prev_timestamp > 0 else 0.0
-            dt = timestamp - effective_prev if effective_prev > 0 else 0.0
+            entry = car.state.zone.entry_time
+            if prev_timestamp <= 0 or entry <= 0:
+                dt = 0.0
+            else:
+                dt = timestamp - max(prev_timestamp, entry)
             car.state.zone.stop_duration += dt
         else:
             car.state.zone.stop_position = (0.0, 0.0)

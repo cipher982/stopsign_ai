@@ -443,9 +443,12 @@ class TestStopDurationClamping:
             prev_ts = base + (i - 1) * 0.1
             detector.update_car_stop_status(car, ts, frame, prev_timestamp=prev_ts)
 
-        # stop_duration should be <= elapsed time since entry, never include pre-entry gap
-        if car.state.zone.stop_duration > 0:
-            assert car.state.zone.stop_duration <= 0.5  # At most 0.4s of in-zone time
+        # stop_duration must have accumulated (car is stopped in zone)
+        assert car.state.zone.stop_duration > 0, "stop_duration should accumulate for stopped car in zone"
+        # stop_duration must not exceed time since entry
+        if car.state.zone.entry_time > 0:
+            max_possible = (base + 4 * 0.1) - car.state.zone.entry_time
+            assert car.state.zone.stop_duration <= max_possible + 0.01
 
     def test_stop_duration_with_large_dt_gap(self, mock_config, mock_database):
         """A large dt gap before entry should not inflate stop_duration."""
@@ -540,6 +543,31 @@ class TestTimeDebouncedZoneTransitions:
         detector.update_car_stop_status(car, base + 1.0, frame)
 
         assert car.state.zone.in_zone is False
+
+    def test_exit_debounce_requires_sustained_absence(self, mock_config, mock_database):
+        """Car should not exit zone on a single out-of-zone frame."""
+        detector = self._make_detector(mock_config, mock_database, in_time=0.1, out_time=0.2)
+        car = Car(id=1, config=mock_config)
+        car.state.raw_speed = 50.0
+        base = 1000.0
+        frame = np.zeros((700, 700, 3), dtype=np.uint8)
+
+        # Cross pre-stop line and enter zone
+        self._cross_pre_stop(detector, car, base)
+        car.state.bbox = (100.0, 450.0, 200.0, 550.0)
+        for i in range(1, 5):
+            detector.update_car_stop_status(car, base + i * 0.07, frame)
+        assert car.state.zone.in_zone is True
+
+        # Single frame outside zone — should NOT exit yet
+        car.state.bbox = (100.0, 50.0, 200.0, 150.0)  # Outside zone
+        detector.update_car_stop_status(car, base + 0.5, frame)
+        assert car.state.zone.in_zone is True, "Should not exit zone after single out-of-zone frame"
+
+        # Back in zone — resets out-of-zone debounce
+        car.state.bbox = (100.0, 450.0, 200.0, 550.0)
+        detector.update_car_stop_status(car, base + 0.6, frame)
+        assert car.state.zone.in_zone is True
 
 
 class TestResetCarState:
