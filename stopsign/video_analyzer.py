@@ -576,7 +576,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
             # Stop Detection - only on YOLO frames (state doesn't change between detections)
             stop_detection_start = time.time()
-            active_cars = [car for car in self.car_tracker.get_cars().values() if not car.state.motion.is_parked]
+            # Only run stop detection for cars detected in this YOLO frame
+            # to avoid stale prev_timestamps inflating stop_duration
+            current_ids = self.car_tracker.current_frame_car_ids
+            active_cars = [
+                car
+                for car in self.car_tracker.get_cars().values()
+                if not car.state.motion.is_parked and car.id in current_ids
+            ]
 
             violations_detected = 0
 

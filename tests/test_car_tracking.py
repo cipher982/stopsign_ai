@@ -2,10 +2,13 @@
 
 import time
 
+import numpy as np
 import pytest
 
 from stopsign.tracking import Car
 from stopsign.tracking import CarState
+from stopsign.tracking import CarTracker
+from stopsign.tracking import StopDetector
 
 
 class TestCarState:
@@ -402,3 +405,212 @@ class TestBboxXYXYFormat:
         height = y2 - y1
         assert width == pytest.approx(50.0, abs=0.1), f"Width should be preserved at 50, got {width}"
         assert height == pytest.approx(30.0, abs=0.1), f"Height should be preserved at 30, got {height}"
+
+
+class TestStopDurationClamping:
+    """Test that stop_duration never exceeds time_in_zone."""
+
+    def _make_detector(self, mock_config, mock_database):
+        """Create a StopDetector with stop zone geometry bypassed."""
+        mock_config.in_zone_frame_threshold = 3
+        mock_config.out_zone_frame_threshold = 3
+        mock_config.in_zone_time_threshold = 0.1
+        mock_config.out_zone_time_threshold = 0.1
+        mock_config.stop_speed_threshold = 20.0
+        detector = StopDetector(mock_config, mock_database)
+        # Stop zone: y=400-600. Pre-stop and capture lines above zone.
+        detector.stop_zone = np.array([[0, 400], [600, 400], [600, 600], [0, 600]], dtype=np.float32)
+        detector.pre_stop_line_proc = np.array([[0, 300], [600, 300]], dtype=np.float32)
+        detector.capture_line_proc = np.array([[0, 350], [600, 350]], dtype=np.float32)
+        return detector
+
+    def test_stop_duration_clamped_to_entry_time(self, mock_config, mock_database):
+        """stop_duration should not include time before zone entry."""
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=1, config=mock_config)
+        car.state.raw_speed = 5.0  # Below stop threshold
+        base = 1000.0
+        frame = np.zeros((700, 700, 3), dtype=np.uint8)
+
+        # Cross pre-stop line (y=300), outside zone
+        car.state.bbox = (100.0, 280.0, 200.0, 320.0)
+        detector.update_car_stop_status(car, base, frame, prev_timestamp=base - 1.0)
+
+        # Move car into the stop zone for enough frames to pass debounce
+        car.state.bbox = (100.0, 450.0, 200.0, 550.0)
+        for i in range(1, 5):
+            ts = base + i * 0.1
+            prev_ts = base + (i - 1) * 0.1
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=prev_ts)
+
+        # stop_duration should be <= elapsed time since entry, never include pre-entry gap
+        if car.state.zone.stop_duration > 0:
+            assert car.state.zone.stop_duration <= 0.5  # At most 0.4s of in-zone time
+
+    def test_stop_duration_with_large_dt_gap(self, mock_config, mock_database):
+        """A large dt gap before entry should not inflate stop_duration."""
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=1, config=mock_config)
+        car.state.raw_speed = 5.0
+        base = 1000.0
+        frame = np.zeros((700, 700, 3), dtype=np.uint8)
+
+        # Cross pre-stop line
+        car.state.bbox = (100.0, 280.0, 200.0, 320.0)
+        detector.update_car_stop_status(car, base, frame, prev_timestamp=0.0)
+
+        # Large gap (5 seconds), then enter zone
+        car.state.bbox = (100.0, 450.0, 200.0, 550.0)
+        for i in range(5):
+            ts = base + 5.0 + i * 0.1
+            prev_ts = base if i == 0 else (base + 5.0 + (i - 1) * 0.1)
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=prev_ts)
+
+        # stop_duration should be at most the time spent since entry, not 5+ seconds
+        assert car.state.zone.stop_duration < 2.0
+
+
+class TestTimeDebouncedZoneTransitions:
+    """Test time-based zone entry/exit debouncing."""
+
+    def _make_detector(self, mock_config, mock_database, in_time=0.2, out_time=0.2):
+        mock_config.in_zone_frame_threshold = 3
+        mock_config.out_zone_frame_threshold = 3
+        mock_config.in_zone_time_threshold = in_time
+        mock_config.out_zone_time_threshold = out_time
+        mock_config.stop_speed_threshold = 20.0
+        detector = StopDetector(mock_config, mock_database)
+        # Stop zone: y=400-600 region. Pre-stop and capture lines above the zone.
+        detector.stop_zone = np.array([[0, 400], [600, 400], [600, 600], [0, 600]], dtype=np.float32)
+        detector.pre_stop_line_proc = np.array([[0, 300], [600, 300]], dtype=np.float32)
+        detector.capture_line_proc = np.array([[0, 350], [600, 350]], dtype=np.float32)
+        return detector
+
+    def _cross_pre_stop(self, detector, car, base):
+        """Move car across pre-stop line (y=300), outside stop zone."""
+        frame = np.zeros((700, 700, 3), dtype=np.uint8)
+        car.state.bbox = (100.0, 280.0, 200.0, 320.0)  # Spans y=300 line
+        detector.update_car_stop_status(car, base, frame)
+
+    def test_single_frame_in_zone_does_not_trigger_entry(self, mock_config, mock_database):
+        """A single detection inside zone should not count as zone entry."""
+        detector = self._make_detector(mock_config, mock_database, in_time=0.2)
+        car = Car(id=1, config=mock_config)
+        car.state.raw_speed = 50.0
+        base = 1000.0
+        frame = np.zeros((700, 700, 3), dtype=np.uint8)
+
+        self._cross_pre_stop(detector, car, base)
+
+        # Single frame in zone
+        car.state.bbox = (100.0, 450.0, 200.0, 550.0)
+        detector.update_car_stop_status(car, base + 0.05, frame)
+
+        assert car.state.zone.in_zone is False
+
+    def test_sustained_presence_triggers_entry(self, mock_config, mock_database):
+        """Multiple frames over time threshold should trigger zone entry."""
+        detector = self._make_detector(mock_config, mock_database, in_time=0.15)
+        car = Car(id=1, config=mock_config)
+        car.state.raw_speed = 50.0
+        base = 1000.0
+        frame = np.zeros((700, 700, 3), dtype=np.uint8)
+
+        self._cross_pre_stop(detector, car, base)
+
+        # Multiple frames in zone over 0.2s
+        car.state.bbox = (100.0, 450.0, 200.0, 550.0)
+        for i in range(1, 5):
+            detector.update_car_stop_status(car, base + i * 0.07, frame)
+
+        assert car.state.zone.in_zone is True
+
+    def test_min_observation_guard(self, mock_config, mock_database):
+        """Even with enough elapsed time, need >= 2 observations to enter."""
+        detector = self._make_detector(mock_config, mock_database, in_time=0.05)
+        car = Car(id=1, config=mock_config)
+        car.state.raw_speed = 50.0
+        base = 1000.0
+        frame = np.zeros((700, 700, 3), dtype=np.uint8)
+
+        self._cross_pre_stop(detector, car, base)
+
+        # Single frame in zone with large dt (time threshold easily met, but only 1 observation)
+        car.state.bbox = (100.0, 450.0, 200.0, 550.0)
+        detector.update_car_stop_status(car, base + 1.0, frame)
+
+        assert car.state.zone.in_zone is False
+
+
+class TestResetCarState:
+    """Test that _reset_car_state fully resets all sub-states."""
+
+    def test_full_motion_reset(self, mock_config, mock_database):
+        """Motion state timestamps should be reset on pass completion."""
+        detector = StopDetector(mock_config, mock_database)
+        car = Car(id=1, config=mock_config)
+
+        # Set up some motion state
+        car.state.motion.is_parked = False
+        car.state.motion.moving_since = 1000.0
+        car.state.motion.stationary_since = 999.0
+        car.state.motion.consecutive_moving_frames = 10
+
+        detector._reset_car_state(car)
+
+        assert car.state.motion.is_parked is True
+        assert car.state.motion.moving_since == 0.0
+        assert car.state.motion.stationary_since == 0.0
+        assert car.state.motion.consecutive_moving_frames == 0
+        assert car.state.motion.consecutive_stationary_frames == 0
+
+    def test_zone_and_capture_reset(self, mock_config, mock_database):
+        """Zone and capture states should be fully reset."""
+        detector = StopDetector(mock_config, mock_database)
+        car = Car(id=1, config=mock_config)
+
+        car.state.zone.in_zone = True
+        car.state.zone.stop_duration = 3.5
+        car.state.zone.speed_samples = [10.0, 15.0, 20.0]
+        car.state.capture.image_captured = True
+        car.state.capture.image_path = "/some/path.jpg"
+
+        detector._reset_car_state(car)
+
+        assert car.state.zone.in_zone is False
+        assert car.state.zone.stop_duration == 0.0
+        assert car.state.zone.speed_samples == []
+        assert car.state.capture.image_captured is False
+        assert car.state.capture.image_path == ""
+
+
+class TestCurrentFrameCarIds:
+    """Test that CarTracker exposes current_frame_car_ids correctly."""
+
+    def test_current_frame_ids_populated(self, mock_config, mock_database):
+        """current_frame_car_ids should contain only cars from the latest update."""
+        from tests.conftest import MockBox
+
+        tracker = CarTracker(mock_config, mock_database)
+        frame = np.zeros((300, 300, 3), dtype=np.uint8)
+        base = 1000.0
+
+        # First frame: cars 1 and 2
+        boxes = [
+            MockBox(car_id=1, x=150.0, y=150.0, w=50.0, h=30.0),
+            MockBox(car_id=2, x=200.0, y=200.0, w=50.0, h=30.0),
+        ]
+        tracker.update_cars(boxes, base, frame)
+        assert tracker.current_frame_car_ids == {1, 2}
+
+        # Second frame: only car 1
+        boxes = [MockBox(car_id=1, x=155.0, y=150.0, w=50.0, h=30.0)]
+        tracker.update_cars(boxes, base + 0.1, frame)
+        assert tracker.current_frame_car_ids == {1}
+
+    def test_empty_frame(self, mock_config, mock_database):
+        """current_frame_car_ids should be empty when no detections."""
+        tracker = CarTracker(mock_config, mock_database)
+        frame = np.zeros((300, 300, 3), dtype=np.uint8)
+        tracker.update_cars([], 1000.0, frame)
+        assert tracker.current_frame_car_ids == set()

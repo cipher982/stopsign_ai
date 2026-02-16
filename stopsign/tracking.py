@@ -240,6 +240,7 @@ class CarTracker:
         self.db = db
         self.last_seen: Dict[int, float] = {}
         self.prev_timestamps: Dict[int, float] = {}
+        self.current_frame_car_ids: set[int] = set()
         self.persistence_threshold = 10.0  # seconds
 
         # Initialize tracer once for better performance
@@ -248,7 +249,7 @@ class CarTracker:
         self._tracer = get_tracer("stopsign.vehicle_tracking")
 
     def update_cars(self, boxes: List, timestamp: float, frame: np.ndarray) -> None:
-        current_car_ids = set()
+        current_car_ids: set[int] = set()
 
         for box in boxes:
             if box.id is None:
@@ -284,6 +285,9 @@ class CarTracker:
                 self.last_seen[car_id] = timestamp
             except Exception as e:
                 logger.error(f"Error updating car {box.id}: {str(e)}")
+
+        # Expose which cars were detected this frame (for stop detection gating)
+        self.current_frame_car_ids = current_car_ids
 
         # Handle cars no longer tracked
         for car_id in list(self.cars.keys()):
@@ -454,7 +458,9 @@ class StopDetector:
         if car.state.raw_speed <= self.stop_speed_threshold:
             if car.state.zone.stop_position == (0.0, 0.0):
                 car.state.zone.stop_position = car.state.location
-            dt = timestamp - prev_timestamp if prev_timestamp > 0 else 0.0
+            # Clamp prev_timestamp to entry_time so we never count time before zone entry
+            effective_prev = max(prev_timestamp, car.state.zone.entry_time) if prev_timestamp > 0 else 0.0
+            dt = timestamp - effective_prev if effective_prev > 0 else 0.0
             car.state.zone.stop_duration += dt
         else:
             car.state.zone.stop_position = (0.0, 0.0)
@@ -596,8 +602,7 @@ class StopDetector:
     def _reset_car_state(self, car: Car) -> None:
         car.state.zone = ZoneState()
         car.state.capture = CaptureState()
-        car.state.motion.consecutive_moving_frames = 0
-        car.state.motion.consecutive_stationary_frames = 0
+        car.state.motion = MotionState()
         logger.debug(f"Reset state for Car {car.id}")
 
     def is_in_capture_zone(self, bbox: Tuple[float, float, float, float]) -> bool:
