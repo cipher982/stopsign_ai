@@ -24,6 +24,36 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class MotionState:
+    is_parked: bool = True
+    consecutive_moving_frames: int = 0
+    consecutive_stationary_frames: int = 0
+    stationary_since: float = 0.0
+    moving_since: float = 0.0
+
+
+@dataclass
+class ZoneState:
+    in_zone: bool = False
+    passed_pre_stop: bool = False
+    entry_time: float = 0.0
+    exit_time: float = 0.0
+    time_in_zone: float = 0.0
+    consecutive_in_frames: int = 0
+    consecutive_out_frames: int = 0
+    min_speed: float = float("inf")
+    speed_samples: List[float] = field(default_factory=list)
+    stop_duration: float = 0.0
+    stop_position: Point = field(default_factory=lambda: (0.0, 0.0))
+
+
+@dataclass
+class CaptureState:
+    image_captured: bool = False
+    image_path: str = ""
+
+
+@dataclass
 class CarState:
     location: Point = field(default_factory=lambda: (0.0, 0.0))
     bbox: Tuple[float, float, float, float] = field(default_factory=lambda: (0.0, 0.0, 0.0, 0.0))
@@ -31,26 +61,11 @@ class CarState:
     speed: float = 0.0
     prev_speed: float = 0.0
     velocity: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
-    is_parked: bool = True
-    consecutive_moving_frames: int = 0
-    consecutive_stationary_frames: int = 0
-    stationary_since: float = 0.0
-    moving_since: float = 0.0
     track: List[Tuple[Point, float]] = field(default_factory=list)
     last_update_time: float = 0.0
-    in_stop_zone: bool = False
-    passed_pre_stop_zone: bool = False
-    entry_time: float = 0.0
-    exit_time: float = 0.0
-    time_in_zone: float = 0.0
-    consecutive_in_zone_frames: int = 0
-    consecutive_out_zone_frames: int = 0
-    min_speed_in_zone: float = float("inf")
-    speed_samples_in_zone: List[float] = field(default_factory=list)
-    stop_duration: float = 0.0
-    stop_position: Point = field(default_factory=lambda: (0.0, 0.0))
-    image_captured: bool = False
-    image_path: str = ""
+    motion: MotionState = field(default_factory=MotionState)
+    zone: ZoneState = field(default_factory=ZoneState)
+    capture: CaptureState = field(default_factory=CaptureState)
 
 
 class Car:
@@ -127,17 +142,17 @@ class Car:
         """Update the car's movement status based on its speed (time-based)."""
         now = self.state.last_update_time
         if abs(self.state.speed) < self.config.max_movement_speed:
-            self.state.consecutive_moving_frames = 0
-            self.state.consecutive_stationary_frames += 1
-            if self.state.stationary_since == 0.0:
-                self.state.stationary_since = now
-            self.state.moving_since = 0.0
+            self.state.motion.consecutive_moving_frames = 0
+            self.state.motion.consecutive_stationary_frames += 1
+            if self.state.motion.stationary_since == 0.0:
+                self.state.motion.stationary_since = now
+            self.state.motion.moving_since = 0.0
         else:
-            self.state.consecutive_moving_frames += 1
-            self.state.consecutive_stationary_frames = 0
-            if self.state.moving_since == 0.0:
-                self.state.moving_since = now
-            self.state.stationary_since = 0.0
+            self.state.motion.consecutive_moving_frames += 1
+            self.state.motion.consecutive_stationary_frames = 0
+            if self.state.motion.moving_since == 0.0:
+                self.state.motion.moving_since = now
+            self.state.motion.stationary_since = 0.0
 
     def get_direction(self) -> float:
         """Calculate the direction based on recent trajectory using linear regression."""
@@ -178,18 +193,20 @@ class Car:
         parked_time = getattr(self.config, "parked_time_threshold", None) or 4.0
         unparked_time = getattr(self.config, "unparked_time_threshold", None) or 1.33
 
-        if self.state.is_parked:
-            moving_elapsed = (now - self.state.moving_since) if self.state.moving_since > 0 else 0.0
+        if self.state.motion.is_parked:
+            moving_elapsed = (now - self.state.motion.moving_since) if self.state.motion.moving_since > 0 else 0.0
             if moving_elapsed >= unparked_time or self.state.speed > self.config.unparked_speed_threshold:
-                self.state.is_parked = False
-                self.state.consecutive_stationary_frames = 0
-                self.state.stationary_since = 0.0
+                self.state.motion.is_parked = False
+                self.state.motion.consecutive_stationary_frames = 0
+                self.state.motion.stationary_since = 0.0
         else:
-            stationary_elapsed = (now - self.state.stationary_since) if self.state.stationary_since > 0 else 0.0
+            stationary_elapsed = (
+                (now - self.state.motion.stationary_since) if self.state.motion.stationary_since > 0 else 0.0
+            )
             if stationary_elapsed >= parked_time:
-                self.state.is_parked = True
-                self.state.consecutive_moving_frames = 0
-                self.state.moving_since = 0.0
+                self.state.motion.is_parked = True
+                self.state.motion.consecutive_moving_frames = 0
+                self.state.motion.moving_since = 0.0
 
     def get_interpolated_bbox(self, current_ts: float) -> Tuple[float, float, float, float]:
         """Predict bbox position based on velocity and time since last YOLO update.
@@ -210,7 +227,7 @@ class Car:
     def __repr__(self) -> str:
         return (
             f"Car {self.id} @ ({self.state.location[0]:.2f}, {self.state.location[1]:.2f}) "
-            f"(Speed: {self.state.speed:.1f}px/s, Parked: {self.state.is_parked})"
+            f"(Speed: {self.state.speed:.1f}px/s, Parked: {self.state.motion.is_parked})"
         )
 
 
@@ -431,12 +448,12 @@ class StopDetector:
 
     def _update_stop_duration(self, car: Car, timestamp: float, prev_timestamp: float) -> None:
         if car.state.raw_speed <= self.stop_speed_threshold:
-            if car.state.stop_position == (0.0, 0.0):
-                car.state.stop_position = car.state.location
+            if car.state.zone.stop_position == (0.0, 0.0):
+                car.state.zone.stop_position = car.state.location
             dt = timestamp - prev_timestamp if prev_timestamp > 0 else 0.0
-            car.state.stop_duration += dt
+            car.state.zone.stop_duration += dt
         else:
-            car.state.stop_position = (0.0, 0.0)
+            car.state.zone.stop_position = (0.0, 0.0)
 
     def update_car_stop_status(
         self, car: Car, timestamp: float, frame: np.ndarray, prev_timestamp: float = 0.0
@@ -468,35 +485,35 @@ class StopDetector:
         in_stop_zone = self._check_polygon_intersection(car_polygon, self.stop_zone)
 
         # Update pre-stop zone flag only if not already in stop zone
-        if crossed_pre_stop_line and not in_stop_zone and not car.state.passed_pre_stop_zone:
-            car.state.passed_pre_stop_zone = True
+        if crossed_pre_stop_line and not in_stop_zone and not car.state.zone.passed_pre_stop:
+            car.state.zone.passed_pre_stop = True
 
         # Check if car crosses the capture line (only capture if pre-stop line was crossed first)
         # This ensures we only capture cars going the correct direction (right-to-left)
         if (
-            car.state.passed_pre_stop_zone
-            and not car.state.image_captured
+            car.state.zone.passed_pre_stop
+            and not car.state.capture.image_captured
             and self._polygon_crosses_line(car_polygon, self.capture_line_proc)
         ):
             self.capture_car_image(car, timestamp, frame)
 
         # Only proceed with stop zone logic if pre-stop zone was passed
-        if not car.state.passed_pre_stop_zone:
+        if not car.state.zone.passed_pre_stop:
             return
 
         # Update consecutive frame counters
         if in_stop_zone:
-            car.state.consecutive_in_zone_frames += 1
-            car.state.consecutive_out_zone_frames = 0
+            car.state.zone.consecutive_in_frames += 1
+            car.state.zone.consecutive_out_frames = 0
         else:
-            car.state.consecutive_out_zone_frames += 1
-            car.state.consecutive_in_zone_frames = 0
+            car.state.zone.consecutive_out_frames += 1
+            car.state.zone.consecutive_in_frames = 0
 
         # State transitions based on debounce counters
-        if car.state.consecutive_in_zone_frames >= self.in_zone_frame_threshold:
-            if not car.state.in_stop_zone:
-                car.state.in_stop_zone = True
-                car.state.entry_time = timestamp
+        if car.state.zone.consecutive_in_frames >= self.in_zone_frame_threshold:
+            if not car.state.zone.in_zone:
+                car.state.zone.in_zone = True
+                car.state.zone.entry_time = timestamp
                 logger.debug(f"Car {car.id} has entered the stop zone at {timestamp}")
 
                 # Emit telemetry for vehicle entering stop zone
@@ -509,78 +526,61 @@ class StopDetector:
                         span.set_attribute("vehicle.location_y", car.state.location[1])
                 except Exception as e:
                     logger.warning(f"Failed to emit vehicle_zone_entered telemetry: {e}")
-        elif car.state.consecutive_out_zone_frames >= self.out_zone_frame_threshold:
-            if car.state.in_stop_zone:
-                car.state.in_stop_zone = False
-                car.state.exit_time = timestamp
-                car.state.time_in_zone = car.state.exit_time - car.state.entry_time
+        elif car.state.zone.consecutive_out_frames >= self.out_zone_frame_threshold:
+            if car.state.zone.in_zone:
+                car.state.zone.in_zone = False
+                car.state.zone.exit_time = timestamp
+                car.state.zone.time_in_zone = car.state.zone.exit_time - car.state.zone.entry_time
                 logger.debug(f"Car {car.id} has exited the stop zone at {timestamp}")
 
                 # Emit business telemetry for completed vehicle pass
                 try:
                     with self._tracer.start_as_current_span("vehicle_pass_completed") as span:
                         span.set_attribute("vehicle.id", car.id)
-                        span.set_attribute("vehicle.time_in_zone", car.state.time_in_zone)
-                        span.set_attribute("vehicle.stop_duration", car.state.stop_duration)
-                        span.set_attribute("vehicle.min_speed", car.state.min_speed_in_zone)
-                        span.set_attribute("vehicle.has_image", bool(car.state.image_path))
-                        span.set_attribute("vehicle.entry_time", car.state.entry_time)
-                        span.set_attribute("vehicle.exit_time", car.state.exit_time)
+                        span.set_attribute("vehicle.time_in_zone", car.state.zone.time_in_zone)
+                        span.set_attribute("vehicle.stop_duration", car.state.zone.stop_duration)
+                        span.set_attribute("vehicle.min_speed", car.state.zone.min_speed)
+                        span.set_attribute("vehicle.has_image", bool(car.state.capture.image_path))
+                        span.set_attribute("vehicle.entry_time", car.state.zone.entry_time)
+                        span.set_attribute("vehicle.exit_time", car.state.zone.exit_time)
                 except Exception as e:
                     logger.warning(f"Failed to emit vehicle_pass_completed telemetry: {e}")
 
                 # Compute robust min speed from collected samples (5th percentile)
-                if len(car.state.speed_samples_in_zone) >= 3:
-                    car.state.min_speed_in_zone = float(np.percentile(car.state.speed_samples_in_zone, 5))
-                elif car.state.speed_samples_in_zone:
-                    car.state.min_speed_in_zone = min(car.state.speed_samples_in_zone)
+                if len(car.state.zone.speed_samples) >= 3:
+                    car.state.zone.min_speed = float(np.percentile(car.state.zone.speed_samples, 5))
+                elif car.state.zone.speed_samples:
+                    car.state.zone.min_speed = min(car.state.zone.speed_samples)
 
                 # Save data to the database
                 self.db.add_vehicle_pass(
                     vehicle_id=car.id,
-                    time_in_zone=car.state.time_in_zone,
-                    stop_duration=car.state.stop_duration,
-                    min_speed=car.state.min_speed_in_zone,
-                    image_path=car.state.image_path,
-                    entry_time=car.state.entry_time,
-                    exit_time=car.state.exit_time,
+                    time_in_zone=car.state.zone.time_in_zone,
+                    stop_duration=car.state.zone.stop_duration,
+                    min_speed=car.state.zone.min_speed,
+                    image_path=car.state.capture.image_path,
+                    entry_time=car.state.zone.entry_time,
+                    exit_time=car.state.zone.exit_time,
                 )
                 logger.info(
                     f"Vehicle pass recorded: ID={car.id}, "
-                    f"Time in zone={car.state.time_in_zone:.2f}s, "
-                    f"Stop duration={car.state.stop_duration:.2f}s, "
-                    f"Min speed={car.state.min_speed_in_zone:.2f}px/s "
+                    f"Time in zone={car.state.zone.time_in_zone:.2f}s, "
+                    f"Stop duration={car.state.zone.stop_duration:.2f}s, "
+                    f"Min speed={car.state.zone.min_speed:.2f}px/s "
                     f"Timestamp={datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')}"
                 )
                 # Reset state
                 self._reset_car_state(car)
 
-        if car.state.in_stop_zone:
+        if car.state.zone.in_zone:
             self._update_stop_duration(car, timestamp, prev_timestamp)
-            car.state.speed_samples_in_zone.append(car.state.raw_speed)
+            car.state.zone.speed_samples.append(car.state.raw_speed)
 
     def _reset_car_state(self, car: Car) -> None:
-        # Reset stop zone related attributes
-        car.state.in_stop_zone = False
-        car.state.passed_pre_stop_zone = False
-        car.state.entry_time = 0.0
-        car.state.exit_time = 0.0
-        car.state.time_in_zone = 0.0
-        car.state.consecutive_in_zone_frames = 0
-        car.state.consecutive_out_zone_frames = 0
-        car.state.min_speed_in_zone = float("inf")
-        car.state.speed_samples_in_zone = []
-        car.state.stop_duration = 0.0
-        car.state.stop_position = (0.0, 0.0)
-
-        # Reset image capture related attributes
-        car.state.image_captured = False
-        car.state.image_path = ""
-
-        # Optionally, you might want to reset some movement-related attributes
-        car.state.consecutive_moving_frames = 0
-        car.state.consecutive_stationary_frames = 0
-
+        car.state.zone = ZoneState()
+        car.state.capture = CaptureState()
+        car.state.motion.consecutive_moving_frames = 0
+        car.state.motion.consecutive_stationary_frames = 0
         logger.debug(f"Reset state for Car {car.id}")
 
     def is_in_capture_zone(self, bbox: Tuple[float, float, float, float]) -> bool:
@@ -597,5 +597,5 @@ class StopDetector:
             bbox=car.state.bbox,
             db=self.db,
         )
-        car.state.image_captured = True
-        car.state.image_path = image_path
+        car.state.capture.image_captured = True
+        car.state.capture.image_path = image_path

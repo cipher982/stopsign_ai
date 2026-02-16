@@ -576,7 +576,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
             # Stop Detection - only on YOLO frames (state doesn't change between detections)
             stop_detection_start = time.time()
-            active_cars = [car for car in self.car_tracker.get_cars().values() if not car.state.is_parked]
+            active_cars = [car for car in self.car_tracker.get_cars().values() if not car.state.motion.is_parked]
 
             violations_detected = 0
 
@@ -637,7 +637,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         self.cars_tracked.set(len(self.car_tracker.get_cars()))
         cars_in_stop_zone = sum(
-            1 for car in self.car_tracker.get_cars().values() if car.state.in_stop_zone and not car.state.is_parked
+            1
+            for car in self.car_tracker.get_cars().values()
+            if car.state.zone.in_zone and not car.state.motion.is_parked
         )
         self.cars_in_stop_zone.set(cars_in_stop_zone)
 
@@ -780,7 +782,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
     ) -> np.ndarray:
         overlay = frame.copy()
 
-        car_in_stop_zone = any(car.state.in_stop_zone for car in cars.values() if not car.state.is_parked)
+        car_in_stop_zone = any(car.state.zone.in_zone for car in cars.values() if not car.state.motion.is_parked)
 
         # draw stop zone
         if stop_detector.stop_zone is not None:
@@ -801,7 +803,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 # Skip cars with no bbox yet (just created)
                 if car.state.bbox == (0.0, 0.0, 0.0, 0.0):
                     continue
-                if car.state.is_parked:
+                if car.state.motion.is_parked:
                     self.draw_car_interpolated(frame, car, timestamp, color=(255, 255, 255), thickness=1)
                 else:
                     self.draw_car_interpolated(frame, car, timestamp, color=(0, 255, 0), thickness=2)
@@ -811,7 +813,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         current_time = timestamp
         for car in cars.values():
-            if car.state.is_parked:
+            if car.state.motion.is_parked:
                 continue
             recent_locations = [(loc, t) for loc, t in car.state.track if current_time - t <= 30]
             if len(recent_locations) > 1:
@@ -944,8 +946,8 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                     "id": car.id,
                     "location": car.state.location,
                     "speed": car.state.speed,
-                    "is_parked": car.state.is_parked,
-                    "time_in_zone": car.state.time_in_zone,
+                    "is_parked": car.state.motion.is_parked,
+                    "time_in_zone": car.state.zone.time_in_zone,
                 }
                 for car in self.car_tracker.get_cars().values()
             ],

@@ -19,8 +19,8 @@ class TestCarState:
         assert state.bbox == (0.0, 0.0, 0.0, 0.0)
         assert state.velocity == (0.0, 0.0)
         assert state.speed == 0.0
-        assert state.is_parked is True
-        assert state.in_stop_zone is False
+        assert state.motion.is_parked is True
+        assert state.zone.in_zone is False
 
     def test_state_is_mutable(self):
         """Test that state can be updated."""
@@ -239,7 +239,7 @@ class TestCarMovementStatus:
     def test_car_starts_parked(self, mock_config):
         """Test that new cars start in parked state."""
         car = Car(id=1, config=mock_config)
-        assert car.state.is_parked is True
+        assert car.state.motion.is_parked is True
 
     def test_car_becomes_unparked_with_movement(self, mock_config):
         """Test that car becomes unparked after sustained movement."""
@@ -256,7 +256,7 @@ class TestCarMovementStatus:
 
         # Car should be unparked after sustained high-speed movement
         # (depends on config thresholds)
-        assert car.state.consecutive_moving_frames > 0 or not car.state.is_parked
+        assert car.state.motion.consecutive_moving_frames > 0 or not car.state.motion.is_parked
 
 
 class TestBboxXYXYFormat:
