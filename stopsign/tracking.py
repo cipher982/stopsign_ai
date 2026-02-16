@@ -1,13 +1,7 @@
 import logging
-import os
-import queue
-import threading
-import time
-import uuid
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
-from pathlib import Path
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -15,17 +9,11 @@ from typing import Tuple
 
 import cv2
 import numpy as np
-from minio import Minio
 
 from stopsign.config import Config
 from stopsign.database import Database
+from stopsign.image_storage import save_vehicle_image
 from stopsign.kalman_filter import KalmanFilterWrapper
-from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
-from stopsign.settings import BREMEN_MINIO_BUCKET
-from stopsign.settings import BREMEN_MINIO_ENDPOINT
-from stopsign.settings import BREMEN_MINIO_SECRET_KEY
-from stopsign.settings import LOCAL_IMAGE_DIR
-from stopsign.settings import LOCAL_IMAGE_MAX_COUNT
 
 Point = Tuple[float, float]
 Line = Tuple[Point, Point]
@@ -33,108 +21,6 @@ Line = Tuple[Point, Point]
 # Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Module-level upload queue and worker state
-_upload_queue: queue.Queue = queue.Queue(maxsize=100)
-_worker_started = False
-_worker_lock = threading.Lock()
-
-
-def _start_upload_worker():
-    """Start the background upload worker thread if not already running."""
-    global _worker_started
-    with _worker_lock:
-        if not _worker_started:
-            thread = threading.Thread(target=_bremen_upload_worker, daemon=True)
-            thread.start()
-            _worker_started = True
-            logger.info("Bremen upload worker thread started")
-
-
-def _bremen_upload_worker():
-    """Background worker that uploads images to Bremen MinIO with retry logic."""
-    while True:
-        try:
-            local_path, object_name, db = _upload_queue.get()
-
-            # Skip if Bremen credentials not configured
-            if not BREMEN_MINIO_SECRET_KEY:
-                logger.debug(f"Bremen MinIO not configured, skipping archive of {object_name}")
-                _upload_queue.task_done()
-                continue
-
-            # Retry up to 3 times with exponential backoff
-            for attempt in range(3):
-                try:
-                    client = Minio(
-                        BREMEN_MINIO_ENDPOINT,
-                        access_key=BREMEN_MINIO_ACCESS_KEY,
-                        secret_key=BREMEN_MINIO_SECRET_KEY,
-                        secure=False,  # Bremen is on local network
-                    )
-
-                    # Upload the file
-                    client.fput_object(
-                        BREMEN_MINIO_BUCKET,
-                        object_name,
-                        local_path,
-                        content_type="image/jpeg",
-                    )
-                    logger.debug(f"Archived {object_name} to Bremen MinIO")
-
-                    # Flip DB path from local:// to bremen://
-                    if db is not None:
-                        try:
-                            rows = db.update_image_path(
-                                f"local://{object_name}",
-                                f"bremen://{object_name}",
-                            )
-                            if rows:
-                                logger.info(f"Updated DB path for {object_name}: local:// -> bremen://")
-                        except Exception as db_err:
-                            logger.warning(f"Failed to update DB path for {object_name}: {db_err}")
-
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        logger.error(f"Failed to archive {object_name} after 3 attempts: {e}")
-                    else:
-                        logger.warning(f"Bremen upload attempt {attempt + 1} failed for {object_name}: {e}")
-                        time.sleep(2**attempt)  # Exponential backoff: 1s, 2s
-
-            _upload_queue.task_done()
-        except Exception as e:
-            logger.error(f"Unexpected error in Bremen upload worker: {e}")
-
-
-def _prune_old_images():
-    """Remove oldest images when count exceeds LOCAL_IMAGE_MAX_COUNT."""
-    try:
-        image_dir = Path(LOCAL_IMAGE_DIR)
-        if not image_dir.exists():
-            return
-
-        # Get all jpg files with their modification times
-        images = list(image_dir.glob("*.jpg"))
-
-        if len(images) <= LOCAL_IMAGE_MAX_COUNT:
-            return
-
-        # Sort by modification time (oldest first)
-        images.sort(key=lambda p: p.stat().st_mtime)
-
-        # Remove oldest images to get back under limit
-        to_remove = len(images) - LOCAL_IMAGE_MAX_COUNT
-        for img_path in images[:to_remove]:
-            try:
-                img_path.unlink()
-                logger.debug(f"Pruned old image: {img_path.name}")
-            except Exception as e:
-                logger.warning(f"Failed to prune {img_path.name}: {e}")
-
-        logger.info(f"Pruned {to_remove} old images to maintain {LOCAL_IMAGE_MAX_COUNT} limit")
-    except Exception as e:
-        logger.error(f"Error pruning old images: {e}")
 
 
 @dataclass
@@ -145,7 +31,6 @@ class CarState:
     speed: float = 0.0
     prev_speed: float = 0.0
     velocity: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
-    direction: float = 0.0
     is_parked: bool = True
     consecutive_moving_frames: int = 0
     consecutive_stationary_frames: int = 0
@@ -153,7 +38,6 @@ class CarState:
     moving_since: float = 0.0
     track: List[Tuple[Point, float]] = field(default_factory=list)
     last_update_time: float = 0.0
-    prev_update_time: float = 0.0
     in_stop_zone: bool = False
     passed_pre_stop_zone: bool = False
     entry_time: float = 0.0
@@ -181,14 +65,18 @@ class Car:
         location: Tuple[float, float],
         timestamp: float,
         bbox: Tuple[float, float, float, float],
-    ) -> None:
-        """Update the car's state with new location data."""
+    ) -> float:
+        """Update the car's state with new location data.
+
+        Returns the previous update timestamp (for explicit passing to stop detector).
+        """
+        prev_timestamp = self.state.last_update_time
         self._update_location(location, timestamp)
         self._update_speed(timestamp)
-        self._update_direction()
         self._update_movement_status()
         self._update_parked_status()
         self.state.bbox = bbox
+        return prev_timestamp
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
@@ -198,7 +86,6 @@ class Car:
         smoothed_location = self.kalman_filter.update(np.array(location))
         self.state.location = (float(smoothed_location[0]), float(smoothed_location[1]))
         self.state.track.append((location, timestamp))
-        self.state.prev_update_time = self.state.last_update_time
         self.state.last_update_time = timestamp
 
     def _update_speed(self, current_timestamp: float) -> None:
@@ -252,7 +139,7 @@ class Car:
                 self.state.moving_since = now
             self.state.stationary_since = 0.0
 
-    def _update_direction(self) -> None:
+    def get_direction(self) -> float:
         """Calculate the direction based on recent trajectory using linear regression."""
         history_length = min(len(self.state.track), 10)
         if history_length > 2:
@@ -278,11 +165,11 @@ class Car:
 
             if total_movement > 0:
                 # Calculate direction value
-                self.state.direction = dx / total_movement
+                return dx / total_movement
             else:
-                self.state.direction = 0.0
+                return 0.0
         else:
-            self.state.direction = 0.0
+            return 0.0
 
     def _update_parked_status(self) -> None:
         """Update the car's parked status based on its movement and speed (time-based)."""
@@ -333,6 +220,7 @@ class CarTracker:
         self.config = config
         self.db = db
         self.last_seen: Dict[int, float] = {}
+        self.prev_timestamps: Dict[int, float] = {}
         self.persistence_threshold = 10.0  # seconds
 
         # Initialize tracer once for better performance
@@ -372,7 +260,8 @@ class CarTracker:
                     except Exception as e:
                         logger.warning(f"Failed to emit vehicle_tracking_started telemetry: {e}")
 
-                self.cars[car_id].update(location, timestamp, bbox)
+                prev_ts = self.cars[car_id].update(location, timestamp, bbox)
+                self.prev_timestamps[car_id] = prev_ts
                 self.last_seen[car_id] = timestamp
             except Exception as e:
                 logger.error(f"Error updating car {box.id}: {str(e)}")
@@ -388,6 +277,7 @@ class CarTracker:
         self.db.save_car_state(car)
         del self.cars[car_id]
         del self.last_seen[car_id]
+        self.prev_timestamps.pop(car_id, None)
 
     def get_cars(self) -> Dict[int, Car]:
         return self.cars
@@ -539,18 +429,18 @@ class StopDetector:
 
         return has_positive and has_negative
 
-    def _update_stop_duration(self, car: Car, timestamp: float) -> None:
+    def _update_stop_duration(self, car: Car, timestamp: float, prev_timestamp: float) -> None:
         if car.state.raw_speed <= self.stop_speed_threshold:
             if car.state.stop_position == (0.0, 0.0):
                 car.state.stop_position = car.state.location
-            # Use prev_update_time since last_update_time is already set to
-            # current timestamp by car.update() before stop detection runs.
-            dt = timestamp - car.state.prev_update_time if car.state.prev_update_time > 0 else 0.0
+            dt = timestamp - prev_timestamp if prev_timestamp > 0 else 0.0
             car.state.stop_duration += dt
         else:
             car.state.stop_position = (0.0, 0.0)
 
-    def update_car_stop_status(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
+    def update_car_stop_status(
+        self, car: Car, timestamp: float, frame: np.ndarray, prev_timestamp: float = 0.0
+    ) -> None:
         # Lazy initialization of geometry once video dimensions are available
         if self._video_analyzer is not None and (
             self.stop_zone is None or self.pre_stop_line_proc is None or self.capture_line_proc is None
@@ -666,7 +556,7 @@ class StopDetector:
                 self._reset_car_state(car)
 
         if car.state.in_stop_zone:
-            self._update_stop_duration(car, timestamp)
+            self._update_stop_duration(car, timestamp, prev_timestamp)
             car.state.speed_samples_in_zone.append(car.state.raw_speed)
 
     def _reset_car_state(self, car: Car) -> None:
@@ -709,67 +599,3 @@ class StopDetector:
         )
         car.state.image_captured = True
         car.state.image_path = image_path
-
-
-def save_vehicle_image(
-    frame: np.ndarray,
-    timestamp: float,
-    bbox: Tuple[float, float, float, float],
-    db: Optional[Database] = None,
-) -> str:
-    """Save vehicle image locally and queue upload to Bremen MinIO for archival.
-
-    Returns local:// path for fast serving from cube.
-    """
-    # Generate a random UUID for the filename
-    file_id = uuid.uuid4().hex
-    filename = f"vehicle_{file_id}_{int(timestamp)}.jpg"
-
-    # Crop the image - bbox is XYXY format (x1, y1, x2, y2)
-    bx1, by1, bx2, by2 = bbox
-    w = bx2 - bx1
-    h = by2 - by1
-    padding_factor = 0.1
-    padding_x = int(w * padding_factor)
-    padding_y = int(h * padding_factor)
-    x1, y1 = int(bx1 - padding_x), int(by1 - padding_y)
-    x2, y2 = int(bx2 + padding_x), int(by2 + padding_y)
-
-    x1, y1 = max(0, x1), max(0, y1)
-    x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
-
-    cropped_image = frame[y1:y2, x1:x2]
-
-    # Ensure local image directory exists
-    image_dir = Path(LOCAL_IMAGE_DIR)
-    image_dir.mkdir(parents=True, exist_ok=True)
-
-    local_path = image_dir / filename
-
-    # Save to local filesystem (synchronous, ensure file is fully written)
-    try:
-        _, img_encoded = cv2.imencode(".jpg", cropped_image)
-        with open(local_path, "wb") as f:
-            f.write(img_encoded.tobytes())
-            f.flush()
-            os.fsync(f.fileno())  # Ensure data is written to disk
-
-        logger.debug(f"Saved vehicle image locally: {filename}")
-
-        # Start upload worker if not already running
-        _start_upload_worker()
-
-        # Queue upload to Bremen MinIO (non-blocking)
-        try:
-            _upload_queue.put_nowait((str(local_path), filename, db))
-        except queue.Full:
-            logger.warning(f"Upload queue full, skipping archive of {filename}")
-
-        # Prune old images to maintain disk space
-        _prune_old_images()
-
-        return f"local://{filename}"
-
-    except Exception as e:
-        logger.error(f"Failed to save vehicle image locally: {str(e)}", exc_info=True)
-        return ""

@@ -586,7 +586,8 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
                 for car in active_cars:
                     was_violating = getattr(car.state, "violating_stop", False)
-                    self.stop_detector.update_car_stop_status(car, ts_for_logic, processed_frame)
+                    prev_ts = self.car_tracker.prev_timestamps.get(car.id, 0.0)
+                    self.stop_detector.update_car_stop_status(car, ts_for_logic, processed_frame, prev_ts)
                     is_violating = getattr(car.state, "violating_stop", False)
                     if is_violating and not was_violating:
                         violations_detected += 1
@@ -901,7 +902,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         # format velocity and direction
         vx, vy = car.state.velocity
-        direction = car.state.direction
+        direction = car.get_direction()
 
         label1 = f"ID: {car.id}, Speed: {car.state.speed:.1f}"
         label2 = f"Vel: {int(vx)}, {int(vy)}, Dir: {direction:.2f}"
@@ -916,7 +917,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         # format velocity and direction
         vx, vy = car.state.velocity
-        direction = car.state.direction
+        direction = car.get_direction()
 
         label1 = f"ID: {car.id}, Speed: {car.state.speed:.1f}"
         label2 = f"Vel: {int(vx)}, {int(vy)}, Dir: {direction:.2f}"
