@@ -97,7 +97,7 @@ ENV=local
 RTSP_URL=file:///app/sample_data/sample.mp4  # uses sample video
 YOLO_MODEL_NAME=yolo11n.pt                   # light-weight CPU model
 REDIS_URL=redis://redis:6379/0
-DB_URL=postgresql://postgres:password@postgres:***REMOVED***/stopsign
+DB_URL=postgresql://postgres:password@postgres:5432/stopsign
 MINIO_ENDPOINT=minio:9000
 # … see template for all options
 ```

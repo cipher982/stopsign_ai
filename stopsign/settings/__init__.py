@@ -73,7 +73,7 @@ class LocalConfig(BaseConfig):
         super().__init__()
         # Core infrastructure (with local defaults)
         self.REDIS_URL = get_env("REDIS_URL", "redis://redis:6379/0", required=False)
-        self.DB_URL = get_env("DB_URL", "postgresql://postgres:password@postgres:***REMOVED***/stopsign", required=False)
+        self.DB_URL = get_env("DB_URL", "postgresql://postgres:password@postgres:5432/stopsign", required=False)
 
         # MinIO settings (required - no defaults)
         self.MINIO_ENDPOINT = get_env("MINIO_ENDPOINT")

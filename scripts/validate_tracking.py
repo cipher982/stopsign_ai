@@ -8,6 +8,7 @@ Usage:
 
 import argparse
 import json
+import os
 import statistics
 import sys
 from datetime import datetime
@@ -16,13 +17,7 @@ from pathlib import Path
 
 import psycopg2
 
-DB_CONFIG = {
-    "host": "***REMOVED***",
-    "port": ***REMOVED***,
-    "dbname": "stopsign",
-    "user": "postgres",
-    "password": "***REMOVED***",
-}
+DB_URL = os.environ.get("DB_URL", "postgresql://postgres@localhost:5432/stopsign")
 
 BASELINE_PATH = Path(__file__).parent / "tracking_baseline.json"
 
@@ -30,7 +25,7 @@ STOP_SPEED_THRESHOLD = 20  # px/s — below this is "stopped"
 
 
 def get_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    return psycopg2.connect(DB_URL)
 
 
 def query_7d_passes(conn):

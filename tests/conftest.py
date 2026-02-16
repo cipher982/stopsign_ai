@@ -18,7 +18,7 @@ os.environ.setdefault("MINIO_ENDPOINT", "localhost:9000")
 os.environ.setdefault("MINIO_ACCESS_KEY", "test_access_key")
 os.environ.setdefault("MINIO_SECRET_KEY", "test_secret_key")
 os.environ.setdefault("MINIO_BUCKET", "test-bucket")
-os.environ.setdefault("DB_URL", "postgresql://test:test@localhost:***REMOVED***/test")
+os.environ.setdefault("DB_URL", "postgresql://test:test@localhost:5432/test")
 
 
 # ---------------------------------------------------------------------------
