@@ -160,6 +160,7 @@ class CarState:
     consecutive_in_zone_frames: int = 0
     consecutive_out_zone_frames: int = 0
     min_speed_in_zone: float = float("inf")
+    speed_samples_in_zone: List[float] = field(default_factory=list)
     stop_duration: float = 0.0
     stop_position: Point = field(default_factory=lambda: (0.0, 0.0))
     image_captured: bool = False
@@ -623,6 +624,12 @@ class StopDetector:
                 except Exception as e:
                     logger.warning(f"Failed to emit vehicle_pass_completed telemetry: {e}")
 
+                # Compute robust min speed from collected samples (5th percentile)
+                if len(car.state.speed_samples_in_zone) >= 3:
+                    car.state.min_speed_in_zone = float(np.percentile(car.state.speed_samples_in_zone, 5))
+                elif car.state.speed_samples_in_zone:
+                    car.state.min_speed_in_zone = min(car.state.speed_samples_in_zone)
+
                 # Save data to the database
                 self.db.add_vehicle_pass(
                     vehicle_id=car.id,
@@ -645,7 +652,7 @@ class StopDetector:
 
         if car.state.in_stop_zone:
             self._update_stop_duration(car, timestamp)
-            car.state.min_speed_in_zone = min(car.state.min_speed_in_zone, car.state.raw_speed)
+            car.state.speed_samples_in_zone.append(car.state.raw_speed)
 
     def _reset_car_state(self, car: Car) -> None:
         # Reset stop zone related attributes
@@ -657,6 +664,7 @@ class StopDetector:
         car.state.consecutive_in_zone_frames = 0
         car.state.consecutive_out_zone_frames = 0
         car.state.min_speed_in_zone = float("inf")
+        car.state.speed_samples_in_zone = []
         car.state.stop_duration = 0.0
         car.state.stop_position = (0.0, 0.0)
 
