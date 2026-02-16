@@ -35,6 +35,8 @@ def mock_config():
     config.unparked_frame_threshold = 3
     config.unparked_speed_threshold = 10.0
     config.parked_frame_threshold = 30
+    config.parked_time_threshold = 4.0
+    config.unparked_time_threshold = 1.33
     config.frame_buffer_size = 500
     config.grid_size = 50
     config.draw_grid = False

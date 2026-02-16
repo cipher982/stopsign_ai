@@ -149,6 +149,8 @@ class CarState:
     is_parked: bool = True
     consecutive_moving_frames: int = 0
     consecutive_stationary_frames: int = 0
+    stationary_since: float = 0.0
+    moving_since: float = 0.0
     track: List[Tuple[Point, float]] = field(default_factory=list)
     last_update_time: float = 0.0
     prev_update_time: float = 0.0
@@ -235,13 +237,20 @@ class Car:
         self.state.prev_speed = self.state.speed
 
     def _update_movement_status(self) -> None:
-        """Update the car's movement status based on its speed."""
+        """Update the car's movement status based on its speed (time-based)."""
+        now = self.state.last_update_time
         if abs(self.state.speed) < self.config.max_movement_speed:
             self.state.consecutive_moving_frames = 0
             self.state.consecutive_stationary_frames += 1
+            if self.state.stationary_since == 0.0:
+                self.state.stationary_since = now
+            self.state.moving_since = 0.0
         else:
             self.state.consecutive_moving_frames += 1
             self.state.consecutive_stationary_frames = 0
+            if self.state.moving_since == 0.0:
+                self.state.moving_since = now
+            self.state.stationary_since = 0.0
 
     def _update_direction(self) -> None:
         """Calculate the direction based on recent trajectory using linear regression."""
@@ -276,18 +285,24 @@ class Car:
             self.state.direction = 0.0
 
     def _update_parked_status(self) -> None:
-        """Update the car's parked status based on its movement and speed."""
+        """Update the car's parked status based on its movement and speed (time-based)."""
+        now = self.state.last_update_time
+        # Time-based thresholds with frame-count fallback for backward compat
+        parked_time = getattr(self.config, "parked_time_threshold", None) or 4.0
+        unparked_time = getattr(self.config, "unparked_time_threshold", None) or 1.33
+
         if self.state.is_parked:
-            if (
-                self.state.consecutive_moving_frames >= self.config.unparked_frame_threshold
-                or self.state.speed > self.config.unparked_speed_threshold
-            ):
+            moving_elapsed = (now - self.state.moving_since) if self.state.moving_since > 0 else 0.0
+            if moving_elapsed >= unparked_time or self.state.speed > self.config.unparked_speed_threshold:
                 self.state.is_parked = False
                 self.state.consecutive_stationary_frames = 0
+                self.state.stationary_since = 0.0
         else:
-            if self.state.consecutive_stationary_frames >= self.config.parked_frame_threshold:
+            stationary_elapsed = (now - self.state.stationary_since) if self.state.stationary_since > 0 else 0.0
+            if stationary_elapsed >= parked_time:
                 self.state.is_parked = True
                 self.state.consecutive_moving_frames = 0
+                self.state.moving_since = 0.0
 
     def get_interpolated_bbox(self, current_ts: float) -> Tuple[float, float, float, float]:
         """Predict bbox position based on velocity and time since last YOLO update.

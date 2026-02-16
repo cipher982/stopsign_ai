@@ -162,6 +162,9 @@ class Config:
             self.parked_frame_threshold = detection.get("parked_frame_threshold")
             self.unparked_frame_threshold = detection.get("unparked_frame_threshold")
             self.unparked_speed_threshold = detection.get("unparked_speed_threshold")
+            # Time-based thresholds (preferred over frame-count)
+            self.parked_time_threshold = detection.get("parked_time_threshold", 4.0)
+            self.unparked_time_threshold = detection.get("unparked_time_threshold", 1.33)
             self.min_stop_time = detection.get("min_stop_time", 2.0)
 
             # Tracking
