@@ -1,5 +1,7 @@
 """Vehicle pass scoring helpers (color indicators, grades)."""
 
+COMPLIANCE_THRESHOLD_SECONDS = 2.0
+
 
 def get_speed_color(speed):
     """Return CSS color for speed value."""
@@ -16,17 +18,21 @@ def get_speed_color(speed):
 
 
 def get_time_color(time_val):
-    """Return CSS color for time-in-zone value."""
-    if time_val > 4.0:
-        return "#ef4444"
-    elif time_val > 3.0:
-        return "#f97316"
-    elif time_val > 2.0:
-        return "#eab308"
+    """Return CSS color for time-in-zone value.
+
+    Longer time = car stopped properly = green (good).
+    Short time = blew through the stop sign = red (bad).
+    """
+    if time_val > 3.0:
+        return "#22c55e"  # green-500 — good stop
+    elif time_val > COMPLIANCE_THRESHOLD_SECONDS:
+        return "#84cc16"  # lime-500 — adequate stop
+    elif time_val > 1.5:
+        return "#eab308"  # yellow-500 — insufficient stop
     elif time_val > 1.0:
-        return "#84cc16"
+        return "#f97316"  # orange-500 — barely slowed
     else:
-        return "#22c55e"
+        return "#ef4444"  # red-500 — ran the sign
 
 
 COLOR_MAP = {
