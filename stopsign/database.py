@@ -87,6 +87,18 @@ class VehiclePass(Base):
     clip_error = Column(String)
 
 
+class VehiclePassRaw(Base):
+    __tablename__ = "vehicle_pass_raw"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    vehicle_pass_id = Column(BigInteger, ForeignKey("vehicle_passes.id"), unique=True, nullable=False)
+    raw_payload = Column(JSON, nullable=False)
+    sample_count = Column(Integer, nullable=False, default=0)
+    raw_complete = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
 class ConfigSetting(Base):
     __tablename__ = "config_settings"
 
@@ -233,7 +245,7 @@ class Database:
     ):
         if self.read_only_mode:
             logger.debug("🚫 Blocked add_vehicle_pass (READ-ONLY MODE)")
-            return
+            return None
 
         with self.Session() as session:
             vehicle_pass = VehiclePass(
@@ -247,6 +259,53 @@ class Database:
             )
             session.add(vehicle_pass)
             session.commit()
+            return vehicle_pass.id
+
+    @log_execution_time
+    def save_vehicle_pass_raw(
+        self,
+        vehicle_pass_id: int,
+        raw_payload: dict,
+        sample_count: int,
+        raw_complete: bool = True,
+    ) -> bool:
+        if self.read_only_mode:
+            logger.debug("🚫 Blocked save_vehicle_pass_raw (READ-ONLY MODE)")
+            return False
+
+        with self.Session() as session:
+            existing = (
+                session.query(VehiclePassRaw).filter(VehiclePassRaw.vehicle_pass_id == vehicle_pass_id).one_or_none()
+            )
+            if existing:
+                existing.raw_payload = raw_payload
+                existing.sample_count = sample_count
+                existing.raw_complete = raw_complete
+            else:
+                session.add(
+                    VehiclePassRaw(
+                        vehicle_pass_id=vehicle_pass_id,
+                        raw_payload=raw_payload,
+                        sample_count=sample_count,
+                        raw_complete=raw_complete,
+                    )
+                )
+            session.commit()
+            return True
+
+    @log_execution_time
+    def get_pass_detail(self, pass_id: int):
+        with self.Session() as session:
+            result = (
+                session.query(VehiclePass, VehiclePassRaw)
+                .outerjoin(VehiclePassRaw, VehiclePassRaw.vehicle_pass_id == VehiclePass.id)
+                .filter(VehiclePass.id == pass_id)
+                .first()
+            )
+            if not result:
+                return None
+            vehicle_pass, raw = result
+            return {"pass": vehicle_pass, "raw": raw}
 
     @log_execution_time
     def update_image_path(self, old_path: str, new_path: str) -> int:
