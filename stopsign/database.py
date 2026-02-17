@@ -306,6 +306,10 @@ class Database:
             if not result:
                 return None
             vehicle_pass, raw = result
+            # Expunge so objects survive session close
+            session.expunge(vehicle_pass)
+            if raw is not None:
+                session.expunge(raw)
             return {"pass": vehicle_pass, "raw": raw}
 
     @log_execution_time

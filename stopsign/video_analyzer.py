@@ -583,7 +583,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             active_cars = [
                 car
                 for car in self.car_tracker.get_cars().values()
-                if not car.state.motion.is_parked and car.id in current_ids
+                if car.id in current_ids and (not car.state.motion.is_parked or car.state.zone.in_zone)
             ]
 
             violations_detected = 0

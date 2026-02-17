@@ -100,6 +100,9 @@ class Car:
         self._record_sample(timestamp)
         return prev_timestamp
 
+    # 10-minute sliding window for samples (bounds memory for long-lived cars)
+    SAMPLE_WINDOW_SECONDS = 600.0
+
     def _record_sample(self, timestamp: float) -> None:
         x, y = self.state.location
         x1, y1, x2, y2 = self.state.bbox
@@ -116,6 +119,10 @@ class Car:
                 float(self.state.speed),
             ]
         )
+        # Trim samples older than the sliding window
+        cutoff = timestamp - self.SAMPLE_WINDOW_SECONDS
+        while self.state.samples and self.state.samples[0][0] < cutoff:
+            self.state.samples.pop(0)
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
@@ -329,6 +336,9 @@ class CarTracker:
 
 
 class StopDetector:
+    # Max time a car can be in_zone before we treat it as parking, not a pass
+    ZONE_TIMEOUT_SECONDS = 60.0
+
     def __init__(self, config: Config, db: Database):
         self.config = config
         self.db = db
@@ -400,9 +410,7 @@ class StopDetector:
             "clip_path": None,
         }
 
-        config_snapshot = {}
-        if hasattr(self.config, "get_snapshot"):
-            config_snapshot = self.config.get_snapshot()
+        config_snapshot = self.config.get_snapshot()
 
         model_snapshot = {}
         if self._video_analyzer is not None:
@@ -680,16 +688,19 @@ class StopDetector:
                     exit_time=car.state.zone.exit_time,
                 )
                 if pass_id is not None:
-                    raw_payload = self._build_raw_payload(car)
-                    sample_count = len(car.state.samples)
-                    saved = self.db.save_vehicle_pass_raw(
-                        vehicle_pass_id=pass_id,
-                        raw_payload=raw_payload,
-                        sample_count=sample_count,
-                        raw_complete=True,
-                    )
-                    if not saved:
-                        logger.warning("Failed to persist raw payload for pass_id=%s", pass_id)
+                    try:
+                        raw_payload = self._build_raw_payload(car)
+                        sample_count = len(car.state.samples)
+                        saved = self.db.save_vehicle_pass_raw(
+                            vehicle_pass_id=pass_id,
+                            raw_payload=raw_payload,
+                            sample_count=sample_count,
+                            raw_complete=True,
+                        )
+                        if not saved:
+                            logger.warning("Failed to persist raw payload for pass_id=%s", pass_id)
+                    except Exception as e:
+                        logger.error("Failed to build/save raw payload for pass_id=%s: %s", pass_id, e)
                 logger.info(
                     f"Vehicle pass recorded: ID={car.id}, "
                     f"Time in zone={car.state.zone.time_in_zone:.2f}s, "
@@ -701,6 +712,15 @@ class StopDetector:
                 self._reset_car_state(car)
 
         if car.state.zone.in_zone:
+            # Zone timeout: car in zone too long is parking, not a pass
+            zone_elapsed = timestamp - car.state.zone.entry_time if car.state.zone.entry_time > 0 else 0.0
+            if zone_elapsed > self.ZONE_TIMEOUT_SECONDS:
+                logger.info(
+                    f"Car {car.id} zone timeout ({zone_elapsed:.0f}s > {self.ZONE_TIMEOUT_SECONDS:.0f}s), "
+                    f"treating as parked — no pass recorded"
+                )
+                self._reset_car_state(car)
+                return
             self._update_stop_duration(car, timestamp, prev_timestamp)
             car.state.zone.speed_samples.append(car.state.raw_speed)
 
