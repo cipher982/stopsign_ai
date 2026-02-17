@@ -44,7 +44,7 @@ HEALTH_PORT = int(os.getenv("FFMPEG_HEALTH_PORT", "8080"))
 STREAM_DIR = "/app/data/stream"
 FRAME_RATE = "15"
 RESOLUTION = "1920x1080"
-HLS_LIST_SIZE = os.getenv("HLS_LIST_SIZE", "60")
+HLS_LIST_SIZE = os.getenv("HLS_LIST_SIZE", "450")
 
 # ---------------------------------------------------------------------------
 # Run-time configurable encoding parameters.

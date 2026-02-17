@@ -71,7 +71,7 @@ def _format_pass_item(pass_data, vehicle_attrs=None):
     clip_status = getattr(pass_data, "clip_status", None)
     clip_path = getattr(pass_data, "clip_path", None)
     if clip_status == "ready" and clip_path:
-        clip_url = f"/clips/{clip_path}"
+        clip_url = f"https://api.files.drose.io/vehicle-clips/{clip_path}"
 
     return {
         "image_url": image_url,

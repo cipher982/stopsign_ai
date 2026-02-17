@@ -99,10 +99,12 @@ def parse_hls_playlist(path: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Threshold: 3×window (floor 60s)
+    # Threshold: 3×window (floor 60s, cap 180s)
+    # Cap prevents large HLS windows (e.g. 15-min for clip retention) from
+    # making the health check tolerate unreasonably stale playlists.
     window = out.get("playlist_window_sec")
     if isinstance(window, (int, float)) and window > 0:
-        out["threshold_sec"] = max(60.0, 3.0 * float(window))
+        out["threshold_sec"] = max(60.0, min(3.0 * float(window), 180.0))
     else:
         out["threshold_sec"] = 60.0
 

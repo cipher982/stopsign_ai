@@ -8,7 +8,13 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
+from minio import Minio
+
 from stopsign.database import Database
+from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
+from stopsign.settings import BREMEN_MINIO_CLIP_BUCKET
+from stopsign.settings import BREMEN_MINIO_ENDPOINT
+from stopsign.settings import BREMEN_MINIO_SECRET_KEY
 from stopsign.settings import DB_URL
 
 logger = logging.getLogger(__name__)
@@ -20,8 +26,11 @@ CLIP_POSTPAD_SEC = float(os.getenv("CLIP_POSTPAD_SEC", "2"))
 CLIP_PARKED_SEC = float(os.getenv("CLIP_PARKED_SEC", "300"))
 CLIP_WORKER_INTERVAL_SEC = float(os.getenv("CLIP_WORKER_INTERVAL_SEC", "10"))
 CLIP_MIN_AGE_SEC = float(os.getenv("CLIP_MIN_AGE_SEC", "2"))
-_CLIP_EXPIRY_DEFAULT = max(180.0, CLIP_MAX_SEC + 30.0)
-CLIP_EXPIRY_SEC = float(os.getenv("CLIP_EXPIRY_SEC", str(_CLIP_EXPIRY_DEFAULT)))
+# Segment window: HLS_LIST_SIZE * 2s per segment. Passes older than this can't have clips built.
+_HLS_LIST_SIZE = int(os.getenv("HLS_LIST_SIZE", "450"))
+CLIP_SEGMENT_WINDOW_SEC = _HLS_LIST_SIZE * 2 + 60  # segments window + buffer
+# Local clip retention: keep last N clips on disk (older ones pruned after MinIO upload)
+LOCAL_CLIP_MAX_COUNT = int(os.getenv("LOCAL_CLIP_MAX_COUNT", "200"))
 
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"
 
@@ -109,6 +118,71 @@ def _select_segments_for_window(segments, start_ts: float, end_ts: float):
     return [seg for seg in segments if seg["end"] >= start_ts and seg["start"] <= end_ts]
 
 
+def _upload_clip_to_minio(clip_path: str, object_name: str) -> bool:
+    """Upload a clip to MinIO with retry. Returns True on success."""
+    if not BREMEN_MINIO_SECRET_KEY:
+        logger.debug("MinIO secret key not set, skipping clip upload")
+        return False
+
+    for attempt in range(3):
+        try:
+            client = Minio(
+                BREMEN_MINIO_ENDPOINT,
+                access_key=BREMEN_MINIO_ACCESS_KEY,
+                secret_key=BREMEN_MINIO_SECRET_KEY,
+                secure=False,
+            )
+            client.fput_object(
+                BREMEN_MINIO_CLIP_BUCKET,
+                object_name,
+                clip_path,
+                content_type="video/mp4",
+            )
+            logger.info("Clip uploaded to MinIO: %s/%s", BREMEN_MINIO_CLIP_BUCKET, object_name)
+            return True
+        except Exception as e:
+            logger.warning("MinIO upload attempt %d failed for %s: %s", attempt + 1, object_name, e)
+            if attempt < 2:
+                time.sleep(1 << attempt)  # 1s, 2s
+    return False
+
+
+def _ensure_clip_bucket():
+    """Create the clip bucket on MinIO if it doesn't exist."""
+    if not BREMEN_MINIO_SECRET_KEY:
+        return
+    try:
+        client = Minio(
+            BREMEN_MINIO_ENDPOINT,
+            access_key=BREMEN_MINIO_ACCESS_KEY,
+            secret_key=BREMEN_MINIO_SECRET_KEY,
+            secure=False,
+        )
+        if not client.bucket_exists(BREMEN_MINIO_CLIP_BUCKET):
+            client.make_bucket(BREMEN_MINIO_CLIP_BUCKET)
+            logger.info("Created MinIO bucket: %s", BREMEN_MINIO_CLIP_BUCKET)
+    except Exception as e:
+        logger.warning("Failed to ensure clip bucket: %s", e)
+
+
+def _prune_local_clips():
+    """Remove oldest local clips to stay within LOCAL_CLIP_MAX_COUNT."""
+    try:
+        clip_dir = Path(CLIP_DIR)
+        clips = sorted(clip_dir.glob("clip_*.mp4"), key=lambda p: p.stat().st_mtime)
+        if len(clips) > LOCAL_CLIP_MAX_COUNT:
+            to_remove = len(clips) - LOCAL_CLIP_MAX_COUNT
+            for clip in clips[:to_remove]:
+                try:
+                    clip.unlink()
+                    logger.debug("Pruned old clip: %s", clip.name)
+                except OSError as e:
+                    logger.warning("Failed to prune %s: %s", clip.name, e)
+            logger.info("Pruned %d old clips to maintain %d limit", to_remove, LOCAL_CLIP_MAX_COUNT)
+    except Exception as e:
+        logger.warning("Clip pruning error: %s", e)
+
+
 def _build_clip_for_pass(app, pass_data) -> bool:
     """Build an MP4 clip for a completed pass. Returns True on success."""
     if not hasattr(app.state, "db"):
@@ -119,6 +193,11 @@ def _build_clip_for_pass(app, pass_data) -> bool:
 
     if not entry_ts or not exit_ts:
         app.state.db.update_clip_status(pass_data.id, "failed", clip_error="missing_entry_exit")
+        return False
+
+    # If pass is older than the segment window, segments are definitely gone
+    if time.time() - exit_ts > CLIP_SEGMENT_WINDOW_SEC:
+        app.state.db.update_clip_status(pass_data.id, "no_segments", clip_error="beyond_segment_window")
         return False
 
     clip_start = entry_ts - CLIP_PREPAD_SEC
@@ -137,7 +216,11 @@ def _build_clip_for_pass(app, pass_data) -> bool:
     clip_path = os.path.join(CLIP_DIR, clip_filename)
 
     if os.path.exists(clip_path):
+        # File exists locally — try to upload to MinIO if not already done
+        uploaded = _upload_clip_to_minio(clip_path, clip_filename)
         app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
+        if uploaded:
+            _prune_local_clips()
         return True
 
     segments = _load_hls_segments(STREAM_FS_PATH)
@@ -152,8 +235,7 @@ def _build_clip_for_pass(app, pass_data) -> bool:
             clip_end,
             seg_window,
         )
-        if time.time() - exit_ts > CLIP_EXPIRY_SEC:
-            app.state.db.update_clip_status(pass_data.id, "expired", clip_error="segments_expired")
+        # Don't mark as failed — segments may appear on next poll
         return False
 
     concat_path = os.path.join(CLIP_DIR, f"concat_{pass_data.id}.txt")
@@ -204,7 +286,16 @@ def _build_clip_for_pass(app, pass_data) -> bool:
             return False
 
         Path(tmp_path).rename(clip_path)
-        app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
+
+        # Upload to MinIO — only mark ready after successful upload
+        uploaded = _upload_clip_to_minio(clip_path, clip_filename)
+        if uploaded:
+            app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
+            _prune_local_clips()
+        else:
+            # MinIO unavailable — still mark ready for local serving
+            app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
+
         logger.info("Clip ready: pass %s -> %s (%.1fs)", pass_data.id, clip_filename, duration)
         return True
     except Exception as e:
@@ -220,7 +311,13 @@ def _build_clip_for_pass(app, pass_data) -> bool:
 
 def clip_worker_loop(app):
     """Background worker that builds clips for completed passes."""
-    logger.info("Clip worker started (max=%ss, parked=%ss)", CLIP_MAX_SEC, CLIP_PARKED_SEC)
+    logger.info(
+        "Clip worker started (max=%ss, segment_window=%ss, minio_bucket=%s)",
+        CLIP_MAX_SEC,
+        CLIP_SEGMENT_WINDOW_SEC,
+        BREMEN_MINIO_CLIP_BUCKET,
+    )
+    _ensure_clip_bucket()
     while True:
         try:
             if not hasattr(app.state, "db"):

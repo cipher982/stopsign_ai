@@ -192,6 +192,7 @@ BREMEN_MINIO_ENDPOINT = get_env("BREMEN_MINIO_ENDPOINT", "100.98.103.56:9000", r
 BREMEN_MINIO_ACCESS_KEY = get_env("BREMEN_MINIO_ACCESS_KEY", "root", required=False)
 BREMEN_MINIO_SECRET_KEY = get_env("BREMEN_MINIO_SECRET_KEY", "", required=False)
 BREMEN_MINIO_BUCKET = get_env("BREMEN_MINIO_BUCKET", "vehicle-images", required=False)
+BREMEN_MINIO_CLIP_BUCKET = get_env("BREMEN_MINIO_CLIP_BUCKET", "vehicle-clips", required=False)
 
 # Local image retention
 LOCAL_IMAGE_MAX_COUNT = get_env_int("LOCAL_IMAGE_MAX_COUNT", 500, required=False)
