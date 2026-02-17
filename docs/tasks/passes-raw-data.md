@@ -4,7 +4,7 @@
 - Phase 0: Spec ✅
 - Phase 1: Raw capture + data model ✅
 - Phase 1.5: Review fixes ✅
-- Phase 2: Pass detail page + linking ⏳
+- Phase 2: Pass detail page + linking ✅
 
 ## Phase 1 Checklist
 - [x] Add `vehicle_pass_raw` SQLAlchemy model + migrations via create_all
@@ -22,10 +22,12 @@
 - [x] Remove unnecessary `hasattr` guard on `config.get_snapshot`
 
 ## Phase 2 Checklist
-- [ ] Add `/passes/{id}` page route
-- [ ] Add `pass_detail.html` template
-- [ ] Link pass items to detail page
-- [ ] Update task doc
+- [x] Add `/passes/{id}` page route (`pages.py`)
+- [x] Add `pass_detail.html` template (capture image, clip player, facts, raw summary)
+- [x] Link pass items to detail page (both `pass_item.html` and `pass_item_row.html`)
+- [x] Add `pass_id` to `_format_pass_item` context
+- [x] No nested anchors in templates
+- [x] Update task doc
 
 ## Notes
 - Raw payload schema v1 uses array samples with `sample_schema` map.
