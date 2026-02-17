@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi import Request
 
 from stopsign.database import Database
+from stopsign.settings import BREMEN_MINIO_CLIP_BUCKET
 from stopsign.settings import DB_URL
 from stopsign.web.app import templates
 from stopsign.web.services.images import resolve_image_url
@@ -70,8 +71,11 @@ def _format_pass_item(pass_data, vehicle_attrs=None):
     clip_url = None
     clip_status = getattr(pass_data, "clip_status", None)
     clip_path = getattr(pass_data, "clip_path", None)
-    if clip_status == "ready" and clip_path:
-        clip_url = f"https://api.files.drose.io/vehicle-clips/{clip_path}"
+    if clip_path:
+        if clip_status == "ready":
+            clip_url = f"https://api.files.drose.io/{BREMEN_MINIO_CLIP_BUCKET}/{clip_path}"
+        elif clip_status == "local":
+            clip_url = f"/clips/{clip_path}"
 
     return {
         "image_url": image_url,

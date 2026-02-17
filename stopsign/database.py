@@ -263,8 +263,14 @@ class Database:
             return rows
 
     @log_execution_time
-    def get_passes_missing_clips(self, limit: int = 10, min_exit_age_sec: float = 2.0):
-        """Return recent passes that have entry/exit times but no clip yet."""
+    def get_passes_needing_clips(self, limit: int = 10, min_exit_age_sec: float = 2.0):
+        """Return passes that need clip work: new, retryable, or needing upload.
+
+        Picks up:
+        - clip_status IS NULL: never attempted
+        - clip_status = 'retry': ffmpeg failed but retries remain
+        - clip_status = 'local': built locally but MinIO upload pending
+        """
         cutoff = time.time() - min_exit_age_sec
         with self.Session() as session:
             return (
@@ -272,7 +278,7 @@ class Database:
                 .filter(VehiclePass.exit_time.isnot(None))
                 .filter(VehiclePass.exit_time > 0)
                 .filter(VehiclePass.exit_time <= cutoff)
-                .filter(VehiclePass.clip_status.is_(None))
+                .filter(VehiclePass.clip_status.is_(None) | VehiclePass.clip_status.in_(["retry", "local"]))
                 .order_by(VehiclePass.timestamp.desc())
                 .limit(limit)
                 .all()

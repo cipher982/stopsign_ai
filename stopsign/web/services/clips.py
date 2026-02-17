@@ -26,6 +26,7 @@ CLIP_POSTPAD_SEC = float(os.getenv("CLIP_POSTPAD_SEC", "2"))
 CLIP_PARKED_SEC = float(os.getenv("CLIP_PARKED_SEC", "300"))
 CLIP_WORKER_INTERVAL_SEC = float(os.getenv("CLIP_WORKER_INTERVAL_SEC", "10"))
 CLIP_MIN_AGE_SEC = float(os.getenv("CLIP_MIN_AGE_SEC", "2"))
+CLIP_MAX_RETRIES = int(os.getenv("CLIP_MAX_RETRIES", "3"))
 # Segment window: HLS_LIST_SIZE * 2s per segment. Passes older than this can't have clips built.
 _HLS_LIST_SIZE = int(os.getenv("HLS_LIST_SIZE", "450"))
 CLIP_SEGMENT_WINDOW_SEC = _HLS_LIST_SIZE * 2 + 60  # segments window + buffer
@@ -183,6 +184,21 @@ def _prune_local_clips():
         logger.warning("Clip pruning error: %s", e)
 
 
+def _get_retry_count(clip_error: str | None) -> int:
+    """Extract retry count from clip_error field (format: 'retry:N|...')."""
+    if not clip_error or not clip_error.startswith("retry:"):
+        return 0
+    try:
+        return int(clip_error.split("|", 1)[0].split(":", 1)[1])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _make_retry_error(count: int, error: str) -> str:
+    """Format clip_error with retry count prefix."""
+    return f"retry:{count}|{error[:480]}"
+
+
 def _build_clip_for_pass(app, pass_data) -> bool:
     """Build an MP4 clip for a completed pass. Returns True on success."""
     if not hasattr(app.state, "db"):
@@ -195,8 +211,13 @@ def _build_clip_for_pass(app, pass_data) -> bool:
         app.state.db.update_clip_status(pass_data.id, "failed", clip_error="missing_entry_exit")
         return False
 
-    # If pass is older than the segment window, segments are definitely gone
-    if time.time() - exit_ts > CLIP_SEGMENT_WINDOW_SEC:
+    # Check actual segment coverage before applying wall-clock cutoff.
+    # After downtime, segments may still be on disk even though wall-clock
+    # time exceeds the window.
+    segments = _load_hls_segments(STREAM_FS_PATH)
+    seg_covers_pass = any(seg["end"] >= exit_ts for seg in segments) if segments else False
+
+    if not seg_covers_pass and time.time() - exit_ts > CLIP_SEGMENT_WINDOW_SEC:
         app.state.db.update_clip_status(pass_data.id, "no_segments", clip_error="beyond_segment_window")
         return False
 
@@ -218,12 +239,14 @@ def _build_clip_for_pass(app, pass_data) -> bool:
     if os.path.exists(clip_path):
         # File exists locally — try to upload to MinIO if not already done
         uploaded = _upload_clip_to_minio(clip_path, clip_filename)
-        app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
         if uploaded:
+            app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
             _prune_local_clips()
+        else:
+            # MinIO unavailable — serve locally, worker will retry upload later
+            app.state.db.update_clip_status(pass_data.id, "local", clip_path=clip_filename)
         return True
 
-    segments = _load_hls_segments(STREAM_FS_PATH)
     selected = _select_segments_for_window(segments, clip_start, clip_end)
 
     if not selected:
@@ -244,6 +267,8 @@ def _build_clip_for_pass(app, pass_data) -> bool:
     offset_start = max(0.0, clip_start - base_ts)
     offset_end = max(offset_start, clip_end - base_ts)
     duration = max(0.1, offset_end - offset_start)
+
+    retry_count = _get_retry_count(getattr(pass_data, "clip_error", None))
 
     try:
         with open(concat_path, "w", encoding="utf-8") as f:
@@ -282,24 +307,33 @@ def _build_clip_for_pass(app, pass_data) -> bool:
             error_blob = result.stderr or result.stdout or "ffmpeg_failed"
             error = error_blob[-500:]
             logger.warning("Clip build failed for pass %s: %s", pass_data.id, error)
-            app.state.db.update_clip_status(pass_data.id, "failed", clip_error=error)
+            next_retry = retry_count + 1
+            if next_retry >= CLIP_MAX_RETRIES:
+                app.state.db.update_clip_status(pass_data.id, "failed", clip_error=_make_retry_error(next_retry, error))
+            else:
+                # Mark retryable — worker will pick it up again
+                app.state.db.update_clip_status(pass_data.id, "retry", clip_error=_make_retry_error(next_retry, error))
             return False
 
         Path(tmp_path).rename(clip_path)
 
-        # Upload to MinIO — only mark ready after successful upload
+        # Upload to MinIO
         uploaded = _upload_clip_to_minio(clip_path, clip_filename)
         if uploaded:
             app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
             _prune_local_clips()
         else:
-            # MinIO unavailable — still mark ready for local serving
-            app.state.db.update_clip_status(pass_data.id, "ready", clip_path=clip_filename)
+            # MinIO unavailable — serve locally, worker will retry upload later
+            app.state.db.update_clip_status(pass_data.id, "local", clip_path=clip_filename)
 
         logger.info("Clip ready: pass %s -> %s (%.1fs)", pass_data.id, clip_filename, duration)
         return True
     except Exception as e:
-        app.state.db.update_clip_status(pass_data.id, "failed", clip_error=str(e)[:500])
+        next_retry = retry_count + 1
+        if next_retry >= CLIP_MAX_RETRIES:
+            app.state.db.update_clip_status(pass_data.id, "failed", clip_error=_make_retry_error(next_retry, str(e)))
+        else:
+            app.state.db.update_clip_status(pass_data.id, "retry", clip_error=_make_retry_error(next_retry, str(e)))
         return False
     finally:
         try:
@@ -326,7 +360,7 @@ def clip_worker_loop(app):
                 time.sleep(CLIP_WORKER_INTERVAL_SEC)
                 continue
 
-            pending = app.state.db.get_passes_missing_clips(limit=5, min_exit_age_sec=CLIP_MIN_AGE_SEC)
+            pending = app.state.db.get_passes_needing_clips(limit=5, min_exit_age_sec=CLIP_MIN_AGE_SEC)
             for pass_data in pending:
                 _build_clip_for_pass(app, pass_data)
         except Exception as e:
