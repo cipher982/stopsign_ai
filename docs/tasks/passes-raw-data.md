@@ -7,7 +7,7 @@
 
 ## Phase 1 Checklist
 - [x] Add `vehicle_pass_raw` SQLAlchemy model + migrations via create_all
-- [ ] Capture raw samples on every tracking update
+- [x] Capture raw samples on every tracking update
 - [ ] Persist raw payload on pass completion (config + model snapshot)
 - [x] Add DB helpers (`save_vehicle_pass_raw`, `get_pass_detail`)
 - [ ] Update task doc

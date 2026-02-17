@@ -18,6 +18,9 @@ from stopsign.kalman_filter import KalmanFilterWrapper
 Point = Tuple[float, float]
 Line = Tuple[Point, Point]
 
+# Raw sample schema (processed coordinate space)
+RAW_SAMPLE_SCHEMA = ["t", "x", "y", "x1", "y1", "x2", "y2", "raw_speed", "speed"]
+
 # Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -68,6 +71,7 @@ class CarState:
     motion: MotionState = field(default_factory=MotionState)
     zone: ZoneState = field(default_factory=ZoneState)
     capture: CaptureState = field(default_factory=CaptureState)
+    samples: List[List[float]] = field(default_factory=list)
 
 
 class Car:
@@ -93,7 +97,25 @@ class Car:
         self._update_movement_status()
         self._update_parked_status()
         self.state.bbox = bbox
+        self._record_sample(timestamp)
         return prev_timestamp
+
+    def _record_sample(self, timestamp: float) -> None:
+        x, y = self.state.location
+        x1, y1, x2, y2 = self.state.bbox
+        self.state.samples.append(
+            [
+                float(timestamp),
+                float(x),
+                float(y),
+                float(x1),
+                float(y1),
+                float(x2),
+                float(y2),
+                float(self.state.raw_speed),
+                float(self.state.speed),
+            ]
+        )
 
     def _update_location(self, location: Tuple[float, float], timestamp: float) -> None:
         """Update the car's location using Kalman filter."""
@@ -606,6 +628,7 @@ class StopDetector:
         car.state.zone = ZoneState()
         car.state.capture = CaptureState()
         car.state.motion = MotionState()
+        car.state.samples = []
         logger.debug(f"Reset state for Car {car.id}")
 
     def is_in_capture_zone(self, bbox: Tuple[float, float, float, float]) -> bool:
