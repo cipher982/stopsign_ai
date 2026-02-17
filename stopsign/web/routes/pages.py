@@ -1,14 +1,20 @@
 # ruff: noqa: E501
 """Page routes — full HTML pages."""
 
+import logging
 import os
+import time
 
 from fastapi import APIRouter
 from fastapi import Request
 
+from stopsign.database import Database
+from stopsign.settings import DB_URL
 from stopsign.web.app import templates
 from stopsign.web.services.seo import PAGE_METADATA
 from stopsign.web.services.seo import build_json_ld
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -16,9 +22,55 @@ GRAFANA_URL = os.getenv("GRAFANA_URL", "http://localhost:3000")
 BASE_URL = "https://crestwoodstopsign.com"
 
 
+def _get_db(request: Request):
+    if not hasattr(request.app.state, "db"):
+        request.app.state.db = Database(db_url=DB_URL)
+    return request.app.state.db
+
+
 @router.get("/")
 async def home(request: Request):
     meta = PAGE_METADATA["home"]
+
+    # Server-render initial stats so they're visible immediately
+    stats = {
+        "compliance_rate": "--",
+        "violation_count": "--",
+        "vehicle_count": "--",
+        "last_detection": "--",
+    }
+    try:
+        db = _get_db(request)
+        total_passes_24h = db.get_total_passes_last_24h()
+        recent_passes = db.get_recent_vehicle_passes(limit=100)
+
+        if recent_passes:
+            compliant_count = sum(1 for p in recent_passes if p.time_in_zone >= 2.0)
+            compliance_rate = round((compliant_count / len(recent_passes)) * 100)
+        else:
+            compliance_rate = 0
+
+        last_detection = "N/A"
+        if recent_passes:
+            last_time = recent_passes[0].timestamp
+            minutes_ago = int((time.time() - last_time.timestamp()) / 60)
+            if minutes_ago < 60:
+                last_detection = f"{minutes_ago}m ago"
+            else:
+                hours_ago = int(minutes_ago / 60)
+                last_detection = f"{hours_ago}h ago"
+
+        violation_count = total_passes_24h - int(total_passes_24h * compliance_rate / 100)
+
+        stats = {
+            "compliance_rate": f"{compliance_rate}%",
+            "violation_count": str(violation_count),
+            "vehicle_count": str(total_passes_24h),
+            "last_detection": last_detection,
+        }
+    except Exception as e:
+        logger.warning(f"Failed to pre-fetch homepage stats: {e}")
+
     return templates.TemplateResponse(
         "home.html",
         {
@@ -29,6 +81,7 @@ async def home(request: Request):
             "canonical_url": meta["url"],
             "meta_image": meta["image"],
             "json_ld": build_json_ld(BASE_URL, meta, "home"),
+            "stats": stats,
         },
     )
 

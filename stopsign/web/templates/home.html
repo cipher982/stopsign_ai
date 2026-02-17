@@ -48,19 +48,19 @@
                     <div class="stat-grid" aria-live="polite">
                         <div class="stat-cell">
                             <div class="stat-label">Compliance</div>
-                            <div class="stat-value mono" id="complianceRate">--</div>
+                            <div class="stat-value mono" id="complianceRate">{{ stats.compliance_rate }}</div>
                         </div>
                         <div class="stat-cell">
                             <div class="stat-label">Violations (24h)</div>
-                            <div class="stat-value mono stat-bad" id="violationCount">--</div>
+                            <div class="stat-value mono stat-bad" id="violationCount">{{ stats.violation_count }}</div>
                         </div>
                         <div class="stat-cell">
                             <div class="stat-label">Vehicles (24h)</div>
-                            <div class="stat-value mono" id="vehicleCount">--</div>
+                            <div class="stat-value mono" id="vehicleCount">{{ stats.vehicle_count }}</div>
                         </div>
                         <div class="stat-cell">
                             <div class="stat-label">Last Seen</div>
-                            <div class="stat-value mono stat-ok" id="lastDetection">--</div>
+                            <div class="stat-value mono stat-ok" id="lastDetection">{{ stats.last_detection }}</div>
                         </div>
                     </div>
                 </div>
@@ -100,7 +100,7 @@
     {# Hidden stats updater #}
     <div id="statsUpdater"
          hx-get="/api/live-stats"
-         hx-trigger="load, every 15s"
+         hx-trigger="every 15s"
          hx-swap="none"
          hx-vals='{"update": "stats"}'
          style="display: none;"></div>
