@@ -10,11 +10,10 @@ import sys
 
 import psycopg2
 
-DB_URL = os.environ.get(
-    "DB_URL",
-    "postgresql://postgres:***REMOVED***"
-    "@clifford.coin-castor.ts.net:5432/stopsign",
-)
+DB_URL = os.environ.get("DB_URL")
+if not DB_URL:
+    print("ERROR: DB_URL environment variable is required")
+    sys.exit(1)
 
 REQUIRED_PAYLOAD_KEYS = {
     "version",

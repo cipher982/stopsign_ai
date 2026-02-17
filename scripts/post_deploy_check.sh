@@ -18,7 +18,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     # Grab a pass ID that has raw data and show its detail page URL
     PASS_ID=$(uv run python -c "
 import psycopg2, os
-conn = psycopg2.connect(os.environ.get('DB_URL', 'postgresql://postgres:***REMOVED***@clifford.coin-castor.ts.net:5432/stopsign'))
+conn = psycopg2.connect(os.environ['DB_URL'])
 cur = conn.cursor()
 cur.execute('SELECT vehicle_pass_id FROM vehicle_pass_raw ORDER BY created_at DESC LIMIT 1')
 print(cur.fetchone()[0])
