@@ -74,6 +74,7 @@ def _format_pass_item(pass_data, vehicle_attrs=None):
         clip_url = f"/clips/{clip_path}"
 
     return {
+        "pass_id": getattr(pass_data, "id", None),
         "image_url": image_url,
         "time_str": time_str,
         "time_absolute": time_absolute,

@@ -7,10 +7,14 @@ import time
 
 from fastapi import APIRouter
 from fastapi import Request
+from fastapi.responses import HTMLResponse
 
 from stopsign.database import Database
 from stopsign.settings import DB_URL
 from stopsign.web.app import templates
+from stopsign.web.services.images import resolve_image_url
+from stopsign.web.services.scoring import get_speed_color
+from stopsign.web.services.scoring import get_time_color
 from stopsign.web.services.seo import PAGE_METADATA
 from stopsign.web.services.seo import build_json_ld
 
@@ -84,6 +88,84 @@ async def home(request: Request):
             "stats": stats,
         },
     )
+
+
+@router.get("/passes/{pass_id}")
+async def pass_detail(request: Request, pass_id: int):
+    try:
+        db = _get_db(request)
+        detail = db.get_pass_detail(pass_id)
+        if not detail:
+            return HTMLResponse("<h1>Pass not found</h1>", status_code=404)
+
+        vehicle_pass = detail["pass"]
+        raw = detail["raw"]
+
+        vehicle_attrs = db.get_vehicle_attributes_for_passes([pass_id])
+        attrs = vehicle_attrs.get(pass_id, {})
+
+        image_url = resolve_image_url(vehicle_pass.image_path)
+
+        clip_url = None
+        if vehicle_pass.clip_path and vehicle_pass.clip_status in ("ready", "local"):
+            clip_url = f"/clips/{vehicle_pass.clip_path}"
+
+        # Format timestamp
+        from zoneinfo import ZoneInfo
+
+        time_display = ""
+        if vehicle_pass.timestamp:
+            utc_time = vehicle_pass.timestamp.replace(tzinfo=ZoneInfo("UTC"))
+            chicago_time = utc_time.astimezone(ZoneInfo("America/Chicago"))
+            time_display = chicago_time.strftime("%b %d, %Y at %-I:%M %p")
+
+        # Badge text
+        badge_parts = []
+        type_color = " ".join(filter(None, [attrs.get("color"), attrs.get("vehicle_type")]))
+        if type_color:
+            badge_parts.append(type_color.title())
+        if attrs.get("make_model"):
+            badge_parts.append(attrs["make_model"])
+        badge_text = " | ".join(badge_parts)
+
+        # Raw payload summary
+        raw_summary = None
+        if raw and raw.raw_payload:
+            payload = raw.raw_payload
+            raw_summary = {
+                "version": payload.get("version"),
+                "sample_count": raw.sample_count,
+                "coordinate_space": payload.get("coordinate_space"),
+                "dimensions": payload.get("dimensions"),
+                "has_config": bool(payload.get("config_snapshot")),
+                "has_model": bool(payload.get("model_snapshot")),
+                "model_name": (payload.get("model_snapshot") or {}).get("model_name"),
+            }
+
+        return templates.TemplateResponse(
+            "pass_detail.html",
+            {
+                "request": request,
+                "active_page": "",
+                "meta_title": f"Pass #{pass_id} - Stop Sign Nanny",
+                "pass_id": pass_id,
+                "image_url": image_url,
+                "clip_url": clip_url,
+                "time_display": time_display,
+                "min_speed": vehicle_pass.min_speed,
+                "time_in_zone": vehicle_pass.time_in_zone,
+                "stop_duration": vehicle_pass.stop_duration,
+                "speed_color": get_speed_color(vehicle_pass.min_speed),
+                "time_color": get_time_color(vehicle_pass.time_in_zone),
+                "badge_text": badge_text,
+                "entry_time": vehicle_pass.entry_time,
+                "exit_time": vehicle_pass.exit_time,
+                "raw_summary": raw_summary,
+            },
+        )
+    except Exception as e:
+        logger.error(f"Error loading pass detail {pass_id}: {e}")
+        return HTMLResponse(f"<h1>Error loading pass #{pass_id}</h1>", status_code=500)
 
 
 @router.get("/records")

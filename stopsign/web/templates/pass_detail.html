@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Pass #{{ pass_id }} - Stop Sign Nanny{% endblock %}
+
+{% block content %}
+<div style="max-width: 720px; margin: 0 auto;">
+
+    {# Header #}
+    <div style="margin-bottom: 8px;">
+        <a href="/" style="font-size: 12px; color: #555; text-decoration: none;">&larr; Back to Live</a>
+    </div>
+
+    <div class="window">
+        <div class="title-bar">
+            <span class="title-bar-text">Pass #{{ pass_id }}{% if badge_text %} &mdash; {{ badge_text }}{% endif %}</span>
+            <div class="title-bar-controls">
+                <button aria-hidden="true" tabindex="-1">&#9472;</button>
+                <button aria-hidden="true" tabindex="-1">&#9723;</button>
+            </div>
+        </div>
+        <div class="window-body" style="padding: 8px;">
+
+            {# Image + Clip row #}
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                <div style="flex: 1; min-width: 200px;">
+                    <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Capture</div>
+                    <a href="{{ image_url }}" target="_blank">
+                        <img src="{{ image_url }}" alt="Vehicle pass #{{ pass_id }}"
+                             style="width: 100%; max-height: 300px; object-fit: contain; border: 1px solid #bbb; background: #f0f0f0; display: block;">
+                    </a>
+                </div>
+                {% if clip_url %}
+                <div style="flex: 1; min-width: 200px;">
+                    <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Clip</div>
+                    <video controls preload="metadata"
+                           style="width: 100%; max-height: 300px; border: 1px solid #bbb; background: #000; display: block;">
+                        <source src="{{ clip_url }}" type="video/mp4">
+                    </video>
+                </div>
+                {% endif %}
+            </div>
+
+            {# Facts grid #}
+            <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Facts</div>
+            <table class="data-table" style="margin-bottom: 8px;">
+                <tbody>
+                    <tr>
+                        <td style="font-weight: 600; width: 140px;">When</td>
+                        <td>{{ time_display }}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Min Speed</td>
+                        <td class="mono"><span style="color: {{ speed_color }};">{{ "%.1f"|format(min_speed) }} mph</span></td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Time in Zone</td>
+                        <td class="mono"><span style="color: {{ time_color }};">{{ "%.1f"|format(time_in_zone) }}s</span></td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Stop Duration</td>
+                        <td class="mono">{{ "%.1f"|format(stop_duration) }}s</td>
+                    </tr>
+                    {% if badge_text %}
+                    <tr>
+                        <td style="font-weight: 600;">Vehicle</td>
+                        <td>{{ badge_text }}</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+
+            {# Raw payload summary #}
+            {% if raw_summary %}
+            <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Raw Data</div>
+            <table class="data-table">
+                <tbody>
+                    <tr>
+                        <td style="font-weight: 600; width: 140px;">Samples</td>
+                        <td class="mono">{{ raw_summary.sample_count }}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Coordinate Space</td>
+                        <td class="mono">{{ raw_summary.coordinate_space }}</td>
+                    </tr>
+                    {% if raw_summary.dimensions %}
+                    <tr>
+                        <td style="font-weight: 600;">Resolution</td>
+                        <td class="mono">
+                            {% if raw_summary.dimensions.raw %}{{ raw_summary.dimensions.raw.width }}&times;{{ raw_summary.dimensions.raw.height }}{% endif %}
+                            {% if raw_summary.dimensions.processed %}&rarr; {{ raw_summary.dimensions.processed.width }}&times;{{ raw_summary.dimensions.processed.height }}{% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% if raw_summary.model_name %}
+                    <tr>
+                        <td style="font-weight: 600;">Model</td>
+                        <td class="mono">{{ raw_summary.model_name }}</td>
+                    </tr>
+                    {% endif %}
+                    <tr>
+                        <td style="font-weight: 600;">Payload Version</td>
+                        <td class="mono">v{{ raw_summary.version }}</td>
+                    </tr>
+                </tbody>
+            </table>
+            {% endif %}
+
+        </div>
+    </div>
+</div>
+{% endblock %}
