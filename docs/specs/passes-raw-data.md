@@ -117,3 +117,6 @@ Keep as-is. Optional future additions (not required for initial work): `camera_i
 
 ## Test Commands
 - `uv run pytest` (optional; run only if already passing locally)
+
+## Review Notes
+- Phase 1 automated review tools unavailable (missing `OPENAI_API_KEY` and `ZAI_API_KEY`). Manual review performed in main thread.
