@@ -148,6 +148,25 @@ def _upload_clip_to_minio(clip_path: str, object_name: str) -> bool:
     return False
 
 
+def _download_clip_from_minio(object_name: str, local_path: str) -> bool:
+    """Download a clip from MinIO to local disk. Returns True on success."""
+    if not BREMEN_MINIO_SECRET_KEY:
+        return False
+    try:
+        client = Minio(
+            BREMEN_MINIO_ENDPOINT,
+            access_key=BREMEN_MINIO_ACCESS_KEY,
+            secret_key=BREMEN_MINIO_SECRET_KEY,
+            secure=False,
+        )
+        client.fget_object(BREMEN_MINIO_CLIP_BUCKET, object_name, local_path)
+        logger.info("Clip restored from MinIO: %s", object_name)
+        return True
+    except Exception as e:
+        logger.warning("Failed to restore clip %s from MinIO: %s", object_name, e)
+        return False
+
+
 def _ensure_clip_bucket():
     """Create the clip bucket on MinIO if it doesn't exist."""
     if not BREMEN_MINIO_SECRET_KEY:
@@ -359,6 +378,13 @@ def clip_worker_loop(app):
             if app.state.db.read_only_mode:
                 time.sleep(CLIP_WORKER_INTERVAL_SEC)
                 continue
+
+            # Restore clips that were uploaded to MinIO but lost locally (e.g. after redeploy)
+            uploaded_missing = app.state.db.get_clips_missing_locally(limit=5)
+            for pass_data in uploaded_missing:
+                clip_path = os.path.join(CLIP_DIR, pass_data.clip_path)
+                if not os.path.exists(clip_path):
+                    _download_clip_from_minio(pass_data.clip_path, clip_path)
 
             pending = app.state.db.get_passes_needing_clips(limit=5, min_exit_age_sec=CLIP_MIN_AGE_SEC)
             for pass_data in pending:

@@ -285,6 +285,19 @@ class Database:
             )
 
     @log_execution_time
+    def get_clips_missing_locally(self, limit: int = 10):
+        """Return passes with ready clips that may need local file restoration."""
+        with self.Session() as session:
+            return (
+                session.query(VehiclePass)
+                .filter(VehiclePass.clip_status == "ready")
+                .filter(VehiclePass.clip_path.isnot(None))
+                .order_by(VehiclePass.timestamp.desc())
+                .limit(limit)
+                .all()
+            )
+
+    @log_execution_time
     def update_clip_status(
         self,
         pass_id: int,
