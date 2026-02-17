@@ -1,3 +1,4 @@
+import copy
 import logging
 import math
 import os
@@ -403,3 +404,10 @@ class Config:
     def get_file_mtime(self) -> float:
         """Get the modification time of the config file."""
         return os.path.getmtime(self.config_path)
+
+    def get_snapshot(self) -> dict:
+        """Return a deep copy of the current config for persistence."""
+        with self._lock:
+            if not isinstance(self._yaml_config, dict):
+                return {}
+            return copy.deepcopy(self._yaml_config)

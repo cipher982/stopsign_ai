@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from http.server import HTTPServer
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -1071,6 +1072,25 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 "coordinate_system": "scaled_resolution",
             },
         }
+
+    def get_model_snapshot(self) -> Dict[str, Any]:
+        """Return model metadata for persistence alongside passes."""
+        snapshot: Dict[str, Any] = {
+            "model_name": YOLO_MODEL_NAME,
+            "model_path": YOLO_MODEL_PATH,
+            "device": YOLO_DEVICE,
+        }
+
+        model = getattr(self, "model", None)
+        if model is not None:
+            snapshot["conf_thresh"] = getattr(model, "conf_thresh", None)
+            snapshot["nms_iou_thresh"] = getattr(model, "nms_iou_thresh", None)
+            try:
+                snapshot["providers"] = list(model.session.get_providers())
+            except Exception:
+                snapshot["providers"] = []
+
+        return snapshot
 
     def update_stream_resolution(self, width: int, height: int):
         """Update the actual stream resolution (called from FFmpeg service)."""

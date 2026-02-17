@@ -358,6 +358,75 @@ class StopDetector:
             print(f"Stop geometry initialization deferred: {e}")
             self._reset_geometry()
 
+    def _get_dimensions_snapshot(self) -> Optional[Dict[str, Dict[str, int]]]:
+        raw_width = None
+        raw_height = None
+
+        if self._video_analyzer is not None:
+            raw_width = getattr(self._video_analyzer, "raw_width", None)
+            raw_height = getattr(self._video_analyzer, "raw_height", None)
+
+            if raw_width is None or raw_height is None:
+                coord_info = self._video_analyzer.get_coordinate_info()
+                if coord_info:
+                    raw_resolution = coord_info.get("raw_resolution", {})
+                    raw_width = raw_resolution.get("width")
+                    raw_height = raw_resolution.get("height")
+
+        if raw_width is None or raw_height is None:
+            return None
+
+        cropped_width = int(raw_width * (1.0 - 2 * self.config.crop_side))
+        cropped_height = int(raw_height * (1.0 - self.config.crop_top))
+        processed_width = int(cropped_width * self.config.scale)
+        processed_height = int(cropped_height * self.config.scale)
+
+        return {
+            "raw": {"width": raw_width, "height": raw_height},
+            "cropped": {"width": cropped_width, "height": cropped_height},
+            "processed": {"width": processed_width, "height": processed_height},
+        }
+
+    def _build_raw_payload(self, car: Car) -> dict:
+        samples = [list(sample) for sample in car.state.samples]
+        summary = {
+            "entry_time": car.state.zone.entry_time,
+            "exit_time": car.state.zone.exit_time,
+            "time_in_zone": car.state.zone.time_in_zone,
+            "stop_duration": car.state.zone.stop_duration,
+            "min_speed": car.state.zone.min_speed,
+            "stop_position": [float(car.state.zone.stop_position[0]), float(car.state.zone.stop_position[1])],
+            "image_path": car.state.capture.image_path,
+            "clip_path": None,
+        }
+
+        config_snapshot = {}
+        if hasattr(self.config, "get_snapshot"):
+            config_snapshot = self.config.get_snapshot()
+
+        model_snapshot = {}
+        if self._video_analyzer is not None:
+            try:
+                model_snapshot = self._video_analyzer.get_model_snapshot()
+            except Exception as e:
+                logger.debug(f"Failed to capture model snapshot: {e}")
+
+        dimensions = self._get_dimensions_snapshot() or {}
+
+        payload = {
+            "version": 1,
+            "coordinate_space": "processed",
+            "sample_schema": RAW_SAMPLE_SCHEMA,
+            "samples": samples,
+            "summary": summary,
+            "dimensions": dimensions,
+            "config_snapshot": config_snapshot,
+            "model_snapshot": model_snapshot,
+            "raw_complete": True,
+        }
+
+        return payload
+
     def _create_stop_zone(self) -> np.ndarray:
         # Get processing coordinates from video analyzer
         if self._video_analyzer is None:
@@ -601,7 +670,7 @@ class StopDetector:
                     car.state.zone.min_speed = min(car.state.zone.speed_samples)
 
                 # Save data to the database
-                self.db.add_vehicle_pass(
+                pass_id = self.db.add_vehicle_pass(
                     vehicle_id=car.id,
                     time_in_zone=car.state.zone.time_in_zone,
                     stop_duration=car.state.zone.stop_duration,
@@ -610,6 +679,17 @@ class StopDetector:
                     entry_time=car.state.zone.entry_time,
                     exit_time=car.state.zone.exit_time,
                 )
+                if pass_id is not None:
+                    raw_payload = self._build_raw_payload(car)
+                    sample_count = len(car.state.samples)
+                    saved = self.db.save_vehicle_pass_raw(
+                        vehicle_pass_id=pass_id,
+                        raw_payload=raw_payload,
+                        sample_count=sample_count,
+                        raw_complete=True,
+                    )
+                    if not saved:
+                        logger.warning("Failed to persist raw payload for pass_id=%s", pass_id)
                 logger.info(
                     f"Vehicle pass recorded: ID={car.id}, "
                     f"Time in zone={car.state.zone.time_in_zone:.2f}s, "
