@@ -20,6 +20,7 @@ from sqlalchemy import UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy import or_
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
@@ -92,7 +93,7 @@ class VehiclePassRaw(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     vehicle_pass_id = Column(BigInteger, ForeignKey("vehicle_passes.id"), unique=True, nullable=False)
-    raw_payload = Column(JSON, nullable=False)
+    raw_payload = Column(JSONB, nullable=False)
     sample_count = Column(Integer, nullable=False, default=0)
     raw_complete = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=func.now())
