@@ -41,6 +41,12 @@ We will introduce a durable “Passes” data model that stores both fast summar
 **Rationale:** Enables reproducible analysis even after config changes.
 **Revisit if:** We implement a separate versioned config registry.
 
+### Decision: Raw payload snapshots use live config + YOLO metadata at pass completion
+**Context:** Need consistent, low-latency capture of config/model state without extra DB lookups.
+**Choice:** Persist a deep-copied config snapshot plus YOLO model name/path/device, thresholds, and providers from the running analyzer.
+**Rationale:** Captures the exact runtime settings with minimal overhead.
+**Revisit if:** We add a centralized model registry or config/version service.
+
 ## Data Model
 ### Existing: `vehicle_passes` (summary)
 Keep as-is. Optional future additions (not required for initial work): `camera_id`, `analysis_version`.
@@ -111,4 +117,3 @@ Keep as-is. Optional future additions (not required for initial work): `camera_i
 
 ## Test Commands
 - `uv run pytest` (optional; run only if already passing locally)
-

@@ -2,15 +2,15 @@
 
 ## Status
 - Phase 0: Spec ✅
-- Phase 1: Raw capture + data model ⏳
+- Phase 1: Raw capture + data model ✅
 - Phase 2: Pass detail page + linking ⏳
 
 ## Phase 1 Checklist
 - [x] Add `vehicle_pass_raw` SQLAlchemy model + migrations via create_all
 - [x] Capture raw samples on every tracking update
-- [ ] Persist raw payload on pass completion (config + model snapshot)
+- [x] Persist raw payload on pass completion (config + model snapshot)
 - [x] Add DB helpers (`save_vehicle_pass_raw`, `get_pass_detail`)
-- [ ] Update task doc
+- [x] Update task doc
 
 ## Phase 2 Checklist
 - [ ] Add `/passes/{id}` page route
