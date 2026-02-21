@@ -8,7 +8,7 @@
     <div style="flex: 1; min-width: 0; line-height: 1.3;">
         <div style="font-size: 12px; font-weight: 600;">{{ item.time_str }}{% if item.clip_url %} <span style="font-weight: 400; color: #555; font-size: 11px;" title="Has clip">&#9654;</span>{% endif %}</div>
         <div class="mono" style="font-size: 11px; color: #555;">
-            <span style="color: {{ item.speed_color }};">{{ "%.1f"|format(item.min_speed) }} mph</span>
+            <span style="color: {{ item.speed_color }};">{{ "%.1f"|format(item.min_speed) }}</span>
             &middot;
             <span style="color: {{ item.time_color }};">{{ "%.1f"|format(item.time_in_zone) }}s</span>
         </div>
