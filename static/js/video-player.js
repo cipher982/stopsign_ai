@@ -85,9 +85,9 @@ function initializeVideoPlayer() {
         console.log('HLS is supported');
         var hls = new Hls({
             debug: false,
-            liveSyncDurationCount: 3,
+            liveSyncDurationCount: 5,        // 10s target buffer — absorbs pipeline variance
             liveMaxLatencyDurationCount: 10,
-            maxLiveSyncPlaybackRate: 1.2,
+            maxLiveSyncPlaybackRate: 1.5,    // faster catch-up vs hard jump
             liveDurationInfinity: true
         });
 

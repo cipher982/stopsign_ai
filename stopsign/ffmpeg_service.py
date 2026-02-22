@@ -384,7 +384,9 @@ def start_ffmpeg_process(frame_shape):
         PRESET,
     )
     ffmpeg_cmd = create_ffmpeg_cmd(frame_shape)
-    process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+    # bufsize=0: unbuffered stdin — frames go directly to OS pipe, no Python
+    # buffering layer. Eliminates flush() overhead and per-frame buffer latency.
+    process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, bufsize=0)
     return process
 
 
@@ -435,93 +437,77 @@ def main():
         logger.error("Failed to start FFmpeg process")
         return
 
-    # Frame pacing: maintain steady 15 FPS output by duplicating frames when input is slow
-    # This is the "Carmack stable fix" - fill gaps with duplicate frames
+    # BRPOP-driven loop: block until video_analyzer delivers a frame, write
+    # immediately. No independent timer — production rate drives write rate,
+    # eliminating the clock-mismatch frame drops of the old rpop+sleep design.
+    # On timeout (video_analyzer stalled), dup the last frame to hold timing.
     target_fps = float(FRAME_RATE)
-    frame_interval = 1.0 / target_fps  # ~66.7ms at 15 FPS
+    frame_interval = 1.0 / target_fps  # ~66.7ms at 15 FPS — used as BRPOP timeout
     expected_frame_bytes = frame_shape[0] * frame_shape[1] * 3
-    last_frame_time = time.time()
-    last_raw_frame = None  # Cache for frame duplication
+    last_raw_frame = None
 
     # FPS logging for diagnosis
     fps_frame_count = 0
-    fps_last_log_time = time.time()
+    fps_last_log_time = time.monotonic()
     new_frame_count = 0
     dup_frame_count = 0
 
     try:
-        logger.info(f"Starting main loop with frame duplication (target {target_fps} FPS)")
+        logger.info(f"Starting BRPOP main loop (target {target_fps} FPS, bufsize=0)")
         global frames_processed
         while True:
-            # Non-blocking pop - RPOP returns immediately with None if queue empty
-            # (BRPOP timeout=0 blocks forever, so we use RPOP instead)
+            # Block until a processed frame is available (or timeout → dup)
             try:
-                data = REDIS_CLIENT.rpop(PROCESSED_FRAME_KEY)
-                task = (PROCESSED_FRAME_KEY, data) if data else None
-            except Exception:
+                task = REDIS_CLIENT.brpop([PROCESSED_FRAME_KEY], timeout=frame_interval)
+            except Exception as e:
+                logger.warning("Redis BRPOP error: %s", e)
                 task = None
 
-            now = time.time()
-            time_since_last = now - last_frame_time
-
             if task:
-                # New frame arrived - cache raw bytes
-                _, data = task  # type: ignore
-                if ffmpeg_process.stdin:
-                    try:
-                        if len(data) != expected_frame_bytes:
-                            logger.warning(
-                                "Processed frame size mismatch (got %d bytes, expected %d)",
-                                len(data),
-                                expected_frame_bytes,
-                            )
-                            continue
-                        last_raw_frame = data
-                        new_frame_count += 1
-                    except Exception as e:
-                        logger.warning(f"Frame read error: {e}")
-                        continue
+                _, data = task
+                if len(data) != expected_frame_bytes:
+                    logger.warning(
+                        "Processed frame size mismatch (got %d bytes, expected %d)",
+                        len(data),
+                        expected_frame_bytes,
+                    )
+                else:
+                    last_raw_frame = data
+                    new_frame_count += 1
+            elif last_raw_frame:
+                # BRPOP timed out — video_analyzer fell behind; dup to hold cadence
+                dup_frame_count += 1
 
-            # Write frame at steady 15 FPS intervals
-            if time_since_last >= frame_interval and last_raw_frame is not None:
-                if ffmpeg_process.stdin:
-                    try:
-                        ffmpeg_process.stdin.write(last_raw_frame)
-                        ffmpeg_process.stdin.flush()
-                        last_frame_time = now
-                        frames_processed += 1
-                        fps_frame_count += 1
+            if last_raw_frame is not None and ffmpeg_process.stdin:
+                try:
+                    # bufsize=0 means write goes directly to OS pipe — no flush() needed
+                    ffmpeg_process.stdin.write(last_raw_frame)
+                    frames_processed += 1
+                    fps_frame_count += 1
 
-                        # Track duplicates vs new frames
-                        if not task:
-                            dup_frame_count += 1
+                    global LAST_FRAME_TS
+                    LAST_FRAME_TS = time.monotonic()
+                    status.update_status_metric("current_fps", target_fps)
+                    status.increment_counter("processed_count", 1)
+                    metrics.frames_processed.add(1, {"service": "ffmpeg"})
+                except BrokenPipeError:
+                    logger.error("FFmpeg process closed unexpectedly. Restarting...")
+                    ffmpeg_process = start_ffmpeg_process(frame_shape)
+                    if not ffmpeg_process or not ffmpeg_process.stdin:
+                        logger.error("FFmpeg restart failed: stdin is None")
 
-                        # Heartbeat and status updates
-                        global LAST_FRAME_TS
-                        LAST_FRAME_TS = now
-                        status.update_status_metric("current_fps", target_fps)
-                        status.increment_counter("processed_count", 1)
-                        metrics.frames_processed.add(1, {"service": "ffmpeg"})
-                    except BrokenPipeError:
-                        logger.error("FFmpeg process closed unexpectedly. Restarting...")
-                        ffmpeg_process = start_ffmpeg_process(frame_shape)
-                        if not ffmpeg_process or not ffmpeg_process.stdin:
-                            logger.error("FFmpeg restart failed: stdin is None")
-
-            # Log FPS every 5 seconds
+            # Log FPS every 5 seconds (monotonic for accuracy)
+            now = time.monotonic()
             if now - fps_last_log_time >= 5.0:
-                actual_fps = fps_frame_count / (now - fps_last_log_time)
-                new_fps = new_frame_count / (now - fps_last_log_time)
+                elapsed = now - fps_last_log_time
+                actual_fps = fps_frame_count / elapsed
+                new_fps = new_frame_count / elapsed
                 dup_pct = (dup_frame_count / fps_frame_count * 100) if fps_frame_count > 0 else 0
                 logger.info(f"FFmpeg output: {actual_fps:.1f} FPS (new: {new_fps:.1f}, dup: {dup_pct:.0f}%)")
                 fps_frame_count = 0
                 new_frame_count = 0
                 dup_frame_count = 0
                 fps_last_log_time = now
-
-            # Small sleep to prevent busy-waiting when no frames available
-            if not task and time_since_last < frame_interval:
-                time.sleep(frame_interval - time_since_last)
 
             # If FFmpeg died, restart it
             if ffmpeg_process.poll() is not None:
