@@ -131,7 +131,7 @@ class Car:
         self.kalman_filter.predict(dt)
         smoothed_location = self.kalman_filter.update(np.array(location))
         self.state.location = (float(smoothed_location[0]), float(smoothed_location[1]))
-        self.state.track.append((location, timestamp))
+        self.state.track.append((self.state.location, timestamp))
         self.state.last_update_time = timestamp
 
     def _update_speed(self, current_timestamp: float) -> None:
