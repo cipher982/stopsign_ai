@@ -437,28 +437,41 @@ def main():
         logger.error("Failed to start FFmpeg process")
         return
 
-    # BRPOP-driven loop: block until video_analyzer delivers a frame, write
-    # immediately. No independent timer — production rate drives write rate,
-    # eliminating the clock-mismatch frame drops of the old rpop+sleep design.
-    # On timeout (video_analyzer stalled), dup the last frame to hold timing.
+    # Accumulating-deadline paced loop (Codex-reviewed, three failure modes addressed):
+    #
+    #   1. On time / slightly late (normal):
+    #      sleep remainder, write at deadline, advance deadline by frame_interval.
+    #      No drift because deadline is accumulated, not re-derived from now.
+    #
+    #   2. Stall (YOLO spike, Redis hiccup):
+    #      BRPOP blocks > frame_interval. next_write_t falls behind now.
+    #      On recovery, snap next_write_t = now to resume real-time cadence
+    #      instead of bursting through the backlog. Queued frames are consumed
+    #      but written at steady pace, not all at once.
+    #
+    #   3. Startup (no frame yet):
+    #      Advance deadline but skip write. No write(None) crash.
     target_fps = float(FRAME_RATE)
-    frame_interval = 1.0 / target_fps  # ~66.7ms at 15 FPS — used as BRPOP timeout
+    frame_interval = 1.0 / target_fps  # ~66.7ms at 15 FPS
     expected_frame_bytes = frame_shape[0] * frame_shape[1] * 3
     last_raw_frame = None
+    next_write_t = time.monotonic()
 
-    # FPS logging for diagnosis
+    # FPS logging
     fps_frame_count = 0
     fps_last_log_time = time.monotonic()
     new_frame_count = 0
     dup_frame_count = 0
+    snap_count = 0  # times stall-recovery snap fired
 
     try:
-        logger.info(f"Starting BRPOP main loop (target {target_fps} FPS, bufsize=0)")
+        logger.info(f"Starting paced BRPOP loop (target {target_fps} FPS, bufsize=0)")
         global frames_processed
         while True:
-            # Block until a processed frame is available (or timeout → dup)
+            # Fetch next frame; timeout = 2× interval so stalls dup twice before
+            # BRPOP itself becomes the bottleneck.
             try:
-                task = REDIS_CLIENT.brpop([PROCESSED_FRAME_KEY], timeout=frame_interval)
+                task = REDIS_CLIENT.brpop([PROCESSED_FRAME_KEY], timeout=frame_interval * 2)
             except Exception as e:
                 logger.warning("Redis BRPOP error: %s", e)
                 task = None
@@ -475,12 +488,24 @@ def main():
                     last_raw_frame = data
                     new_frame_count += 1
             elif last_raw_frame:
-                # BRPOP timed out — video_analyzer fell behind; dup to hold cadence
                 dup_frame_count += 1
 
-            if last_raw_frame is not None and ffmpeg_process.stdin:
+            # No frame yet (startup) — advance deadline and wait
+            if last_raw_frame is None:
+                next_write_t += frame_interval
+                continue
+
+            # Stall recovery: if we've fallen more than one interval behind,
+            # snap forward instead of bursting to catch up
+            now = time.monotonic()
+            if next_write_t < now - frame_interval:
+                snap_count += 1
+                next_write_t = now
+            elif next_write_t > now:
+                time.sleep(next_write_t - now)
+
+            if ffmpeg_process.stdin:
                 try:
-                    # bufsize=0 means write goes directly to OS pipe — no flush() needed
                     ffmpeg_process.stdin.write(last_raw_frame)
                     frames_processed += 1
                     fps_frame_count += 1
@@ -496,17 +521,26 @@ def main():
                     if not ffmpeg_process or not ffmpeg_process.stdin:
                         logger.error("FFmpeg restart failed: stdin is None")
 
-            # Log FPS every 5 seconds (monotonic for accuracy)
+            next_write_t += frame_interval  # advance ideal timeline
+
+            # Log FPS every 5 seconds
             now = time.monotonic()
             if now - fps_last_log_time >= 5.0:
                 elapsed = now - fps_last_log_time
                 actual_fps = fps_frame_count / elapsed
                 new_fps = new_frame_count / elapsed
                 dup_pct = (dup_frame_count / fps_frame_count * 100) if fps_frame_count > 0 else 0
-                logger.info(f"FFmpeg output: {actual_fps:.1f} FPS (new: {new_fps:.1f}, dup: {dup_pct:.0f}%)")
+                logger.info(
+                    "FFmpeg output: %.1f FPS (new: %.1f, dup: %.0f%%, snaps: %d)",
+                    actual_fps,
+                    new_fps,
+                    dup_pct,
+                    snap_count,
+                )
                 fps_frame_count = 0
                 new_frame_count = 0
                 dup_frame_count = 0
+                snap_count = 0
                 fps_last_log_time = now
 
             # If FFmpeg died, restart it
