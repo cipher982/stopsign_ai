@@ -158,7 +158,10 @@ async def get_recent_vehicle_passes(request: Request):
         pass_ids = [p.id for p in recent_passes]
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
         scores = db.get_pass_stop_scores(
-            [{"time_in_zone": p.time_in_zone, "min_speed": p.min_speed} for p in recent_passes]
+            [
+                {"time_in_zone": p.time_in_zone, "min_speed": p.min_speed, "stop_duration": p.stop_duration}
+                for p in recent_passes
+            ]
         )
 
         passes = [_format_pass_item(p, vehicle_attrs, scores[i]) for i, p in enumerate(recent_passes)]
@@ -189,7 +192,10 @@ async def get_worst_passes(request: Request):
         pass_ids = [p.id for p in all_passes]
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
         scores = db.get_pass_stop_scores(
-            [{"time_in_zone": p.time_in_zone, "min_speed": p.min_speed} for p in all_passes]
+            [
+                {"time_in_zone": p.time_in_zone, "min_speed": p.min_speed, "stop_duration": p.stop_duration}
+                for p in all_passes
+            ]
         )
         n = len(worst_speed_passes)
 
@@ -226,7 +232,10 @@ async def get_best_passes(request: Request):
         pass_ids = [p.id for p in all_passes]
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
         scores = db.get_pass_stop_scores(
-            [{"time_in_zone": p.time_in_zone, "min_speed": p.min_speed} for p in all_passes]
+            [
+                {"time_in_zone": p.time_in_zone, "min_speed": p.min_speed, "stop_duration": p.stop_duration}
+                for p in all_passes
+            ]
         )
         n = len(best_speed_passes)
 

@@ -384,46 +384,6 @@ class Database:
             session.commit()
 
     @log_execution_time
-    def get_min_speed_percentile(self, min_speed: float, hours: int = 24) -> float:
-        with self.Session() as session:
-            total_count = (
-                session.query(VehiclePass)
-                .filter(VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"))
-                .count()
-            )
-
-            count = (
-                session.query(VehiclePass)
-                .filter(
-                    VehiclePass.min_speed <= min_speed,
-                    VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"),
-                )
-                .count()
-            )
-
-            return (count * 100.0 / total_count) if total_count > 0 else 0
-
-    @log_execution_time
-    def get_time_in_zone_percentile(self, time_in_zone: float, hours: int = 24) -> float:
-        with self.Session() as session:
-            total_count = (
-                session.query(VehiclePass)
-                .filter(VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"))
-                .count()
-            )
-
-            count = (
-                session.query(VehiclePass)
-                .filter(
-                    VehiclePass.time_in_zone <= time_in_zone,
-                    VehiclePass.timestamp >= func.now() - text(f"INTERVAL '{hours} hours'"),
-                )
-                .count()
-            )
-
-            return (count * 100.0 / total_count) if total_count > 0 else 0
-
-    @log_execution_time
     def get_extreme_passes(self, field: str, order: str, limit: int, hours: int) -> List[VehiclePass]:
         valid_fields = ["min_speed", "time_in_zone", "stop_duration"]
         valid_orders = ["asc", "desc"]
@@ -461,62 +421,22 @@ class Database:
                 .count()
             )
 
-    @log_execution_time
-    def get_bulk_scores(self, passes: list[dict]) -> list[dict]:
-        """Calculate scores for multiple passes based on 24h historical data"""
-        with self.Session() as session:
-            # Get all passes from last 24h for comparison
-            historical = session.execute(
-                text("""
-                SELECT min_speed, time_in_zone 
-                FROM vehicle_passes 
-                WHERE timestamp >= NOW() - INTERVAL '24 hours'
-                """)
-            ).fetchall()
-
-            if not historical:
-                return [
-                    {"min_speed": p["min_speed"], "time_in_zone": p["time_in_zone"], "speed_score": 0, "time_score": 0}
-                    for p in passes
-                ]
-
-            # Convert to sorted lists for percentile calcs
-            hist_speeds = sorted(row[0] for row in historical)
-            hist_times = sorted(row[1] for row in historical)
-            total = len(historical)
-
-            # Calculate scores for each pass
-            results = []
-            for p in passes:
-                # Find position in sorted lists
-                speed_pos = sum(1 for x in hist_speeds if x <= p["min_speed"])
-                time_pos = sum(1 for x in hist_times if x <= p["time_in_zone"])
-
-                # Calculate percentiles and convert to scores
-                speed_score = round((1 - (speed_pos / total)) * 10)
-                time_score = round((time_pos / total) * 10)
-
-                results.append(
-                    {
-                        "min_speed": p["min_speed"],
-                        "time_in_zone": p["time_in_zone"],
-                        "speed_score": speed_score,
-                        "time_score": time_score,
-                    }
-                )
-
-            return results
-
     def get_pass_stop_scores(self, passes: list[dict]) -> list[dict]:
         """Compute stop_score (0-100 tiz percentile) and verdict for each pass.
 
         Uses all-time clean historical data as reference distribution.
         Caches the sorted tiz list for 1 hour to avoid repeated full-table scans.
 
-        Calibrated thresholds (see docs/analysis/2026-02-21-stop-calibration.md):
-          Full Stop   : time_in_zone >= 3.0s AND min_speed < 10 px/s
-          Rolling Stop: time_in_zone >= 1.5s
-          No Stop     : time_in_zone <  1.5s
+        Triple-gate verdict (per Codex review, see docs/analysis/2026-02-21-stop-calibration.md):
+          Full Stop   : tiz >= 2.0s AND stop_duration >= 1.2s AND min_speed < 12 px/s
+            - tiz floor prevents partial-zone false positives
+            - stop_duration gate ensures sustained sub-threshold time (not a single noisy frame)
+            - min_speed gate filters slow rolls that accumulate stop_duration at 15-19 px/s
+          Rolling Stop: tiz >= 1.5s
+          No Stop     : tiz < 1.5s
+
+        Noise floor reference: parked cars p95 = 2.3 px/s, max = 6.1 px/s.
+        min_speed < 12 sits above noise ceiling (6.1) but well below stop_speed_threshold (20).
         """
         import bisect
 
@@ -539,10 +459,11 @@ class Database:
         for p in passes:
             tiz = p.get("time_in_zone", 0.0)
             min_spd = p.get("min_speed", 999.0)
+            stop_dur = p.get("stop_duration", 0.0)
 
             stop_score = round(bisect.bisect_right(tiz_sorted, tiz) / total * 100) if total else 0
 
-            if tiz >= 3.0 and min_spd < 10.0:
+            if tiz >= 2.0 and stop_dur >= 1.2 and min_spd < 12.0:
                 verdict = "Full Stop"
             elif tiz >= 1.5:
                 verdict = "Rolling Stop"

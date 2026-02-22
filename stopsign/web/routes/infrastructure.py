@@ -95,8 +95,8 @@ async def debug_performance(request: Request):
 
         start = time.time()
         try:
-            test_passes = [{"min_speed": 10.0, "time_in_zone": 2.5}]
-            _ = request.app.state.db.get_bulk_scores(test_passes)
+            test_passes = [{"min_speed": 10.0, "time_in_zone": 2.5, "stop_duration": 1.0}]
+            _ = request.app.state.db.get_pass_stop_scores(test_passes)
             results["db_bulk_scores"] = {"time_ms": round((time.time() - start) * 1000), "status": "success"}
         except Exception as e:
             results["db_bulk_scores"] = {
