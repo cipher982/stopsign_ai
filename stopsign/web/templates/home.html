@@ -68,7 +68,10 @@
         </div>
 
         <div class="home-panel home-video raised">
-            <div class="home-panel-title">Live Feed</div>
+            <div class="home-panel-title" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Live Feed</span>
+                <button class="video-toggle" onclick="this.closest('.home-video').classList.toggle('collapsed'); this.textContent = this.closest('.home-video').classList.contains('collapsed') ? '▼ show' : '▲ hide';">▲ hide</button>
+            </div>
             <div id="videoContainer"
                  hx-get="/load-video"
                  hx-trigger="load"
@@ -115,7 +118,7 @@
 
     .home-grid {
         display: grid;
-        grid-template-columns: 260px minmax(0, 1fr) 360px;
+        grid-template-columns: 220px minmax(0, 1fr) 420px;
         grid-template-rows: 1fr auto;
         gap: 2px;
         height: calc(100% - 4px);
@@ -227,30 +230,54 @@
         letter-spacing: 0.3px;
     }
 
+    /* Video collapse toggle — mobile only */
+    .video-toggle {
+        display: none;
+        background: none;
+        border: none;
+        font-size: 11px;
+        cursor: pointer;
+        color: var(--text-secondary);
+        padding: 0;
+    }
+    .home-video.collapsed .home-video-frame { display: none; }
+    .home-video.collapsed { min-height: 0; flex: none; }
+
     @media (max-width: 1200px) {
         .home-grid {
-            grid-template-columns: 220px minmax(0, 1fr);
+            grid-template-columns: 200px minmax(0, 1fr);
             grid-template-rows: auto 1fr auto;
         }
         .home-recents {
             grid-column: 1 / -1;
-            min-height: 220px;
-            max-height: 280px;
+            min-height: 240px;
+            max-height: 320px;
         }
     }
 
     @media (max-width: 800px) {
         .home-grid {
             grid-template-columns: 1fr;
-            grid-template-rows: auto auto auto auto;
+            grid-template-rows: auto auto auto auto auto;
+            height: auto;
         }
-        .home-left {
-            grid-template-rows: auto auto;
-        }
+        .home-window { height: auto; min-height: calc(100vh - 62px); }
+        .home-left { grid-template-rows: auto auto; }
+        .home-video { order: 2; }
+        .home-left  { order: 1; }
         .home-recents {
-            min-height: 200px;
-            max-height: 260px;
+            order: 3;
+            min-height: 280px;
+            max-height: none;
         }
+        .home-ticker { order: 4; }
+        .home-video-frame { min-height: 180px; }
+        .video-toggle { display: inline; }
+        .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+    }
+
+    @media (max-width: 480px) {
+        .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 </style>
 {% endblock %}
