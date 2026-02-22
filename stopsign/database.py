@@ -156,6 +156,7 @@ class Database:
         )
         self.Session = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
+        self._score_cache: dict = {"tiz_sorted": [], "expires": 0.0}
 
         # Check if we're in read-only mode
         self.read_only_mode = os.getenv("READ_ONLY_MODE", "false").lower() == "true"
@@ -505,6 +506,52 @@ class Database:
                 )
 
             return results
+
+    def get_pass_stop_scores(self, passes: list[dict]) -> list[dict]:
+        """Compute stop_score (0-100 tiz percentile) and verdict for each pass.
+
+        Uses all-time clean historical data as reference distribution.
+        Caches the sorted tiz list for 1 hour to avoid repeated full-table scans.
+
+        Calibrated thresholds (see docs/analysis/2026-02-21-stop-calibration.md):
+          Full Stop   : time_in_zone >= 3.0s AND min_speed < 10 px/s
+          Rolling Stop: time_in_zone >= 1.5s
+          No Stop     : time_in_zone <  1.5s
+        """
+        import bisect
+
+        if time.time() > self._score_cache["expires"]:
+            with self.Session() as session:
+                rows = session.execute(
+                    text("""
+                        SELECT time_in_zone FROM vehicle_passes
+                        WHERE time_in_zone < 30
+                        ORDER BY time_in_zone
+                    """)
+                ).fetchall()
+            self._score_cache["tiz_sorted"] = [float(r[0]) for r in rows]
+            self._score_cache["expires"] = time.time() + 3600
+
+        tiz_sorted = self._score_cache["tiz_sorted"]
+        total = len(tiz_sorted)
+
+        results = []
+        for p in passes:
+            tiz = p.get("time_in_zone", 0.0)
+            min_spd = p.get("min_speed", 999.0)
+
+            stop_score = round(bisect.bisect_right(tiz_sorted, tiz) / total * 100) if total else 0
+
+            if tiz >= 3.0 and min_spd < 10.0:
+                verdict = "Full Stop"
+            elif tiz >= 1.5:
+                verdict = "Rolling Stop"
+            else:
+                verdict = "No Stop"
+
+            results.append({"stop_score": stop_score, "verdict": verdict})
+
+        return results
 
     @log_execution_time
     def get_daily_statistics(self, date):

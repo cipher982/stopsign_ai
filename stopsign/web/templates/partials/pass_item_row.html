@@ -5,7 +5,7 @@
              class="thumb" loading="lazy" decoding="async">
     </td>
     <td style="font-weight: 600;">{{ item.time_str }}</td>
-    <td class="mono"><span class="dot" style="background-color: {{ item.speed_color }};"></span>{{ "%.1f"|format(item.min_speed) }}</td>
+    <td class="mono"><span class="dot" style="background-color: {{ item.verdict_color }};"></span>{{ item.verdict }}</td>
     <td class="mono"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</td>
     <td>
         {% if item.pass_id %}

@@ -16,6 +16,7 @@ from stopsign.web.services.insights import get_real_insights
 from stopsign.web.services.scoring import COLOR_MAP
 from stopsign.web.services.scoring import get_speed_color
 from stopsign.web.services.scoring import get_time_color
+from stopsign.web.services.scoring import get_verdict_color
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def _ensure_db(request: Request):
     return request.app.state.db
 
 
-def _format_pass_item(pass_data, vehicle_attrs=None):
+def _format_pass_item(pass_data, vehicle_attrs=None, score=None):
     """Build template context dict for a single pass item."""
     image_url = resolve_image_url(pass_data.image_path)
 
@@ -73,6 +74,9 @@ def _format_pass_item(pass_data, vehicle_attrs=None):
     if clip_path and clip_status in ("ready", "local"):
         clip_url = f"/clips/{clip_path}"
 
+    verdict = (score or {}).get("verdict", "Rolling Stop")
+    stop_score = (score or {}).get("stop_score", 0)
+
     return {
         "pass_id": getattr(pass_data, "id", None),
         "image_url": image_url,
@@ -82,6 +86,9 @@ def _format_pass_item(pass_data, vehicle_attrs=None):
         "time_in_zone": pass_data.time_in_zone,
         "speed_color": get_speed_color(pass_data.min_speed),
         "time_color": get_time_color(pass_data.time_in_zone),
+        "verdict": verdict,
+        "verdict_color": get_verdict_color(verdict),
+        "stop_score": stop_score,
         "badge_text": badge_text,
         "clip_url": clip_url,
     }
@@ -150,8 +157,11 @@ async def get_recent_vehicle_passes(request: Request):
         recent_passes = db.get_recent_vehicle_passes(limit=30)
         pass_ids = [p.id for p in recent_passes]
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
+        scores = db.get_pass_stop_scores(
+            [{"time_in_zone": p.time_in_zone, "min_speed": p.min_speed} for p in recent_passes]
+        )
 
-        passes = [_format_pass_item(p, vehicle_attrs) for p in recent_passes]
+        passes = [_format_pass_item(p, vehicle_attrs, scores[i]) for i, p in enumerate(recent_passes)]
 
         return templates.TemplateResponse(
             "partials/recent_passes.html",
@@ -178,6 +188,10 @@ async def get_worst_passes(request: Request):
         all_passes = worst_speed_passes + worst_time_passes
         pass_ids = [p.id for p in all_passes]
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
+        scores = db.get_pass_stop_scores(
+            [{"time_in_zone": p.time_in_zone, "min_speed": p.min_speed} for p in all_passes]
+        )
+        n = len(worst_speed_passes)
 
         return templates.TemplateResponse(
             "partials/pass_list.html",
@@ -185,8 +199,12 @@ async def get_worst_passes(request: Request):
                 "request": request,
                 "title": "Worst Passes — Last 7 Days",
                 "div_id": "worstPasses",
-                "speed_passes": [_format_pass_item(p, vehicle_attrs) for p in worst_speed_passes],
-                "time_passes": [_format_pass_item(p, vehicle_attrs) for p in worst_time_passes],
+                "speed_passes": [
+                    _format_pass_item(p, vehicle_attrs, scores[i]) for i, p in enumerate(worst_speed_passes)
+                ],
+                "time_passes": [
+                    _format_pass_item(p, vehicle_attrs, scores[n + i]) for i, p in enumerate(worst_time_passes)
+                ],
             },
         )
     except Exception as e:
@@ -207,6 +225,10 @@ async def get_best_passes(request: Request):
         all_passes = best_speed_passes + best_time_passes
         pass_ids = [p.id for p in all_passes]
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
+        scores = db.get_pass_stop_scores(
+            [{"time_in_zone": p.time_in_zone, "min_speed": p.min_speed} for p in all_passes]
+        )
+        n = len(best_speed_passes)
 
         return templates.TemplateResponse(
             "partials/pass_list.html",
@@ -214,8 +236,12 @@ async def get_best_passes(request: Request):
                 "request": request,
                 "title": "Best Passes — Last 7 Days",
                 "div_id": "bestPasses",
-                "speed_passes": [_format_pass_item(p, vehicle_attrs) for p in best_speed_passes],
-                "time_passes": [_format_pass_item(p, vehicle_attrs) for p in best_time_passes],
+                "speed_passes": [
+                    _format_pass_item(p, vehicle_attrs, scores[i]) for i, p in enumerate(best_speed_passes)
+                ],
+                "time_passes": [
+                    _format_pass_item(p, vehicle_attrs, scores[n + i]) for i, p in enumerate(best_time_passes)
+                ],
             },
         )
     except Exception as e:

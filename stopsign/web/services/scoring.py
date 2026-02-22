@@ -35,6 +35,15 @@ def get_time_color(time_val):
         return "#ef4444"  # red-500 — ran the sign
 
 
+def get_verdict_color(verdict: str) -> str:
+    """Return CSS color for stop verdict label."""
+    return {
+        "Full Stop": "#22c55e",  # green-500
+        "Rolling Stop": "#f59e0b",  # amber-500
+        "No Stop": "#ef4444",  # red-500
+    }.get(verdict, "#888888")
+
+
 COLOR_MAP = {
     "white": "#e8e8e8",
     "black": "#333333",
