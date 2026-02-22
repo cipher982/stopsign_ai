@@ -86,6 +86,12 @@ class VehiclePass(Base):
     clip_path = Column(String)
     clip_status = Column(String)
     clip_error = Column(String)
+    # Signal quality features (added Feb 2026)
+    entry_speed = Column(Float)  # raw_speed at zone entry (px/s)
+    decel_score = Column(Float)  # normalised speed slope; negative = decelerating
+    track_quality = Column(Float)  # detection hit-rate while in zone (0-1)
+    stop_pos_x = Column(Float)  # image-x where vehicle first hit stop threshold
+    stop_pos_y = Column(Float)  # image-y where vehicle first hit stop threshold
 
 
 class VehiclePassRaw(Base):
@@ -178,6 +184,11 @@ class Database:
             "clip_path": "TEXT",
             "clip_status": "TEXT",
             "clip_error": "TEXT",
+            "entry_speed": "DOUBLE PRECISION",
+            "decel_score": "DOUBLE PRECISION",
+            "track_quality": "DOUBLE PRECISION",
+            "stop_pos_x": "DOUBLE PRECISION",
+            "stop_pos_y": "DOUBLE PRECISION",
         }
         try:
             with self.Session() as session:
@@ -244,6 +255,11 @@ class Database:
         image_path: str,
         entry_time: float | None = None,
         exit_time: float | None = None,
+        entry_speed: float | None = None,
+        decel_score: float | None = None,
+        track_quality: float | None = None,
+        stop_pos_x: float | None = None,
+        stop_pos_y: float | None = None,
     ):
         if self.read_only_mode:
             logger.debug("🚫 Blocked add_vehicle_pass (READ-ONLY MODE)")
@@ -258,6 +274,11 @@ class Database:
                 image_path=image_path,
                 entry_time=entry_time,
                 exit_time=exit_time,
+                entry_speed=entry_speed,
+                decel_score=decel_score,
+                track_quality=track_quality,
+                stop_pos_x=stop_pos_x,
+                stop_pos_y=stop_pos_y,
             )
             session.add(vehicle_pass)
             session.commit()
@@ -460,11 +481,22 @@ class Database:
             tiz = p.get("time_in_zone", 0.0)
             min_spd = p.get("min_speed", 999.0)
             stop_dur = p.get("stop_duration", 0.0)
+            decel = p.get("decel_score")  # None for historical passes
+            quality = p.get("track_quality")  # None for historical passes
+            entry_spd = p.get("entry_speed")  # None for historical passes
 
             stop_score = round(bisect.bisect_right(tiz_sorted, tiz) / total * 100) if total else 0
 
-            if tiz >= 2.0 and stop_dur >= 1.2 and min_spd < 12.0:
-                verdict = "Full Stop"
+            # Base triple gate (Codex-reviewed)
+            base_stop = tiz >= 2.0 and stop_dur >= 1.2 and min_spd < 12.0
+
+            if base_stop:
+                # Apply signal-quality gates when data is available (new passes only).
+                # Historical passes (None) pass through — don't retroactively downgrade.
+                decel_ok = decel is None or decel <= 0.05  # decelerating, not flat-creep
+                entry_ok = entry_spd is None or entry_spd >= 10.0  # entered at meaningful speed
+                quality_ok = quality is None or quality >= 0.35  # ≥35% detection hit-rate
+                verdict = "Full Stop" if (decel_ok and entry_ok and quality_ok) else "Rolling Stop"
             elif tiz >= 1.5:
                 verdict = "Rolling Stop"
             else:

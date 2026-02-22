@@ -455,9 +455,9 @@ class StopDetector:
         stop_zone_polygon = []
         for i, point in enumerate(self.config.stop_zone):
             if point is None:
-                raise ValueError(f"Stop zone point {i+1} is None. Stop zone: {self.config.stop_zone}")
+                raise ValueError(f"Stop zone point {i + 1} is None. Stop zone: {self.config.stop_zone}")
             if not isinstance(point, (list, tuple)) or len(point) != 2:
-                raise ValueError(f"Stop zone point {i+1} must be a [x, y] pair, got: {point}")
+                raise ValueError(f"Stop zone point {i + 1} must be a [x, y] pair, got: {point}")
             x, y = point
             proc_x, proc_y = self._video_analyzer.raw_to_processing_coordinates(x, y)
             stop_zone_polygon.append([proc_x, proc_y])
@@ -672,10 +672,33 @@ class StopDetector:
                     logger.warning(f"Failed to emit vehicle_pass_completed telemetry: {e}")
 
                 # Compute robust min speed from collected samples (5th percentile)
-                if len(car.state.zone.speed_samples) >= 3:
-                    car.state.zone.min_speed = float(np.percentile(car.state.zone.speed_samples, 5))
-                elif car.state.zone.speed_samples:
-                    car.state.zone.min_speed = min(car.state.zone.speed_samples)
+                samples = car.state.zone.speed_samples
+                if len(samples) >= 3:
+                    car.state.zone.min_speed = float(np.percentile(samples, 5))
+                elif samples:
+                    car.state.zone.min_speed = min(samples)
+
+                # --- Signal quality features ---
+                entry_speed: float | None = None
+                decel_score: float | None = None
+                track_quality: float | None = None
+                stop_pos_x: float | None = None
+                stop_pos_y: float | None = None
+
+                if samples:
+                    entry_speed = float(samples[0])
+                    sp = car.state.zone.stop_position
+                    stop_pos_x = float(sp[0])
+                    stop_pos_y = float(sp[1])
+
+                if len(samples) >= 4:
+                    t = list(range(len(samples)))
+                    slope = float(np.polyfit(t, samples, 1)[0])
+                    # Normalise slope by entry speed so it's scale-independent
+                    decel_score = slope / entry_speed if entry_speed and entry_speed > 0 else 0.0
+                    # Detection hit-rate: actual samples vs expected at 15 fps
+                    expected = max(car.state.zone.time_in_zone * 15.0, 1.0)
+                    track_quality = float(min(1.0, len(samples) / expected))
 
                 # Save data to the database
                 pass_id = self.db.add_vehicle_pass(
@@ -686,6 +709,11 @@ class StopDetector:
                     image_path=car.state.capture.image_path,
                     entry_time=car.state.zone.entry_time,
                     exit_time=car.state.zone.exit_time,
+                    entry_speed=entry_speed,
+                    decel_score=decel_score,
+                    track_quality=track_quality,
+                    stop_pos_x=stop_pos_x,
+                    stop_pos_y=stop_pos_y,
                 )
                 if pass_id is not None:
                     try:

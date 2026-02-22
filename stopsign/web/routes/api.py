@@ -159,7 +159,14 @@ async def get_recent_vehicle_passes(request: Request):
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
         scores = db.get_pass_stop_scores(
             [
-                {"time_in_zone": p.time_in_zone, "min_speed": p.min_speed, "stop_duration": p.stop_duration}
+                {
+                    "time_in_zone": p.time_in_zone,
+                    "min_speed": p.min_speed,
+                    "stop_duration": p.stop_duration,
+                    "decel_score": getattr(p, "decel_score", None),
+                    "track_quality": getattr(p, "track_quality", None),
+                    "entry_speed": getattr(p, "entry_speed", None),
+                }
                 for p in recent_passes
             ]
         )
@@ -193,7 +200,14 @@ async def get_worst_passes(request: Request):
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
         scores = db.get_pass_stop_scores(
             [
-                {"time_in_zone": p.time_in_zone, "min_speed": p.min_speed, "stop_duration": p.stop_duration}
+                {
+                    "time_in_zone": p.time_in_zone,
+                    "min_speed": p.min_speed,
+                    "stop_duration": p.stop_duration,
+                    "decel_score": getattr(p, "decel_score", None),
+                    "track_quality": getattr(p, "track_quality", None),
+                    "entry_speed": getattr(p, "entry_speed", None),
+                }
                 for p in all_passes
             ]
         )
@@ -233,7 +247,14 @@ async def get_best_passes(request: Request):
         vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
         scores = db.get_pass_stop_scores(
             [
-                {"time_in_zone": p.time_in_zone, "min_speed": p.min_speed, "stop_duration": p.stop_duration}
+                {
+                    "time_in_zone": p.time_in_zone,
+                    "min_speed": p.min_speed,
+                    "stop_duration": p.stop_duration,
+                    "decel_score": getattr(p, "decel_score", None),
+                    "track_quality": getattr(p, "track_quality", None),
+                    "entry_speed": getattr(p, "entry_speed", None),
+                }
                 for p in all_passes
             ]
         )
