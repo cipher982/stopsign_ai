@@ -68,14 +68,12 @@ def _load_hls_segments(playlist_path: str):
         return []
 
     current_duration = None
-    current_pdt = None  # program date-time epoch for current segment
     for line in lines:
         line = line.strip()
         if not line:
             continue
         if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
-            current_pdt = _parse_program_date_time(line.split(":", 1)[1])
-            continue
+            continue  # PDT parsed but unused — see mtime comment below
         if line.startswith("#EXTINF:"):
             try:
                 current_duration = float(line.split(":", 1)[1].split(",", 1)[0])
@@ -90,14 +88,14 @@ def _load_hls_segments(playlist_path: str):
         seg_path = os.path.join(stream_dir, line)
         if os.path.exists(seg_path):
             try:
-                if current_pdt is not None:
-                    # Accurate: use program date-time as segment start
-                    start_ts = current_pdt
-                    end_ts = start_ts + current_duration
-                else:
-                    # Fallback: derive from file mtime
-                    end_ts = os.path.getmtime(seg_path)
-                    start_ts = end_ts - current_duration
+                # Always use file mtime as segment end time.
+                # PDT timestamps are derived from FFmpeg PTS which can drift
+                # significantly behind wall clock (measured: ~47 min lag after
+                # 24h of operation at slightly-below-target fps). File mtime is
+                # always wall-clock accurate and matches vehicle_pass.exit_time
+                # which is also from time.time(). PDT is parsed but not used.
+                end_ts = os.path.getmtime(seg_path)
+                start_ts = end_ts - current_duration
                 segments.append(
                     {
                         "path": seg_path,
@@ -109,7 +107,6 @@ def _load_hls_segments(playlist_path: str):
             except OSError:
                 pass
         current_duration = None
-        current_pdt = None
 
     segments.sort(key=lambda s: s["start"])
     return segments
