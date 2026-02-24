@@ -14,9 +14,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
 # Download ONNX model early — this layer almost never changes
+# Override YOLO_MODEL_NAME build arg to switch models (e.g. yolo11l.onnx, yolo11x.onnx)
+ARG YOLO_MODEL_NAME=yolo11l.onnx
+ARG YOLO_MODEL_RELEASE=v0.3.0-onnx
 RUN mkdir -p /app/models && \
-    curl -L https://github.com/cipher982/stopsign_ai/releases/download/v0.2.0-onnx/yolo11x.onnx \
-    -o /app/models/yolo11x.onnx
+    curl -L "https://github.com/cipher982/stopsign_ai/releases/download/${YOLO_MODEL_RELEASE}/${YOLO_MODEL_NAME}" \
+    -o "/app/models/${YOLO_MODEL_NAME}"
 
 # Install dependencies with BuildKit cache mount
 COPY pyproject.toml uv.lock ./

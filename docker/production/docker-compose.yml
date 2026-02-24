@@ -4,6 +4,9 @@ services:
     build:
       context: ../..
       dockerfile: docker/production/Dockerfile.processor
+      args:
+        YOLO_MODEL_NAME: ${YOLO_MODEL_NAME:-yolo11l.onnx}
+        YOLO_MODEL_RELEASE: ${YOLO_MODEL_RELEASE:-v0.3.0-onnx}
     dns:
       - 100.100.100.100  # Tailscale MagicDNS for .ts.net names
       - 1.1.1.1          # Cloudflare fallback for public names (MinIO sslip.io, etc)
