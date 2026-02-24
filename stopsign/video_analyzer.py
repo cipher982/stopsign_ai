@@ -543,8 +543,20 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.avg_brightness.set(float(avg_brightness))
         self.contrast.set(float(contrast))
 
-        # Decoupled YOLO: check FIRST to enable fast path for non-YOLO frames
-        should_run_yolo = (ts_for_logic - self.last_yolo_ts) >= self.min_yolo_interval
+        # Decoupled YOLO: check FIRST to enable fast path for non-YOLO frames.
+        # Also skip YOLO when the frame is already stale (pipeline behind schedule)
+        # to prevent a slow inference from causing cascading backpressure.
+        # Threshold is derived from the configured frame rate so it scales correctly.
+        frame_budget_sec = 1.0 / self.frame_rate
+        frame_age_sec = time.time() - float(capture_ts)
+        yolo_lag_skip = frame_age_sec > (1.5 * frame_budget_sec)
+        if yolo_lag_skip:
+            logger.debug(
+                "YOLO skipped: frame %.0fms stale (budget %.0fms)",
+                frame_age_sec * 1000,
+                frame_budget_sec * 1000,
+            )
+        should_run_yolo = (ts_for_logic - self.last_yolo_ts) >= self.min_yolo_interval and not yolo_lag_skip
 
         if should_run_yolo:
             # YOLO PATH: Full processing with stop zone drawing on raw frame
