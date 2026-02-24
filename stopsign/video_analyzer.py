@@ -1,4 +1,3 @@
-import concurrent.futures
 import json
 import logging
 import os
@@ -102,15 +101,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.last_fps_update = time.time()
         self.stats_update_interval = 300  # Update stats every 5 minutes
 
-        # YOLO timing — async background inference so the 15fps pipeline never blocks.
-        # YOLO runs in a dedicated thread; the main loop uses Kalman predictions while
-        # inference is in-flight. When a result arrives it is applied on the next frame.
+        # YOLO timing - run every frame on GPU, can be throttled for CPU
         self.last_yolo_ts = 0.0
-        self.min_yolo_interval = 0.0  # min gap between YOLO submissions (0 = every frame)
-        self._yolo_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="yolo")
-        self._yolo_future: concurrent.futures.Future | None = None
-        self._yolo_submitted_ts: float = 0.0  # capture_ts when this job was submitted
-        self._yolo_skipped_frames: int = 0  # consecutive frames where YOLO was in-flight
+        self.min_yolo_interval = 0.0  # Run YOLO every frame (GPU can handle it)
         self.stats_queue = queue.Queue()
         self.frame_dimensions = self.get_frame_dimensions()
 
@@ -554,62 +547,38 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         should_run_yolo = (ts_for_logic - self.last_yolo_ts) >= self.min_yolo_interval
 
         if should_run_yolo:
-            # ASYNC YOLO PATH — never block the main 15fps loop.
-            #
-            # Pattern:
-            #   1. If a YOLO result just finished, collect it and apply to the tracker.
-            #   2. If no job is in-flight, submit the current frame and display with Kalman.
-            #   3. If a job is in-flight, skip this frame's YOLO and display with Kalman.
-            #
-            # The FAST PATH visualization (draw_car_interpolated via visualize()) uses
-            # Kalman predictions and is called for ALL frames — the display is always smooth.
-
-            # ---- Step 1: collect a finished YOLO result if available ----
-            if self._yolo_future is not None and self._yolo_future.done():
-                try:
-                    yolo_det_frame, yolo_boxes = self._yolo_future.result()
-                    # Apply detections at the timestamp they were captured
-                    car_tracking_start = time.time()
-                    cars_before = len(self.car_tracker.get_cars())
-                    self.car_tracker.update_cars(yolo_boxes, self._yolo_submitted_ts, yolo_det_frame)
-                    cars_after = len(self.car_tracker.get_cars())
-                    new_cars = cars_after - cars_before
-                    if new_cars > 0:
-                        metrics.vehicles_tracked.add(new_cars)
-                    self.car_tracking_time.observe(time.time() - car_tracking_start)
-                    self.car_tracking_fps_count += 1
-                    self.last_yolo_ts = self._yolo_submitted_ts
-                    if self._yolo_skipped_frames > 0:
-                        logger.debug(
-                            "YOLO result applied after %d skipped frame(s)",
-                            self._yolo_skipped_frames,
-                        )
-                    self._yolo_skipped_frames = 0
-                except Exception as exc:
-                    logger.warning("YOLO background thread error: %s", exc)
-                finally:
-                    self._yolo_future = None
-
-            # ---- Step 2 / 3: submit or skip ----
+            # YOLO PATH: Full processing with stop zone drawing on raw frame
+            # Draw stop zone on raw frame BEFORE crop/scale for coordinate mapping
             frame_with_stop_zone = self.draw_stop_zone_on_raw_frame(frame)
             frame = self.crop_scale_frame(frame_with_stop_zone)
 
-            if self._yolo_future is None:
-                # No job in-flight — submit this frame for inference
-                self._yolo_submitted_ts = ts_for_logic
-                self._yolo_future = self._yolo_pool.submit(self.detect_objects, frame.copy())
-            else:
-                # YOLO busy — this frame skips inference, Kalman handles display
-                self._yolo_skipped_frames += 1
+            # Object Detection (expensive - only run when scheduled)
+            object_detection_start = time.time()
+            processed_frame, boxes = self.detect_objects(frame)
+            object_detection_time = time.time() - object_detection_start
+            self.object_detection_time.observe(object_detection_time)
+            self.object_detection_fps_count += 1
 
-            # Display always uses the current frame with Kalman-predicted boxes.
-            # The visualize() call below draws draw_car_interpolated() for all cars.
-            processed_frame = frame
-            boxes = []
+            # Car Tracking - update with new detections
+            car_tracking_start = time.time()
+            cars_before = len(self.car_tracker.get_cars())
+            self.car_tracker.update_cars(boxes, ts_for_logic, processed_frame)
+            cars_after = len(self.car_tracker.get_cars())
+            new_cars = cars_after - cars_before
 
-            # Stop Detection — run whenever a fresh YOLO result was just applied
-            # (last_yolo_ts was updated above) or fallback to current ts.
+            if new_cars > 0:
+                metrics.vehicles_tracked.add(new_cars)
+
+            car_tracking_time = time.time() - car_tracking_start
+            self.car_tracking_time.observe(car_tracking_time)
+            self.car_tracking_fps_count += 1
+
+            self.last_yolo_ts = ts_for_logic
+
+            # Stop Detection - only on YOLO frames (state doesn't change between detections)
             stop_detection_start = time.time()
+            # Only run stop detection for cars detected in this YOLO frame
+            # to avoid stale prev_timestamps inflating stop_duration
             current_ids = self.car_tracker.current_frame_car_ids
             active_cars = [
                 car
