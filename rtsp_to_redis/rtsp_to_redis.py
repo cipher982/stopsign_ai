@@ -56,7 +56,7 @@ FRAME_BUFFER_SIZE: int = int(get_env("FRAME_BUFFER_SIZE"))
 
 # Freeze detection + remediation knobs
 RTSP_FREEZE_DETECT_SEC: float = float(os.getenv("RTSP_FREEZE_DETECT_SEC", "120"))
-RTSP_FREEZE_MAD_THRESHOLD: float = float(os.getenv("RTSP_FREEZE_MAD_THRESHOLD", "0.25"))
+RTSP_FREEZE_MAD_THRESHOLD: float = float(os.getenv("RTSP_FREEZE_MAD_THRESHOLD", "0.015"))
 RTSP_FREEZE_SAMPLE_WIDTH: int = int(os.getenv("RTSP_FREEZE_SAMPLE_WIDTH", "160"))
 RTSP_FREEZE_SAMPLE_HEIGHT: int = int(os.getenv("RTSP_FREEZE_SAMPLE_HEIGHT", "90"))
 RTSP_FREEZE_RECONNECT_SEC: float = float(os.getenv("RTSP_FREEZE_RECONNECT_SEC", "180"))

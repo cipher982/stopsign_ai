@@ -265,7 +265,7 @@ Notes
 ## 6. Resilience Knobs
 
 - `RTSP_FREEZE_DETECT_SEC` (default 120): mark ingest as frozen if no visual motion over this window.
-- `RTSP_FREEZE_MAD_THRESHOLD` (default 0.25): frame-diff sensitivity for freeze detection.
+- `RTSP_FREEZE_MAD_THRESHOLD` (default 0.015): frame-diff sensitivity for freeze detection.
 - `RTSP_FREEZE_RECONNECT_SEC` (default 180): force RTSP reconnect on sustained freeze.
 - `RTSP_FREEZE_REMEDIATION_CMD` (default empty): optional command hook for camera reboot automation.
 - `RTSP_FREEZE_REMEDIATION_SEC` (default 420): freeze age before running remediation command.

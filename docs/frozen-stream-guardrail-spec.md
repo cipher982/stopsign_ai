@@ -48,7 +48,7 @@ When `freeze_age >= RTSP_FREEZE_REMEDIATION_SEC`, run
 ## Tunables
 
 - `RTSP_FREEZE_DETECT_SEC` (default `120`)
-- `RTSP_FREEZE_MAD_THRESHOLD` (default `0.25`)
+- `RTSP_FREEZE_MAD_THRESHOLD` (default `0.015`)
 - `RTSP_FREEZE_SAMPLE_WIDTH` (default `160`)
 - `RTSP_FREEZE_SAMPLE_HEIGHT` (default `90`)
 - `RTSP_FREEZE_RECONNECT_SEC` (default `180`)
