@@ -24,11 +24,13 @@ import threading
 import time
 from typing import Optional
 import json
+import subprocess
 
 # ------------------ third-party ---------------------
 import cv2
 import redis
 from redis.exceptions import RedisError
+from stopsign.freeze_detector import FrameFreezeDetector
 from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
 from stopsign.service_status import RTSPServiceStatusMixin
 
@@ -52,6 +54,18 @@ REDIS_URL: str = get_env("REDIS_URL")
 RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
 FRAME_BUFFER_SIZE: int = int(get_env("FRAME_BUFFER_SIZE"))
 
+# Freeze detection + remediation knobs
+RTSP_FREEZE_DETECT_SEC: float = float(os.getenv("RTSP_FREEZE_DETECT_SEC", "120"))
+RTSP_FREEZE_MAD_THRESHOLD: float = float(os.getenv("RTSP_FREEZE_MAD_THRESHOLD", "0.25"))
+RTSP_FREEZE_SAMPLE_WIDTH: int = int(os.getenv("RTSP_FREEZE_SAMPLE_WIDTH", "160"))
+RTSP_FREEZE_SAMPLE_HEIGHT: int = int(os.getenv("RTSP_FREEZE_SAMPLE_HEIGHT", "90"))
+RTSP_FREEZE_RECONNECT_SEC: float = float(os.getenv("RTSP_FREEZE_RECONNECT_SEC", "180"))
+RTSP_FREEZE_RECONNECT_COOLDOWN_SEC: float = float(os.getenv("RTSP_FREEZE_RECONNECT_COOLDOWN_SEC", "60"))
+RTSP_FREEZE_REMEDIATION_SEC: float = float(os.getenv("RTSP_FREEZE_REMEDIATION_SEC", "420"))
+RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC: float = float(os.getenv("RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC", "1800"))
+RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC: float = float(os.getenv("RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC", "45"))
+RTSP_FREEZE_REMEDIATION_CMD: str = os.getenv("RTSP_FREEZE_REMEDIATION_CMD", "").strip()
+
 
 class RTSPToRedis(RTSPServiceStatusMixin):
     def __init__(self):
@@ -72,6 +86,32 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.processing_thread = None
         self.should_stop = threading.Event()
         self.last_push_ts: Optional[float] = None  # wall-clock time of last successful Redis push
+
+        # Freeze detection and remediation state
+        self.freeze_detector = (
+            FrameFreezeDetector(
+                freeze_detect_sec=RTSP_FREEZE_DETECT_SEC,
+                mad_threshold=RTSP_FREEZE_MAD_THRESHOLD,
+                sample_width=RTSP_FREEZE_SAMPLE_WIDTH,
+                sample_height=RTSP_FREEZE_SAMPLE_HEIGHT,
+            )
+            if RTSP_FREEZE_DETECT_SEC > 0
+            else None
+        )
+        self.freeze_age_sec = 0.0
+        self.freeze_mad = 0.0
+        self.freeze_incidents = 0
+        self.freeze_active_incident_id = 0
+        self.freeze_incident_start_ts: Optional[float] = None
+        self.last_reconnect_ts = 0.0
+        self.last_remediation_ts = 0.0
+        self.last_remediation_incident_id = 0
+
+        # Surface freeze state in status logs/health output.
+        self.update_custom_metric("freeze_age_sec", 0.0)
+        self.update_custom_metric("freeze_mad", 0.0)
+        self.update_custom_metric("frozen", 0)
+        self.update_custom_metric("freeze_incidents", 0)
 
         # OpenTelemetry metrics and tracer (set from main)
         self.metrics = None
@@ -239,6 +279,113 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
         # Frame processing time tracked in OpenTelemetry spans
 
+    def _increment_custom_metric(self, key: str, amount: int = 1) -> None:
+        custom = self.get_status_snapshot().get("custom_metrics", {})
+        current = int(custom.get(key, 0))
+        self.update_custom_metric(key, current + amount)
+
+    def _update_freeze_state(self, frame, now_ts: float) -> None:
+        if self.freeze_detector is None:
+            self.freeze_age_sec = 0.0
+            self.freeze_mad = 0.0
+            return
+
+        event = self.freeze_detector.update(frame, now_ts)
+        self.freeze_age_sec = event.freeze_age_sec
+        self.freeze_mad = event.mad
+        self.update_custom_metric("freeze_age_sec", round(self.freeze_age_sec, 2))
+        self.update_custom_metric("freeze_mad", round(self.freeze_mad, 4))
+        self.update_custom_metric("frozen", 1 if event.frozen else 0)
+
+        if event.incident_started:
+            self.freeze_incidents += 1
+            self.freeze_active_incident_id = self.freeze_incidents
+            self.freeze_incident_start_ts = now_ts
+            self.update_custom_metric("freeze_incidents", self.freeze_incidents)
+            logger.error(
+                "Freeze incident #%d opened: freeze_age=%.1fs threshold=%.1fs mad=%.4f (threshold=%.4f)",
+                self.freeze_active_incident_id,
+                self.freeze_age_sec,
+                RTSP_FREEZE_DETECT_SEC,
+                self.freeze_mad,
+                RTSP_FREEZE_MAD_THRESHOLD,
+            )
+            if self.metrics:
+                self.metrics.service_errors.add(1, {"error_type": "frozen_stream", "service": "rtsp"})
+
+        if event.incident_resolved:
+            incident_duration = 0.0
+            if self.freeze_incident_start_ts is not None:
+                incident_duration = max(0.0, now_ts - self.freeze_incident_start_ts)
+            self.freeze_incident_start_ts = None
+            logger.info(
+                "Freeze incident #%d resolved after %.1fs (mad=%.4f)",
+                self.freeze_active_incident_id,
+                incident_duration,
+                self.freeze_mad,
+            )
+
+    def _record_rtsp_reconnect(self) -> None:
+        self._increment_custom_metric("rtsp_reconnects", 1)
+        self.last_reconnect_ts = time.time()
+
+    def _run_freeze_remediation_cmd(self) -> None:
+        if not RTSP_FREEZE_REMEDIATION_CMD:
+            return
+
+        if self.freeze_active_incident_id <= 0:
+            return
+
+        now = time.time()
+        if self.last_remediation_incident_id == self.freeze_active_incident_id:
+            return
+        if now - self.last_remediation_ts < RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC:
+            return
+        if self.freeze_age_sec < RTSP_FREEZE_REMEDIATION_SEC:
+            return
+
+        logger.error(
+            "Freeze remediation command for incident #%d (freeze_age=%.1fs): %s",
+            self.freeze_active_incident_id,
+            self.freeze_age_sec,
+            RTSP_FREEZE_REMEDIATION_CMD,
+        )
+        try:
+            result = subprocess.run(
+                RTSP_FREEZE_REMEDIATION_CMD,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC,
+                check=False,
+            )
+            self.last_remediation_ts = now
+            self.last_remediation_incident_id = self.freeze_active_incident_id
+            self.update_custom_metric("last_freeze_remediation_exit_code", result.returncode)
+            if result.returncode != 0:
+                logger.error(
+                    "Freeze remediation failed (exit=%d): %s",
+                    result.returncode,
+                    (result.stderr or result.stdout or "").strip()[:500],
+                )
+                self.increment_counter("error_count", 1)
+            else:
+                logger.info("Freeze remediation command succeeded.")
+        except Exception as e:
+            self.increment_counter("error_count", 1)
+            logger.error(f"Freeze remediation command error: {e}")
+
+    def _should_force_reconnect_for_freeze(self) -> bool:
+        if self.freeze_detector is None:
+            return False
+        if RTSP_FREEZE_RECONNECT_SEC <= 0:
+            return False
+        if self.freeze_age_sec < RTSP_FREEZE_RECONNECT_SEC:
+            return False
+        if time.time() - self.last_reconnect_ts < RTSP_FREEZE_RECONNECT_COOLDOWN_SEC:
+            return False
+        return True
+
     def run(self):
         # Prometheus removed - using OpenTelemetry instead
         self.processing_thread = threading.Thread(target=self.process_frames)
@@ -286,6 +433,18 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
                         # Stamp capture moment as close to cap.read() as possible
                         capture_ts = time.time()
+                        self._update_freeze_state(frame, capture_ts)
+                        self._run_freeze_remediation_cmd()
+
+                        if self._should_force_reconnect_for_freeze():
+                            logger.error(
+                                "Freeze remediation stage 1: forcing RTSP reconnect "
+                                "(freeze_age=%.1fs, reconnect_threshold=%.1fs)",
+                                self.freeze_age_sec,
+                                RTSP_FREEZE_RECONNECT_SEC,
+                            )
+                            self._record_rtsp_reconnect()
+                            break
 
                         if not self.frame_queue.full():
                             self.frame_queue.put((frame, capture_ts))
@@ -338,47 +497,61 @@ class RTSPToRedis(RTSPServiceStatusMixin):
             self.processing_thread.join()
         logger.info("RTSP to Redis service stopped.")
 
-    def health_check(self):
-        """Enhanced health check using runtime status."""
-        try:
-            # Update buffer utilization
-            buffer_util = (self.frame_queue.qsize() / 1000.0) * 100
-            self.update_status_metric("buffer_utilization_percent", buffer_util)
+    def get_readiness_report(self):
+        """Composite readiness snapshot for RTSP ingest."""
+        # Update buffer utilization
+        buffer_util = (self.frame_queue.qsize() / 1000.0) * 100
+        self.update_status_metric("buffer_utilization_percent", buffer_util)
 
-            # Basic connectivity checks
-            redis_ok = self.redis_client and self.redis_client.ping() if self.redis_client else False
-            thread_ok = (
-                self.processing_thread and self.processing_thread.is_alive() if self.processing_thread else False
-            )
+        # Basic connectivity checks
+        redis_ok = self.redis_client and self.redis_client.ping() if self.redis_client else False
+        thread_ok = self.processing_thread and self.processing_thread.is_alive() if self.processing_thread else False
+        self.update_status_metric("redis_connected", bool(redis_ok))
 
-            # Update connection status
-            self.update_status_metric("redis_connected", redis_ok)
+        health_status = self.get_health_status()
+        uptime = self.get_uptime_seconds()
+        grace_sec = float(os.environ.get("GRACE_STARTUP_SEC", "120"))
+        warming_up = uptime <= grace_sec
 
-            # Use mixin's health status logic
-            health_status = self.get_health_status()
-
-            # Verify frames are actually flowing to Redis.
-            # Allow a startup grace period before enforcing this check.
-            FRAME_STALE_SEC = 10  # seconds without a push = unhealthy
-            uptime = self.get_uptime_seconds()
-            grace_sec = float(os.environ.get("GRACE_STARTUP_SEC", "120"))
-            if uptime > grace_sec:
-                if self.last_push_ts is None:
-                    logger.warning("Health check: no frames have been pushed to Redis yet")
-                    return False
+        frame_stale_sec = 10.0
+        push_age = None
+        push_ok = True
+        if not warming_up:
+            if self.last_push_ts is None:
+                push_ok = False
+            else:
                 push_age = time.time() - self.last_push_ts
-                if push_age > FRAME_STALE_SEC:
-                    logger.warning(
-                        "Health check: last Redis push was %.1fs ago (threshold %ds)",
-                        push_age,
-                        FRAME_STALE_SEC,
-                    )
-                    return False
+                push_ok = push_age <= frame_stale_sec
 
-            # Additional RTSP-specific health criteria
-            rtsp_healthy = health_status["healthy"] and redis_ok and thread_ok
+        freeze_enabled = self.freeze_detector is not None and RTSP_FREEZE_DETECT_SEC > 0
+        freeze_ok = True
+        if freeze_enabled and not warming_up:
+            freeze_ok = self.freeze_age_sec < RTSP_FREEZE_DETECT_SEC
 
-            return rtsp_healthy
+        ready = bool(health_status["healthy"] and redis_ok and thread_ok and push_ok and freeze_ok)
+        return {
+            "ready": ready,
+            "warming_up": warming_up,
+            "uptime_seconds": round(uptime, 2),
+            "grace_startup_seconds": grace_sec,
+            "redis_ok": bool(redis_ok),
+            "thread_ok": bool(thread_ok),
+            "push_ok": push_ok,
+            "push_age_seconds": round(push_age, 2) if push_age is not None else None,
+            "push_stale_threshold_seconds": frame_stale_sec,
+            "freeze_detection_enabled": freeze_enabled,
+            "freeze_ok": freeze_ok,
+            "freeze_age_seconds": round(self.freeze_age_sec, 2),
+            "freeze_threshold_seconds": RTSP_FREEZE_DETECT_SEC,
+            "freeze_mad": round(self.freeze_mad, 4),
+            "freeze_mad_threshold": RTSP_FREEZE_MAD_THRESHOLD,
+            "freeze_incidents": self.freeze_incidents,
+        }
+
+    def health_check(self):
+        """Backwards-compatible bool health check."""
+        try:
+            return bool(self.get_readiness_report().get("ready"))
         except Exception as e:
             logger.error(f"Health check failed: {str(e)}")
             self.increment_counter("error_count", 1)
@@ -399,18 +572,33 @@ if __name__ == "__main__":
 
     class HealthCheckHandler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == "/health":
-                if rtsp_to_redis.health_check():
-                    self.send_response(200)
+            if self.path == "/healthz":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok"}')
+            elif self.path in ("/ready", "/health"):
+                try:
+                    report = rtsp_to_redis.get_readiness_report()
+                    payload = json.dumps(report).encode()
+                    self.send_response(200 if report.get("ready") else 503)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Cache-Control", "no-store")
                     self.end_headers()
-                    self.wfile.write(b"OK")
-                else:
+                    self.wfile.write(payload)
+                except Exception as e:
+                    logger.error(f"Readiness endpoint failed: {e}")
                     self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
                     self.end_headers()
-                    self.wfile.write(b"Not OK")
+                    self.wfile.write(b'{"ready":false,"error":"readiness_exception"}')
             else:
                 self.send_response(404)
                 self.end_headers()
+
+        def log_message(self, format, *args):  # noqa: A003
+            return
 
     def run_health_server():
         server = HTTPServer(("0.0.0.0", 8080), HealthCheckHandler)

@@ -191,6 +191,7 @@ Grafana dashboards are provided in `static/`.
 
 ### Health endpoints and semantics
 
+- **rtsp_to_redis** — `/healthz` (liveness) and `/ready` (Redis push freshness + visual freeze detection).
 - **video_analyzer** — `/healthz` (liveness) and `/ready` (frame gap ≤ `ANALYZER_STALL_SEC`).
 - **ffmpeg_service** — `/healthz` (liveness) and `/ready` (fresh HLS + Redis + recent frame).
 - **web_server** — `/healthz` (process up) and `/health/stream` (HLS freshness for external monitors).
@@ -221,6 +222,8 @@ Freshness threshold is derived from the playlist window (~3× window, floored at
 Silent failures in HLS segment generation can be hard to catch with simple HTTP liveness checks. This repo includes comprehensive health endpoints and auto-recovery:
 
 **Health Endpoints:**
+- `rtsp_to_redis` readiness: `http://localhost:8080/ready` – Redis push freshness + frozen-frame guardrail
+- `rtsp_to_redis` liveness: `http://localhost:8080/healthz`
 - `video_analyzer` readiness: `http://localhost:${ANALYZER_HEALTH_PORT:-8081}/ready` – frame pipeline (“can I serve fresh frames?”)
 - `video_analyzer` liveness: `http://localhost:${ANALYZER_HEALTH_PORT:-8081}/healthz`
 - `ffmpeg_service` readiness: `http://localhost:8080/ready` – HLS + Redis + recent frames
@@ -261,6 +264,11 @@ Notes
 
 ## 6. Resilience Knobs
 
+- `RTSP_FREEZE_DETECT_SEC` (default 120): mark ingest as frozen if no visual motion over this window.
+- `RTSP_FREEZE_MAD_THRESHOLD` (default 0.25): frame-diff sensitivity for freeze detection.
+- `RTSP_FREEZE_RECONNECT_SEC` (default 180): force RTSP reconnect on sustained freeze.
+- `RTSP_FREEZE_REMEDIATION_CMD` (default empty): optional command hook for camera reboot automation.
+- `RTSP_FREEZE_REMEDIATION_SEC` (default 420): freeze age before running remediation command.
 - `ANALYZER_CATCHUP_SEC` (default 15): skip/trim stale raw frames older than this age to jump back to live.
 - `ANALYZER_CATCHUP_KEEP_N` (default 30): how many newest raw frames to retain when trimming.
 - `FRAME_STALL_SEC` (default 120): readiness requires frames newer than this.

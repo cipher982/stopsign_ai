@@ -11,10 +11,18 @@ services:
       - REDIS_URL=${REDIS_URL}
       - RAW_FRAME_KEY=${RAW_FRAME_KEY}
       - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE}
+      - RTSP_FREEZE_DETECT_SEC=${RTSP_FREEZE_DETECT_SEC:-120}
+      - RTSP_FREEZE_MAD_THRESHOLD=${RTSP_FREEZE_MAD_THRESHOLD:-0.25}
+      - RTSP_FREEZE_RECONNECT_SEC=${RTSP_FREEZE_RECONNECT_SEC:-180}
+      - RTSP_FREEZE_RECONNECT_COOLDOWN_SEC=${RTSP_FREEZE_RECONNECT_COOLDOWN_SEC:-60}
+      - RTSP_FREEZE_REMEDIATION_SEC=${RTSP_FREEZE_REMEDIATION_SEC:-420}
+      - RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC=${RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC:-1800}
+      - RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC=${RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC:-45}
+      - RTSP_FREEZE_REMEDIATION_CMD=${RTSP_FREEZE_REMEDIATION_CMD:-}
     command: >
       sh -c "stdbuf -oL -eL python rtsp_to_redis.py 2>&1 | stdbuf -oL -eL grep -vE '\\[h264 @ 0x[0-9a-f]+\\] SEI type 764 size [0-9]+ truncated at [0-9]+'"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
