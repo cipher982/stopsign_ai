@@ -69,6 +69,11 @@ REDIS_INITIAL_BACKOFF_SEC = float(os.getenv("REDIS_INITIAL_BACKOFF_SEC", "0.5"))
 
 # FFmpeg Configuration
 HLS_PLAYLIST = os.path.join(STREAM_DIR, "stream.m3u8")
+FFMPEG_POP_MODE = os.getenv("FFMPEG_POP_MODE", "latest").strip().lower()
+if FFMPEG_POP_MODE not in {"latest", "fifo"}:
+    logger.warning("Invalid FFMPEG_POP_MODE=%s; defaulting to 'latest'", FFMPEG_POP_MODE)
+    FFMPEG_POP_MODE = "latest"
+FFMPEG_LIVE_QUEUE_TARGET = max(1, int(os.getenv("FFMPEG_LIVE_QUEUE_TARGET", "3")))
 
 # For monitoring
 frames_processed = 0
@@ -447,7 +452,7 @@ def main():
     #      No drift because deadline is accumulated, not re-derived from now.
     #
     #   2. Stall (YOLO spike, Redis hiccup):
-    #      BRPOP blocks > frame_interval. next_write_t falls behind now.
+    #      Redis pop blocks > frame_interval. next_write_t falls behind now.
     #      On recovery, snap next_write_t = now to resume real-time cadence
     #      instead of bursting through the backlog. Queued frames are consumed
     #      but written at steady pace, not all at once.
@@ -468,15 +473,25 @@ def main():
     snap_count = 0  # times stall-recovery snap fired
 
     try:
-        logger.info(f"Starting paced BRPOP loop (target {target_fps} FPS, bufsize=0)")
+        logger.info(
+            "Starting paced frame loop (target %.1f FPS, pop_mode=%s, live_queue_target=%d, bufsize=0)",
+            target_fps,
+            FFMPEG_POP_MODE,
+            FFMPEG_LIVE_QUEUE_TARGET,
+        )
         global frames_processed
+        stale_drop_count = 0
         while True:
             # Fetch next frame; timeout = 2× interval so stalls dup twice before
-            # BRPOP itself becomes the bottleneck.
+            # Redis pop itself becomes the bottleneck.
             try:
-                task = REDIS_CLIENT.brpop([PROCESSED_FRAME_KEY], timeout=frame_interval * 2)
+                if FFMPEG_POP_MODE == "fifo":
+                    task = REDIS_CLIENT.brpop([PROCESSED_FRAME_KEY], timeout=frame_interval * 2)
+                else:
+                    # Low-latency mode: consume newest frame first.
+                    task = REDIS_CLIENT.blpop([PROCESSED_FRAME_KEY], timeout=frame_interval * 2)
             except Exception as e:
-                logger.warning("Redis BRPOP error: %s", e)
+                logger.warning("Redis pop error: %s", e)
                 task = None
 
             if task:
@@ -490,6 +505,19 @@ def main():
                 else:
                     last_raw_frame = data
                     new_frame_count += 1
+                    if FFMPEG_POP_MODE == "latest":
+                        # Keep only a tiny backlog so stream time tracks capture time.
+                        try:
+                            queue_depth = REDIS_CLIENT.llen(PROCESSED_FRAME_KEY)
+                            if queue_depth > FFMPEG_LIVE_QUEUE_TARGET:
+                                REDIS_CLIENT.ltrim(PROCESSED_FRAME_KEY, 0, FFMPEG_LIVE_QUEUE_TARGET - 1)
+                                stale_drop_count += queue_depth - FFMPEG_LIVE_QUEUE_TARGET
+                            status.update_custom_metric(
+                                "queue_depth",
+                                min(queue_depth, FFMPEG_LIVE_QUEUE_TARGET),
+                            )
+                        except Exception as trim_err:
+                            logger.debug("Failed to trim processed frame backlog: %s", trim_err)
             elif last_raw_frame:
                 dup_frame_count += 1
 
@@ -534,16 +562,18 @@ def main():
                 new_fps = new_frame_count / elapsed
                 dup_pct = (dup_frame_count / fps_frame_count * 100) if fps_frame_count > 0 else 0
                 logger.info(
-                    "FFmpeg output: %.1f FPS (new: %.1f, dup: %.0f%%, snaps: %d)",
+                    "FFmpeg output: %.1f FPS (new: %.1f, dup: %.0f%%, snaps: %d, dropped_stale: %d)",
                     actual_fps,
                     new_fps,
                     dup_pct,
                     snap_count,
+                    stale_drop_count,
                 )
                 fps_frame_count = 0
                 new_frame_count = 0
                 dup_frame_count = 0
                 snap_count = 0
+                stale_drop_count = 0
                 fps_last_log_time = now
 
             # If FFmpeg died, restart it
