@@ -279,7 +279,10 @@ def create_ffmpeg_cmd(frame_shape: tuple[int, int]) -> list[str]:
         "-hls_list_size",
         HLS_LIST_SIZE,
         "-hls_flags",
-        "delete_segments+program_date_time",
+        # Do not emit PROGRAM-DATE-TIME tags. FFmpeg derives PDT from internal
+        # PTS, which drifts from wall clock in long-running real-time pipelines
+        # and can make HLS.js think live edge is stale/frozen.
+        "delete_segments",
         "-hls_allow_cache",
         "0",
         "-hls_segment_type",
