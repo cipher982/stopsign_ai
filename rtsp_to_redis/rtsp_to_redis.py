@@ -71,6 +71,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.frame_queue = Queue(maxsize=1000)
         self.processing_thread = None
         self.should_stop = threading.Event()
+        self.last_push_ts: Optional[float] = None  # wall-clock time of last successful Redis push
 
         # OpenTelemetry metrics and tracer (set from main)
         self.metrics = None
@@ -214,6 +215,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                 pipeline.ltrim(RAW_FRAME_KEY, 0, self.frame_buffer_size - 1)
                 pipeline.llen(RAW_FRAME_KEY)
                 _, _, current_buffer_size = pipeline.execute()
+                self.last_push_ts = time.time()
                 redis_duration = time.time() - redis_start_time
 
                 span.set_attribute("redis.operation", "pipeline_publish")
@@ -354,6 +356,24 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
             # Use mixin's health status logic
             health_status = self.get_health_status()
+
+            # Verify frames are actually flowing to Redis.
+            # Allow a startup grace period before enforcing this check.
+            FRAME_STALE_SEC = 10  # seconds without a push = unhealthy
+            uptime = self.get_uptime_seconds()
+            grace_sec = float(os.environ.get("GRACE_STARTUP_SEC", "120"))
+            if uptime > grace_sec:
+                if self.last_push_ts is None:
+                    logger.warning("Health check: no frames have been pushed to Redis yet")
+                    return False
+                push_age = time.time() - self.last_push_ts
+                if push_age > FRAME_STALE_SEC:
+                    logger.warning(
+                        "Health check: last Redis push was %.1fs ago (threshold %ds)",
+                        push_age,
+                        FRAME_STALE_SEC,
+                    )
+                    return False
 
             # Additional RTSP-specific health criteria
             rtsp_healthy = health_status["healthy"] and redis_ok and thread_ok
