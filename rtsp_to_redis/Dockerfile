@@ -13,6 +13,7 @@ COPY rtsp_to_redis/ ./rtsp_to_redis/
 # Copy required modules from stopsign directory
 COPY stopsign/telemetry.py ./stopsign/
 COPY stopsign/service_status.py ./stopsign/
+COPY stopsign/freeze_detector.py ./stopsign/
 COPY stopsign/settings/ ./stopsign/settings/
 RUN touch ./stopsign/__init__.py
 
