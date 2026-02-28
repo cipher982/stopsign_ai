@@ -1,5 +1,6 @@
 """Clip building worker for vehicle pass replay videos."""
 
+import json
 import logging
 import os
 import subprocess
@@ -8,6 +9,7 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
+import redis
 from minio import Minio
 
 from stopsign.database import Database
@@ -16,6 +18,8 @@ from stopsign.settings import BREMEN_MINIO_CLIP_BUCKET
 from stopsign.settings import BREMEN_MINIO_ENDPOINT
 from stopsign.settings import BREMEN_MINIO_SECRET_KEY
 from stopsign.settings import DB_URL
+from stopsign.settings import FRAME_METADATA_KEY
+from stopsign.settings import REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,10 @@ _HLS_LIST_SIZE = int(os.getenv("HLS_LIST_SIZE", "450"))
 CLIP_SEGMENT_WINDOW_SEC = _HLS_LIST_SIZE * 2 + 60  # segments window + buffer
 # Local clip retention: keep last N clips on disk (older ones pruned after MinIO upload)
 LOCAL_CLIP_MAX_COUNT = int(os.getenv("LOCAL_CLIP_MAX_COUNT", "200"))
+CLIP_TIME_OFFSET_SEC = float(os.getenv("CLIP_TIME_OFFSET_SEC", "0"))
+CLIP_DYNAMIC_LAG_ENABLED = os.getenv("CLIP_DYNAMIC_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+CLIP_DYNAMIC_LAG_MIN_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MIN_SEC", "-5"))
+CLIP_DYNAMIC_LAG_MAX_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MAX_SEC", "30"))
 
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"
 
@@ -114,6 +122,46 @@ def _load_hls_segments(playlist_path: str):
 
 def _select_segments_for_window(segments, start_ts: float, end_ts: float):
     return [seg for seg in segments if seg["end"] >= start_ts and seg["start"] <= end_ts]
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _estimate_dynamic_lag_sec(segments) -> float:
+    """Estimate segment-clock minus capture-clock lag from live metadata."""
+    if not CLIP_DYNAMIC_LAG_ENABLED or not segments:
+        return 0.0
+
+    try:
+        client = redis.from_url(REDIS_URL, socket_connect_timeout=0.2, socket_timeout=0.2)
+        raw = client.get(FRAME_METADATA_KEY)
+        if not raw:
+            return 0.0
+        payload = json.loads(raw)
+        capture_ts = float(payload.get("capture_timestamp", 0.0) or 0.0)
+        if capture_ts <= 0:
+            return 0.0
+        latest_seg_end = float(segments[-1]["end"])
+        lag = latest_seg_end - capture_ts
+        return _clamp(lag, CLIP_DYNAMIC_LAG_MIN_SEC, CLIP_DYNAMIC_LAG_MAX_SEC)
+    except Exception:
+        return 0.0
+
+
+def _timeline_offset_sec(segments, target_ts: float) -> float:
+    """Map wall-clock timestamp into concat timeline seconds (gap-aware)."""
+    elapsed = 0.0
+    for seg in segments:
+        start = float(seg["start"])
+        end = float(seg["end"])
+        dur = float(seg["duration"])
+        if target_ts <= start:
+            return elapsed
+        if target_ts < end:
+            return elapsed + max(0.0, target_ts - start)
+        elapsed += max(0.0, dur)
+    return elapsed
 
 
 def _upload_clip_to_minio(clip_path: str, object_name: str) -> bool:
@@ -231,14 +279,18 @@ def _build_clip_for_pass(app, pass_data) -> bool:
     # After downtime, segments may still be on disk even though wall-clock
     # time exceeds the window.
     segments = _load_hls_segments(STREAM_FS_PATH)
-    seg_covers_pass = any(seg["end"] >= exit_ts for seg in segments) if segments else False
+    dynamic_lag_sec = _estimate_dynamic_lag_sec(segments)
+    align_offset_sec = CLIP_TIME_OFFSET_SEC + dynamic_lag_sec
+    aligned_entry_ts = entry_ts + align_offset_sec
+    aligned_exit_ts = exit_ts + align_offset_sec
+    seg_covers_pass = bool(segments) and (segments[0]["start"] <= aligned_entry_ts <= segments[-1]["end"])
 
-    if not seg_covers_pass and time.time() - exit_ts > CLIP_SEGMENT_WINDOW_SEC:
+    if not seg_covers_pass and time.time() - aligned_exit_ts > CLIP_SEGMENT_WINDOW_SEC:
         app.state.db.update_clip_status(pass_data.id, "no_segments", clip_error="beyond_segment_window")
         return False
 
-    clip_start = entry_ts - CLIP_PREPAD_SEC
-    clip_end = exit_ts + CLIP_POSTPAD_SEC
+    clip_start = aligned_entry_ts - CLIP_PREPAD_SEC
+    clip_end = aligned_exit_ts + CLIP_POSTPAD_SEC
 
     stop_duration = getattr(pass_data, "stop_duration", 0.0) or 0.0
     if stop_duration >= CLIP_PARKED_SEC:
@@ -277,11 +329,15 @@ def _build_clip_for_pass(app, pass_data) -> bool:
         # Don't mark as failed — segments may appear on next poll
         return False
 
+    if selected[0]["start"] > clip_start or selected[-1]["end"] < clip_end:
+        # Partial window coverage usually means segment rotation or temporary lag.
+        # Retry on next worker cycle rather than building a misleading clip.
+        return False
+
     concat_path = os.path.join(CLIP_DIR, f"concat_{pass_data.id}.txt")
     tmp_path = os.path.join(CLIP_DIR, f".{clip_filename}.tmp")
-    base_ts = selected[0]["start"]
-    offset_start = max(0.0, clip_start - base_ts)
-    offset_end = max(offset_start, clip_end - base_ts)
+    offset_start = _timeline_offset_sec(selected, clip_start)
+    offset_end = max(offset_start, _timeline_offset_sec(selected, clip_end))
     duration = max(0.1, offset_end - offset_start)
 
     retry_count = _get_retry_count(getattr(pass_data, "clip_error", None))

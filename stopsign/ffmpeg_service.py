@@ -69,7 +69,7 @@ REDIS_INITIAL_BACKOFF_SEC = float(os.getenv("REDIS_INITIAL_BACKOFF_SEC", "0.5"))
 
 # FFmpeg Configuration
 HLS_PLAYLIST = os.path.join(STREAM_DIR, "stream.m3u8")
-FFMPEG_POP_MODE = os.getenv("FFMPEG_POP_MODE", "latest").strip().lower()
+FFMPEG_POP_MODE = os.getenv("FFMPEG_POP_MODE", "fifo").strip().lower()
 if FFMPEG_POP_MODE not in {"latest", "fifo"}:
     logger.warning("Invalid FFMPEG_POP_MODE=%s; defaulting to 'latest'", FFMPEG_POP_MODE)
     FFMPEG_POP_MODE = "latest"
