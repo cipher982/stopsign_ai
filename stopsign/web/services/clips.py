@@ -41,6 +41,15 @@ CLIP_TIME_OFFSET_SEC = float(os.getenv("CLIP_TIME_OFFSET_SEC", "0"))
 CLIP_DYNAMIC_LAG_ENABLED = os.getenv("CLIP_DYNAMIC_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 CLIP_DYNAMIC_LAG_MIN_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MIN_SEC", "-5"))
 CLIP_DYNAMIC_LAG_MAX_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MAX_SEC", "60"))
+CLIP_DYNAMIC_LAG_FALLBACK_ENABLED = os.getenv("CLIP_DYNAMIC_LAG_FALLBACK_ENABLED", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+CLIP_PASS_LAG_ENABLED = os.getenv("CLIP_PASS_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+CLIP_PASS_LAG_MIN_SEC = float(os.getenv("CLIP_PASS_LAG_MIN_SEC", "0"))
+CLIP_PASS_LAG_MAX_SEC = float(os.getenv("CLIP_PASS_LAG_MAX_SEC", "45"))
 CLIP_QUEUE_LAG_ENABLED = os.getenv("CLIP_QUEUE_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 CLIP_QUEUE_LAG_FPS = max(1.0, float(os.getenv("CLIP_QUEUE_LAG_FPS", "15")))
 CLIP_QUEUE_LAG_BASE_SEC = float(os.getenv("CLIP_QUEUE_LAG_BASE_SEC", "2.0"))
@@ -165,6 +174,29 @@ def _estimate_dynamic_lag_sec(segments) -> float:
         return _clamp(lag, CLIP_DYNAMIC_LAG_MIN_SEC, CLIP_DYNAMIC_LAG_MAX_SEC)
     except Exception:
         return 0.0
+
+
+def _estimate_pass_lag_sec(pass_data) -> float | None:
+    """Estimate clip shift from per-pass metadata captured at zone exit."""
+    if not CLIP_PASS_LAG_ENABLED:
+        return None
+
+    try:
+        lag_est = getattr(pass_data, "stream_lag_est_sec", None)
+        if lag_est is not None:
+            lag = float(lag_est)
+            return _clamp(max(0.0, lag), CLIP_PASS_LAG_MIN_SEC, CLIP_PASS_LAG_MAX_SEC)
+    except Exception:
+        pass
+
+    try:
+        depth = getattr(pass_data, "stream_queue_depth_exit", None)
+        if depth is None:
+            return None
+        lag = max(0.0, float(depth) / CLIP_QUEUE_LAG_FPS)
+        return _clamp(lag, CLIP_PASS_LAG_MIN_SEC, CLIP_PASS_LAG_MAX_SEC)
+    except Exception:
+        return None
 
 
 def _timeline_offset_sec(segments, target_ts: float) -> float:
@@ -297,8 +329,19 @@ def _build_clip_for_pass(app, pass_data) -> bool:
     # After downtime, segments may still be on disk even though wall-clock
     # time exceeds the window.
     segments = _load_hls_segments(STREAM_FS_PATH)
-    dynamic_lag_sec = _estimate_dynamic_lag_sec(segments)
-    align_offset_sec = CLIP_TIME_OFFSET_SEC + dynamic_lag_sec
+    pass_lag_sec = _estimate_pass_lag_sec(pass_data)
+    dynamic_lag_sec = _estimate_dynamic_lag_sec(segments) if CLIP_DYNAMIC_LAG_FALLBACK_ENABLED else 0.0
+    use_pass_lag = pass_lag_sec is not None
+    align_offset_sec = CLIP_TIME_OFFSET_SEC + (pass_lag_sec if use_pass_lag else dynamic_lag_sec)
+    logger.debug(
+        "Clip alignment for pass %s: offset=%.2fs (source=%s, pass_lag=%s, dynamic_lag=%.2f, base=%.2f)",
+        pass_data.id,
+        align_offset_sec,
+        "pass_metadata" if use_pass_lag else "dynamic_fallback",
+        f"{pass_lag_sec:.2f}" if pass_lag_sec is not None else "none",
+        dynamic_lag_sec,
+        CLIP_TIME_OFFSET_SEC,
+    )
     aligned_entry_ts = entry_ts + align_offset_sec
     aligned_exit_ts = exit_ts + align_offset_sec
     seg_covers_pass = bool(segments) and (segments[0]["start"] <= aligned_entry_ts <= segments[-1]["end"])
