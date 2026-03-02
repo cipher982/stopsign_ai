@@ -78,7 +78,7 @@ FFMPEG_LIVE_QUEUE_TARGET = max(1, int(os.getenv("FFMPEG_LIVE_QUEUE_TARGET", "3")
 # For monitoring
 frames_processed = 0
 START_TIME = time.time()
-LAST_FRAME_TS = START_TIME
+LAST_FRAME_TS = time.monotonic()
 CONSEC_EMPTY_POLLS = 0
 REDIS_CLIENT: redis.Redis | None = None
 
@@ -140,7 +140,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                     "threshold_sec": info.get("threshold_sec"),
                     "segments_count": info.get("segments_count"),
                     "redis_connected": status.get_status_snapshot().get("redis_connected", False),
-                    "last_frame_age_sec": max(0.0, time.time() - LAST_FRAME_TS),
+                    "last_frame_age_sec": max(0.0, time.monotonic() - LAST_FRAME_TS),
                     "note": "readiness-like; use /healthz for liveness; /ready for composite readiness",
                 }
                 self.wfile.write(json.dumps(payload).encode())
@@ -162,7 +162,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             threshold = info.get("threshold_sec", 60.0)
             hls_ok = bool(info.get("exists")) and (age is not None and age <= threshold)
             redis_ok = status.get_status_snapshot().get("redis_connected", False)
-            recent_frame_ok = (time.time() - LAST_FRAME_TS) <= FRAME_STALL_SEC
+            recent_frame_ok = (time.monotonic() - LAST_FRAME_TS) <= FRAME_STALL_SEC
 
             ready = hls_ok and redis_ok and recent_frame_ok
 
@@ -182,7 +182,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                             "recent_frame_ok": recent_frame_ok,
                             "hls_age_seconds": age,
                             "hls_threshold_seconds": threshold,
-                            "last_frame_age_seconds": max(0.0, time.time() - LAST_FRAME_TS),
+                            "last_frame_age_seconds": max(0.0, time.monotonic() - LAST_FRAME_TS),
                             "consec_empty_polls": CONSEC_EMPTY_POLLS,
                         }
                     ).encode()
