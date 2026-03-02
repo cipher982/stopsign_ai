@@ -92,6 +92,9 @@ class VehiclePass(Base):
     track_quality = Column(Float)  # detection hit-rate while in zone (0-1)
     stop_pos_x = Column(Float)  # image-x where vehicle first hit stop threshold
     stop_pos_y = Column(Float)  # image-y where vehicle first hit stop threshold
+    # Stream alignment instrumentation (Method B, Phase 0)
+    stream_queue_depth_exit = Column(Integer)  # processed queue depth at pass exit
+    stream_lag_est_sec = Column(Float)  # estimated FIFO lag at pass exit (depth/fps)
 
 
 class VehiclePassRaw(Base):
@@ -189,6 +192,8 @@ class Database:
             "track_quality": "DOUBLE PRECISION",
             "stop_pos_x": "DOUBLE PRECISION",
             "stop_pos_y": "DOUBLE PRECISION",
+            "stream_queue_depth_exit": "INTEGER",
+            "stream_lag_est_sec": "DOUBLE PRECISION",
         }
         try:
             with self.Session() as session:
@@ -260,6 +265,8 @@ class Database:
         track_quality: float | None = None,
         stop_pos_x: float | None = None,
         stop_pos_y: float | None = None,
+        stream_queue_depth_exit: int | None = None,
+        stream_lag_est_sec: float | None = None,
     ):
         if self.read_only_mode:
             logger.debug("🚫 Blocked add_vehicle_pass (READ-ONLY MODE)")
@@ -279,6 +286,8 @@ class Database:
                 track_quality=track_quality,
                 stop_pos_x=stop_pos_x,
                 stop_pos_y=stop_pos_y,
+                stream_queue_depth_exit=stream_queue_depth_exit,
+                stream_lag_est_sec=stream_lag_est_sec,
             )
             session.add(vehicle_pass)
             session.commit()

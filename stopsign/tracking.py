@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -14,6 +15,7 @@ from stopsign.config import Config
 from stopsign.database import Database
 from stopsign.image_storage import save_vehicle_image
 from stopsign.kalman_filter import KalmanFilterWrapper
+from stopsign.settings import PROCESSED_FRAME_KEY
 
 Point = Tuple[float, float]
 Line = Tuple[Point, Point]
@@ -435,6 +437,26 @@ class StopDetector:
 
         return payload
 
+    def _estimate_stream_lag_at_exit(self) -> tuple[int | None, float | None]:
+        """Estimate processed-stream FIFO lag using queue depth at pass exit."""
+        try:
+            if self._video_analyzer is None:
+                return None, None
+            redis_client = getattr(self._video_analyzer, "redis_client", None)
+            if redis_client is None:
+                return None, None
+
+            depth = int(redis_client.llen(PROCESSED_FRAME_KEY) or 0)
+            fps = float(getattr(self.config, "fps", 15) or 15)
+            if not math.isfinite(fps) or fps <= 0:
+                fps = 15.0
+
+            lag_est = max(0.0, depth / fps)
+            return depth, lag_est
+        except Exception as e:
+            logger.debug("Failed to estimate stream lag at pass exit: %s", e)
+            return None, None
+
     def _create_stop_zone(self) -> np.ndarray:
         # Get processing coordinates from video analyzer
         if self._video_analyzer is None:
@@ -701,6 +723,7 @@ class StopDetector:
                     track_quality = float(min(1.0, len(samples) / expected))
 
                 # Save data to the database
+                stream_queue_depth_exit, stream_lag_est_sec = self._estimate_stream_lag_at_exit()
                 pass_id = self.db.add_vehicle_pass(
                     vehicle_id=car.id,
                     time_in_zone=car.state.zone.time_in_zone,
@@ -714,6 +737,8 @@ class StopDetector:
                     track_quality=track_quality,
                     stop_pos_x=stop_pos_x,
                     stop_pos_y=stop_pos_y,
+                    stream_queue_depth_exit=stream_queue_depth_exit,
+                    stream_lag_est_sec=stream_lag_est_sec,
                 )
                 if pass_id is not None:
                     try:
