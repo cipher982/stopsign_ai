@@ -37,19 +37,16 @@ _HLS_LIST_SIZE = int(os.getenv("HLS_LIST_SIZE", "450"))
 CLIP_SEGMENT_WINDOW_SEC = _HLS_LIST_SIZE * 2 + 60  # segments window + buffer
 # Local clip retention: keep last N clips on disk (older ones pruned after MinIO upload)
 LOCAL_CLIP_MAX_COUNT = int(os.getenv("LOCAL_CLIP_MAX_COUNT", "200"))
-CLIP_TIME_OFFSET_SEC = float(os.getenv("CLIP_TIME_OFFSET_SEC", "0"))
+# Calibrated on production (March 2, 2026): remove env-driven drift for this
+# side project and keep alignment behavior explicit in code.
+CLIP_TIME_OFFSET_SEC = 5.5
 CLIP_DYNAMIC_LAG_ENABLED = os.getenv("CLIP_DYNAMIC_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 CLIP_DYNAMIC_LAG_MIN_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MIN_SEC", "-5"))
 CLIP_DYNAMIC_LAG_MAX_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MAX_SEC", "60"))
-CLIP_DYNAMIC_LAG_FALLBACK_ENABLED = os.getenv("CLIP_DYNAMIC_LAG_FALLBACK_ENABLED", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-CLIP_PASS_LAG_ENABLED = os.getenv("CLIP_PASS_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
-CLIP_PASS_LAG_MIN_SEC = float(os.getenv("CLIP_PASS_LAG_MIN_SEC", "0"))
-CLIP_PASS_LAG_MAX_SEC = float(os.getenv("CLIP_PASS_LAG_MAX_SEC", "45"))
+CLIP_DYNAMIC_LAG_FALLBACK_ENABLED = False
+CLIP_PASS_LAG_ENABLED = True
+CLIP_PASS_LAG_MIN_SEC = 0.0
+CLIP_PASS_LAG_MAX_SEC = 45.0
 CLIP_QUEUE_LAG_ENABLED = os.getenv("CLIP_QUEUE_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 CLIP_QUEUE_LAG_FPS = max(1.0, float(os.getenv("CLIP_QUEUE_LAG_FPS", "15")))
 CLIP_QUEUE_LAG_BASE_SEC = float(os.getenv("CLIP_QUEUE_LAG_BASE_SEC", "2.0"))
