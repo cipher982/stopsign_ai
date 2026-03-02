@@ -19,6 +19,7 @@ from stopsign.settings import BREMEN_MINIO_ENDPOINT
 from stopsign.settings import BREMEN_MINIO_SECRET_KEY
 from stopsign.settings import DB_URL
 from stopsign.settings import FRAME_METADATA_KEY
+from stopsign.settings import PROCESSED_FRAME_KEY
 from stopsign.settings import REDIS_URL
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,10 @@ LOCAL_CLIP_MAX_COUNT = int(os.getenv("LOCAL_CLIP_MAX_COUNT", "200"))
 CLIP_TIME_OFFSET_SEC = float(os.getenv("CLIP_TIME_OFFSET_SEC", "0"))
 CLIP_DYNAMIC_LAG_ENABLED = os.getenv("CLIP_DYNAMIC_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 CLIP_DYNAMIC_LAG_MIN_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MIN_SEC", "-5"))
-CLIP_DYNAMIC_LAG_MAX_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MAX_SEC", "30"))
+CLIP_DYNAMIC_LAG_MAX_SEC = float(os.getenv("CLIP_DYNAMIC_LAG_MAX_SEC", "60"))
+CLIP_QUEUE_LAG_ENABLED = os.getenv("CLIP_QUEUE_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+CLIP_QUEUE_LAG_FPS = max(1.0, float(os.getenv("CLIP_QUEUE_LAG_FPS", "15")))
+CLIP_QUEUE_LAG_BASE_SEC = float(os.getenv("CLIP_QUEUE_LAG_BASE_SEC", "2.0"))
 
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"
 
@@ -135,15 +139,29 @@ def _estimate_dynamic_lag_sec(segments) -> float:
 
     try:
         client = redis.from_url(REDIS_URL, socket_connect_timeout=0.2, socket_timeout=0.2)
-        raw = client.get(FRAME_METADATA_KEY)
-        if not raw:
-            return 0.0
-        payload = json.loads(raw)
-        capture_ts = float(payload.get("capture_timestamp", 0.0) or 0.0)
-        if capture_ts <= 0:
-            return 0.0
         latest_seg_end = float(segments[-1]["end"])
-        lag = latest_seg_end - capture_ts
+
+        # 1) Metadata-based lag (wall-clock segment time minus most recent capture timestamp)
+        meta_lag = 0.0
+        raw = client.get(FRAME_METADATA_KEY)
+        if raw:
+            payload = json.loads(raw)
+            capture_ts = float(payload.get("capture_timestamp", 0.0) or 0.0)
+            if capture_ts > 0:
+                meta_lag = latest_seg_end - capture_ts
+
+        # 2) Queue-depth lag (primary for FIFO backlog): queued frames/fps + HLS close latency
+        queue_lag = 0.0
+        if CLIP_QUEUE_LAG_ENABLED:
+            try:
+                depth = int(client.llen(PROCESSED_FRAME_KEY) or 0)
+                queue_lag = (depth / CLIP_QUEUE_LAG_FPS) + CLIP_QUEUE_LAG_BASE_SEC
+            except Exception:
+                queue_lag = 0.0
+
+        # Use the larger positive lag signal; this avoids under-correcting when
+        # ffmpeg is behind due buffered backlog.
+        lag = max(meta_lag, queue_lag, 0.0)
         return _clamp(lag, CLIP_DYNAMIC_LAG_MIN_SEC, CLIP_DYNAMIC_LAG_MAX_SEC)
     except Exception:
         return 0.0

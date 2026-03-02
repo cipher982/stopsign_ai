@@ -74,6 +74,7 @@ if FFMPEG_POP_MODE not in {"latest", "fifo"}:
     logger.warning("Invalid FFMPEG_POP_MODE=%s; defaulting to 'latest'", FFMPEG_POP_MODE)
     FFMPEG_POP_MODE = "latest"
 FFMPEG_LIVE_QUEUE_TARGET = max(1, int(os.getenv("FFMPEG_LIVE_QUEUE_TARGET", "3")))
+FFMPEG_FIFO_MAX_BACKLOG = max(1, int(os.getenv("FFMPEG_FIFO_MAX_BACKLOG", "45")))
 
 # For monitoring
 frames_processed = 0
@@ -474,10 +475,14 @@ def main():
 
     try:
         logger.info(
-            "Starting paced frame loop (target %.1f FPS, pop_mode=%s, live_queue_target=%d, bufsize=0)",
+            (
+                "Starting paced frame loop (target %.1f FPS, pop_mode=%s, "
+                "live_queue_target=%d, fifo_max_backlog=%d, bufsize=0)"
+            ),
             target_fps,
             FFMPEG_POP_MODE,
             FFMPEG_LIVE_QUEUE_TARGET,
+            FFMPEG_FIFO_MAX_BACKLOG,
         )
         global frames_processed
         stale_drop_count = 0
@@ -518,6 +523,26 @@ def main():
                             )
                         except Exception as trim_err:
                             logger.debug("Failed to trim processed frame backlog: %s", trim_err)
+                    else:
+                        # FIFO mode keeps strict ordering, but if backlog grows too large
+                        # we cap it to prevent multi-second stale-video drift.
+                        try:
+                            queue_depth = REDIS_CLIENT.llen(PROCESSED_FRAME_KEY)
+                            if queue_depth > FFMPEG_FIFO_MAX_BACKLOG:
+                                REDIS_CLIENT.ltrim(PROCESSED_FRAME_KEY, 0, FFMPEG_FIFO_MAX_BACKLOG - 1)
+                                stale_drop_count += queue_depth - FFMPEG_FIFO_MAX_BACKLOG
+                                logger.warning(
+                                    "FIFO backlog too deep (%d); dropped %d stale frame(s), keeping newest %d",
+                                    queue_depth,
+                                    queue_depth - FFMPEG_FIFO_MAX_BACKLOG,
+                                    FFMPEG_FIFO_MAX_BACKLOG,
+                                )
+                            status.update_custom_metric(
+                                "queue_depth",
+                                min(queue_depth, FFMPEG_FIFO_MAX_BACKLOG),
+                            )
+                        except Exception as trim_err:
+                            logger.debug("Failed to cap FIFO processed backlog: %s", trim_err)
             elif last_raw_frame:
                 dup_frame_count += 1
 
