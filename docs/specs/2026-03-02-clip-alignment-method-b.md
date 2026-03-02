@@ -26,6 +26,9 @@ We explicitly do **not** want a default behavior change to the live stream pipel
 - Keep ffmpeg default mode as FIFO (`BRPOP` oldest-first).
 - Do not drop frames by default to "fix clips".
 - Clip alignment must be solved in clip-building logic and pass metadata.
+- Hard UX invariant for live/replay viewing:
+  - No multi-second teleport jumps.
+  - No visible fast-forward catch-up (double/triple speed).
 
 ## 3) Research Findings
 
@@ -44,7 +47,36 @@ Interpretation:
 2. `latest_capture_timestamp` tracks producer head, not the frame currently encoded.
 3. Therefore `latest_segment_end - latest_capture_timestamp` is not a valid estimator for clip lag.
 
-### 3.2 Why current "dynamic lag from latest metadata" is incorrect
+### 3.2 Additional production sampling (March 2, 2026 @ ~21:30 CST)
+
+Direct Redis sampling from the running ffmpeg container:
+
+- `processed_queue_depth`: min 247, p50 260, p95 261, max 261
+- `raw_queue_depth`: min 0, p50 0, p95 0, max 7
+- metadata `capture_timestamp` lag: p50 0.089s, p95 0.119s, max 0.710s
+
+Interpretation:
+
+1. Ingest and analyzer are near-real-time.
+2. Backlog is concentrated in the processed queue consumed by ffmpeg.
+3. FIFO backlog at p50 implies `260 / 15 = 17.3s` of delay between pass timestamps and encoded segment content.
+
+### 3.3 ffmpeg runtime behavior (last 6 hours on March 2, 2026)
+
+From ffmpeg service logs:
+
+- Windowed output FPS average: 14.919 (target 15)
+- 5.1% of 5-second windows below 14.9 FPS
+- 1.3% of windows below 13 FPS
+- Net frame deficit estimate: ~647 frames (~43.1s at 15 FPS)
+
+Interpretation:
+
+1. Short periodic ffmpeg stalls exist.
+2. With strict FIFO and no active drain policy, deficits accumulate into persistent stale backlog.
+3. This directly produces multi-second clip misalignment if not compensated in clip building.
+
+### 3.4 Why current "dynamic lag from latest metadata" is incorrect
 
 If ffmpeg consumes oldest frames and analyzer publishes newest metadata:
 
@@ -71,6 +103,7 @@ Effects:
 Risk:
 
 - Medium/high behavior change to live pipeline.
+- Violates UX invariant if drop bursts are large (teleporting vehicles).
 
 Conclusion:
 
@@ -89,6 +122,7 @@ Effects:
 - No default stream semantics change.
 - No frame-drop policy change.
 - Fix is localized to replay clip construction.
+- Preserves UX invariant by avoiding catch-up via burst drops or fast-forward.
 
 Risk:
 
@@ -160,6 +194,16 @@ Reason:
 - Negative lag is invalid for FIFO queue delay estimate.
 - Max clamp prevents pathological offsets from bad samples.
 
+### 5.6 Live playback invariants (explicit non-regression)
+
+These are acceptance constraints for any future catch-up tuning:
+
+- `max_frame_skip_burst_sec <= 0.20` (no multi-second jumps)
+- `effective_playback_speed_ratio <= 1.10` sustained (no obvious fast-forward)
+- If lag cannot be recovered under those bounds, prefer staying stale over violating UX.
+
+This section does **not** change Method B mechanics; it protects future live-path experiments.
+
 ## 6) Non-Goals
 
 - Re-architecting ingest/analyzer/ffmpeg queues.
@@ -179,13 +223,25 @@ Reason:
 - Synthetic segment timeline with known lag and gaps.
 - Verify clip builder targets expected event window.
 
-### 7.3 Production acceptance criteria
+### 7.3 Automated production checks (no manual website QA)
+
+- `scripts/audit_clip_alignment.py` on recent passes (same-day):
+  - report median and p95 alignment error
+  - flag multi-second early/late drift
+- `scripts/pipeline_probe.py` (or equivalent container probe):
+  - track `processed_queue_depth`, `raw_queue_depth`, capture lag
+  - compute implied FIFO lag `queue_depth / fps`
+- ffmpeg log audit:
+  - windowed FPS deficit, snap counts, any stale-drop events
+
+### 7.4 Production acceptance criteria
 
 For a sample of fresh passes on the same day:
 
 - Median alignment error <= 2.0s
 - P95 alignment error <= 4.0s
 - No increase in clip build failure rate (`retry`, `failed`, `no_segments`)
+- No UX regressions: no observed multi-second jumps or obvious >1.1x playback bursts
 
 Alignment error definition:
 
@@ -203,6 +259,7 @@ Alignment error definition:
 
 - Enable `stream_lag_est_sec`-based alignment in clip builder.
 - Keep manual calibration env available.
+- Keep live ffmpeg pop mode FIFO (no latest-frame mode default change).
 
 ### Phase 2: Optional rebuild tool
 
@@ -218,4 +275,4 @@ Alignment error definition:
 1. Should `stream_queue_depth_exit` be sampled pre- or post-enqueue for best estimate?
 2. Do we want to include a small fixed encoder/segment delay term in default calibration (e.g., +1s)?
 3. Should pass detail UI expose `exit_time` directly (in addition to DB `timestamp`) for debugging alignment?
-
+4. Should we tune ffmpeg CPU preset (`medium` -> `veryfast`) to reduce backlog growth without changing FIFO semantics?
