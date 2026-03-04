@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=builder /app /app
-COPY docker/production/entrypoint.sh /entrypoint.sh
+RUN printf '#!/bin/sh\nset -e\nif [ -n "$INFISICAL_CLIENT_ID" ] && [ -n "$INFISICAL_CLIENT_SECRET" ]; then\n  INFISICAL_TOKEN=$(curl -sf -X POST "https://secrets.drose.io/api/v1/auth/universal-auth/login" -H "Content-Type: application/json" -d "{\\"clientId\\":\\"${INFISICAL_CLIENT_ID}\\",\\"clientSecret\\":\\"${INFISICAL_CLIENT_SECRET}\\"}" | python3 -c "import json,sys; print(json.load(sys.stdin)['"'"'accessToken'"'"'])")\n  export INFISICAL_TOKEN\n  exec infisical run --projectId "9c373776-768f-454b-a7b3-d1cc40deb475" --env "${INFISICAL_ENV:-prod}" --domain "https://secrets.drose.io" -- "$@"\nelse\n  exec "$@"\nfi\n' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH"
 
