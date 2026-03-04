@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libpq5 \
     && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL "https://github.com/Infisical/cli/releases/latest/download/cli_$(uname -s | tr '[:upper:]' '[:lower:]')_amd64.tar.gz" | tar -xz -C /usr/local/bin infisical
+    && curl -fsSL "https://github.com/Infisical/cli/releases/download/v0.43.58/cli_0.43.58_linux_amd64.tar.gz" | tar -xz -C /usr/local/bin infisical
 
 WORKDIR /app
 
