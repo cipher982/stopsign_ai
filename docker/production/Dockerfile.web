@@ -20,12 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
     libpq5 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL "https://github.com/Infisical/cli/releases/latest/download/cli_$(uname -s | tr '[:upper:]' '[:lower:]')_amd64.tar.gz" | tar -xz -C /usr/local/bin infisical
 
 WORKDIR /app
 
 COPY --from=builder /app /app
+COPY docker/production/entrypoint.sh /entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "stopsign.web_server"]
