@@ -6,23 +6,6 @@
 // Track initialization state to prevent multiple instances
 var videoPlayerInitialized = false;
 
-function disableRemotePlayback(video) {
-    if (!video) return;
-
-    video.setAttribute('playsinline', '');
-    video.setAttribute('controlslist', 'noremoteplayback');
-    video.setAttribute('disableremoteplayback', '');
-    video.setAttribute('x-webkit-airplay', 'deny');
-
-    if ('disableRemotePlayback' in video) {
-        video.disableRemotePlayback = true;
-    }
-
-    if (video.controlsList && typeof video.controlsList.add === 'function') {
-        video.controlsList.add('noremoteplayback');
-    }
-}
-
 function setStreamStatus(state) {
     var statusEl = document.getElementById('streamStatus');
     if (!statusEl) return;
@@ -87,8 +70,6 @@ function initializeVideoPlayer() {
         console.log('Video player element not found, will try again later');
         return;
     }
-
-    disableRemotePlayback(video);
 
     // Prevent multiple initializations
     if (videoPlayerInitialized || video.hlsInstance) {

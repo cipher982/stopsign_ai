@@ -32,8 +32,7 @@
                 {% if clip_url %}
                 <div style="flex: 1; min-width: 200px;">
                     <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Clip</div>
-                    <video controls preload="metadata" playsinline controlslist="noremoteplayback"
-                           disableRemotePlayback x-webkit-airplay="deny"
+                    <video controls preload="metadata"
                            style="width: 100%; max-height: 300px; border: 1px solid #bbb; background: #000; display: block;">
                         <source src="{{ clip_url }}" type="video/mp4">
                     </video>
