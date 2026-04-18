@@ -20,11 +20,14 @@ DEFAULT_SETTLE_SECONDS = 8
 DEFAULT_RUNS = 3
 DEFAULT_IMAGE_COUNT = 5
 
+DEFAULT_STATIC_PATHS = [
+    "/static/base.css",
+    "/static/js/home.js",
+    "/static/js/video-player.js",
+]
+
 CORE_PATHS = [
     "/",
-    "/static/base.css?v=1773284612",
-    "/static/js/home.js?v=1773284612",
-    "/static/js/video-player.js?v=1773284612",
     "/load-video",
     "/api/recent-vehicle-passes",
     "/api/live-stats",
@@ -137,6 +140,22 @@ def fetch_recent_image_paths(public_base: str, limit: int) -> list[str]:
     return found
 
 
+def discover_static_asset_paths(public_base: str) -> list[str]:
+    html = run_command(["curl", "-s", urljoin(public_base, "/")])
+    found: list[str] = []
+    seen: set[str] = set()
+    for path in re.findall(r'(?:src|href)="([^"]+)"', html):
+        if not path.startswith("/static/"):
+            continue
+        if not re.search(r"\.(?:css|js)(?:\?|$)", path):
+            continue
+        if path in seen:
+            continue
+        seen.add(path)
+        found.append(path)
+    return found or DEFAULT_STATIC_PATHS
+
+
 def parse_browser_eval_output(output: str) -> dict[str, Any]:
     text = output.strip()
     if not text:
@@ -181,8 +200,9 @@ def profile_browser(public_base: str, runs: int, settle_seconds: int) -> list[di
 
 
 def build_matrix(public_base: str, direct_base: str, image_count: int) -> dict[str, Any]:
+    static_paths = discover_static_asset_paths(public_base)
     image_paths = fetch_recent_image_paths(public_base, image_count)
-    paths = CORE_PATHS + image_paths
+    paths = [CORE_PATHS[0], *static_paths, *CORE_PATHS[1:], *image_paths]
     rows: list[dict[str, Any]] = []
     for path in paths:
         rows.append(
@@ -192,7 +212,12 @@ def build_matrix(public_base: str, direct_base: str, image_count: int) -> dict[s
                 "direct": measure_url(urljoin(direct_base, path)),
             }
         )
-    return {"paths": paths, "image_paths": image_paths, "rows": rows}
+    return {
+        "paths": paths,
+        "static_paths": static_paths,
+        "image_paths": image_paths,
+        "rows": rows,
+    }
 
 
 def parse_args() -> argparse.Namespace:

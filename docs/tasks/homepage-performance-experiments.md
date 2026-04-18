@@ -162,12 +162,26 @@ Representative samples:
     - single-run public/direct comparisons can invert depending on cache warmth and stream timing, so later experiments should use multiple runs and compare medians rather than one-off numbers
 
 ### E1 — Inline Video Shell
-- Status: not started
+- Status: complete
 - Predicted result:
   - Remove one extra startup request
   - No visual or behavioral regression
 - Actual result:
-  - TBD
+  - Change deployed on `2026-04-18`
+  - The homepage now server-renders the same `partials/video.html` shell directly in `/` instead of fetching it through `hx-get="/load-video"`
+  - Public HTML confirmed the new inline `<video id="videoPlayer">` markup after deploy
+  - Browser profiler result vs the E0 baseline:
+    - baseline startup XHR count: `5`
+    - E1 startup XHR count: `4`, `4`, `5`
+    - `/load-video` disappeared from the startup request path on all E1 runs
+    - nav TTFB stayed in the same range: baseline `426ms`, E1 `413-480ms`
+    - load time did not show a consistent improvement: baseline `738ms`, E1 `641-1134ms`
+  - Interpretation:
+    - this is a real cleanup and a real request reduction
+    - it is not a major performance win because the remaining startup cost is still dominated by `/api/recent-vehicle-passes`, HLS segment fetches, and analytics variability
+  - Keep/revert:
+    - keep
+    - it preserves the exact UX, simplifies the page, and removes a pointless roundtrip even though the measured page-level win is small
 
 ### E2 — Server-Render Recent Passes
 - Status: not started
@@ -220,3 +234,4 @@ Representative samples:
 ## Notes
 - The first two suggested “optimizations” from the earlier audit were rejected because they degraded the product. This experiment plan intentionally avoids that class of change.
 - The strongest current evidence is that the public delivery path is the dominant problem, not the Python app itself.
+- The profiling harness now resolves the current versioned local CSS/JS asset URLs from the homepage HTML before running the public/direct URL matrix. That avoids stale query-string cache keys skewing later comparisons.
