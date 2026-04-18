@@ -72,11 +72,8 @@
                 <span>Live Feed</span>
                 <button class="video-toggle" onclick="this.closest('.home-video').classList.toggle('collapsed'); this.textContent = this.closest('.home-video').classList.contains('collapsed') ? '▼ show' : '▲ hide';">▲ hide</button>
             </div>
-            <div id="videoContainer"
-                 hx-get="/load-video"
-                 hx-trigger="load"
-                 class="sunken-dark home-video-frame">
-                <span style="color: var(--text-muted); font-size: 12px;" class="mono">Loading feed...</span>
+            <div id="videoContainer" class="sunken-dark home-video-frame">
+                {% include "partials/video.html" %}
             </div>
         </div>
 
