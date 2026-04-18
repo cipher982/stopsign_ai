@@ -288,15 +288,33 @@ Representative samples:
       - generated proxy config shows `http://crestwoodstopsign.com` and `http://www.crestwoodstopsign.com` routes on `:80`
       - `:443` currently has only the automatic HTTPS catch-all / fallback server, not a real host route for Crestwood
       - local TLS handshakes to `127.0.0.1:443` and SNI handshakes for `crestwoodstopsign.com` on `:443` both fail with `tls alert internal error`
+  - Final ingress-layer experiments on `2026-04-18` resolved the remaining ambiguity:
+    - cube UFW was initially not allowing the ports that the direct public path actually needs
+    - the historical `stopsign-stream` custom service is not `8443 -> 8443`; on the gateway it is defined as:
+      - global port range `8443-8443`
+      - protocol `TCP`
+      - host port `8002`
+    - the router mapping was corrected so `stopsign-stream` now points at cube (`Intel Corporate`) instead of the dead MSI host
+    - cube now intentionally keeps `ufw allow 8002/tcp`, because `8002` is the real internal destination behind the old `8443` direct-stream path
+    - after correcting that mapping and opening `8002/tcp`, external `http://108.85.39.61:8443/stream/stream.m3u8` still timed out from:
+      - this laptop
+      - `clifford`
+      - `zerg`
+    - the key packet-level signal is now clear:
+      - `iptables` counters for `tcp dpt:8002` stayed at `0` during those external `8443` probes
+      - `iptables` counters for `tcp dpt:443` stayed at `0` during the temporary external `443` probes
+    - that means the probes never reached cube at all, even after the router target and host firewall were corrected for the direct stream path
   - Interpretation:
     - this is not a code-level optimization waiting to be flipped on
-    - there are at least three missing prerequisites:
-      - working public WAN forwarding to cube on an ACME-capable port (`80` and/or `443`) and likely the final media port
-      - a real direct-TLS Caddy hostname on cube (for example `https://stream.crestwoodstopsign.com`), not the current tunnel-oriented `http://...` labels
-      - a managed DNS-only Cloudflare record for `stream.crestwoodstopsign.com`
-    - the stale router target explains why the historical `8443` path no longer works, but fixing that alone is still not enough because direct TLS on cube is not ready today
+    - the highest-confidence root cause is now upstream of the app and upstream of cube itself:
+      - either the BGW320 is not actually forwarding the hosted-application pinholes to LAN clients
+      - or AT&T is filtering / blackholing the inbound traffic before it ever reaches the gateway LAN side
+    - the stale router target did matter, and it has now been corrected for `stopsign-stream`, but that was not the final blocker
+    - direct TLS and DNS are still future requirements for a browser-usable `https://stream.crestwoodstopsign.com` path, but they are not the current blocker because packets are not arriving at cube yet
   - Keep/revisit:
-    - revisit only after direct-origin ingress and direct TLS are both real
+    - keep the corrected `stopsign-stream -> cube` router mapping
+    - keep `ufw allow 8002/tcp` on cube, because that is the actual host port the historical direct stream path needs
+    - revisit direct TLS hostname work only after public packets demonstrably reach cube
 
 ### E7 — Thumbnail Variants
 - Status: complete
