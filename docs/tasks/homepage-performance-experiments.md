@@ -131,7 +131,7 @@ Representative samples:
 | E6 | Restore a dedicated direct HTTPS media hostname for HLS | Same-origin tunnel delivery is the wrong transport for low-latency media | Faster live-feed startup and lower HLS manifest latency without changing the panel | Planned |
 | E7 | Generate true thumbnail variants for recent-pass cards | The cards render tiny images but download larger originals | Lower image tail latency with unchanged card visuals at current size | Planned |
 | E8 | Tune request headers / cache policy for media and thumbnails only if measurements justify it | Existing thumbnail cache hits may already be good enough; optimize only if remaining image tail is still dominant | Possible incremental win, but only after E1-E7 are tested | Planned |
-| E9 | Self-host HTMX | External `unpkg` stalls can block startup despite HTMX being a tiny, stable dependency | Lower bad-tail startup variance with no UX change | Planned |
+| E9 | Self-host HTMX | External `unpkg` stalls can block startup despite HTMX being a tiny, stable dependency | Lower bad-tail startup variance with no UX change | Complete |
 | E10 | Self-host and pin `hls.js` | `@latest` from a third-party CDN adds both startup variance and version drift | More consistent player startup with no UX change | Planned |
 
 ## Experiment Log
@@ -289,12 +289,24 @@ Representative samples:
   - TBD
 
 ### E9 — Self-Host HTMX
-- Status: not started
+- Status: complete
 - Predicted result:
   - Remove one third-party startup dependency from the critical path
   - Reduce bad-tail cases caused by `unpkg.com`
 - Actual result:
-  - TBD
+  - Change deployed on `2026-04-18`
+  - The site now serves the exact existing HTMX version from `/static/vendor/htmx-1.9.4.min.js` instead of loading from `https://unpkg.com/htmx.org@1.9.4`
+  - Public HTML confirmed the local script path, and Cloudflare treated it as a normal static asset (`cf-cache-status: MISS` on first fetch, then cacheable)
+  - Browser profiler result vs E5:
+    - median nav TTFB moved from `527ms` to `523ms`
+    - median DCL improved from `861ms` to `765ms`
+    - median load improved from `1040ms` to `1028ms`
+    - `unpkg.com/htmx.org` disappeared from the startup request path on all runs
+  - Interpretation:
+    - this is a real no-regression improvement
+    - the gain is modest on median timings, but it removes one observed bad-tail source from the critical path and makes startup more reproducible
+  - Keep/revert:
+    - keep
 
 ### E10 — Self-Host and Pin `hls.js`
 - Status: not started
