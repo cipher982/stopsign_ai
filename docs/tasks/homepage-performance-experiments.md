@@ -210,12 +210,27 @@ Representative samples:
     - it improves perceived completeness of the homepage without removing any functionality, but it is not the standalone fix for overall startup latency
 
 ### E3 — Short Edge Caching for Homepage Fragments
-- Status: not started
+- Status: complete
 - Predicted result:
   - Large improvement on public-path variability
   - No visible product loss if TTL stays short
 - Actual result:
-  - TBD
+  - Change deployed on `2026-04-18` as a targeted homepage test:
+    - `/` returned `Cache-Control: public, max-age=0, s-maxage=10, stale-while-revalidate=60`
+    - `CDN-Cache-Control` and `Cloudflare-CDN-Cache-Control` were also set
+  - Repeated header checks on the public hostname still showed:
+    - `cf-cache-status: DYNAMIC`
+    - no `Age` header
+    - no transition from MISS to HIT across repeated requests
+  - Browser profiler result during the experiment:
+    - no consistent improvement over E5
+    - public-path variance remained high, including a bad-tail run where the external HTMX script stalled for several seconds
+  - Interpretation:
+    - app-side cache headers alone do not enable edge HTML caching on the current Cloudflare path
+    - to make homepage HTML caching real, this needs Cloudflare-side cache rules or a different delivery setup, not just response headers from FastAPI
+  - Keep/revert:
+    - reverted
+    - the headers were not delivering the intended edge behavior, so they should not stay in prod as a misleading no-op
 
 ### E4 — Stable Asset Versioning
 - Status: not started
