@@ -131,6 +131,8 @@ Representative samples:
 | E6 | Restore a dedicated direct HTTPS media hostname for HLS | Same-origin tunnel delivery is the wrong transport for low-latency media | Faster live-feed startup and lower HLS manifest latency without changing the panel | Planned |
 | E7 | Generate true thumbnail variants for recent-pass cards | The cards render tiny images but download larger originals | Lower image tail latency with unchanged card visuals at current size | Planned |
 | E8 | Tune request headers / cache policy for media and thumbnails only if measurements justify it | Existing thumbnail cache hits may already be good enough; optimize only if remaining image tail is still dominant | Possible incremental win, but only after E1-E7 are tested | Planned |
+| E9 | Self-host HTMX | External `unpkg` stalls can block startup despite HTMX being a tiny, stable dependency | Lower bad-tail startup variance with no UX change | Planned |
+| E10 | Self-host and pin `hls.js` | `@latest` from a third-party CDN adds both startup variance and version drift | More consistent player startup with no UX change | Planned |
 
 ## Experiment Log
 
@@ -276,6 +278,29 @@ Representative samples:
 - Predicted result:
   - Lower image tail without losing the recent-pass panel
   - Smaller payoff than fixing the public-path partials, but still real
+- Actual result:
+  - TBD
+
+### E8 — Request Header / Cache Tuning Follow-Up
+- Status: not started
+- Predicted result:
+  - Possible incremental win once media and image paths are isolated more clearly
+- Actual result:
+  - TBD
+
+### E9 — Self-Host HTMX
+- Status: not started
+- Predicted result:
+  - Remove one third-party startup dependency from the critical path
+  - Reduce bad-tail cases caused by `unpkg.com`
+- Actual result:
+  - TBD
+
+### E10 — Self-Host and Pin `hls.js`
+- Status: not started
+- Predicted result:
+  - Remove `jsdelivr` variance and eliminate `@latest` version drift
+  - Make player startup more reproducible across deploys
 - Actual result:
   - TBD
 
