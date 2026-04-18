@@ -128,11 +128,11 @@ Representative samples:
 | E3 | Add short edge caching for homepage HTML fragments | The app is fast at origin; public dynamic latency is the real tax | Big reduction in public-path variability for `/`, `/api/recent-vehicle-passes`, `/api/live-stats`, `/load-video` | Reverted |
 | E4 | Use a stable build hash for asset versioning | Restart-based asset busting causes unnecessary cold static fetches after deploys | Better cache retention across deploys and container restarts | Planned |
 | E5 | Load analytics after page load / idle | Umami should not compete with startup-critical scripts | Lower DCL variance with no visible UX change | Complete |
-| E6 | Restore a dedicated direct HTTPS media hostname for HLS | Same-origin tunnel delivery is the wrong transport for low-latency media | Faster live-feed startup and lower HLS manifest latency without changing the panel | Planned |
+| E6 | Restore a dedicated direct HTTPS media hostname for HLS | Same-origin tunnel delivery is the wrong transport for low-latency media | Faster live-feed startup and lower HLS manifest latency without changing the panel | Blocked |
 | E7 | Generate true thumbnail variants for recent-pass cards | The cards render tiny images but download larger originals | Lower image tail latency with unchanged card visuals at current size | Planned |
 | E8 | Tune request headers / cache policy for media and thumbnails only if measurements justify it | Existing thumbnail cache hits may already be good enough; optimize only if remaining image tail is still dominant | Possible incremental win, but only after E1-E7 are tested | Planned |
 | E9 | Self-host HTMX | External `unpkg` stalls can block startup despite HTMX being a tiny, stable dependency | Lower bad-tail startup variance with no UX change | Complete |
-| E10 | Self-host and pin `hls.js` | `@latest` from a third-party CDN adds both startup variance and version drift | More consistent player startup with no UX change | Planned |
+| E10 | Self-host and pin `hls.js` | `@latest` from a third-party CDN adds both startup variance and version drift | More consistent player startup with no UX change | Complete |
 
 ## Experiment Log
 
@@ -266,12 +266,21 @@ Representative samples:
     - harmless and directionally better, but not enough on its own; if we want analytics fully out of startup we need to delay it more aggressively than “right after load”
 
 ### E6 — Dedicated Direct HTTPS HLS Hostname
-- Status: not started
+- Status: blocked
 - Predicted result:
   - Meaningful live-feed startup improvement
   - Cleaner separation of dashboard traffic vs media traffic
 - Actual result:
-  - TBD
+  - Live precondition checks on `2026-04-18` showed the direct path is not currently available:
+    - `stream.crestwoodstopsign.com` is absent from hostname inventory and does not resolve in public DNS
+    - `crestwoodstopsign.com` is explicitly `tunnel_public` with `origin_tls: missing`
+    - cube is listening on `8002` and shared `80/443`, but not `8443`
+    - the documented Crestwood WAN IP `108.85.39.61:8443` timed out from an external network over both HTTP and HTTPS
+  - Interpretation:
+    - this is not a code-level optimization waiting to be flipped on
+    - it requires real infra work first: public DNS, direct origin TLS, and a reachable router forward or equivalent direct ingress
+  - Keep/revisit:
+    - revisit only after direct-origin ingress exists
 
 ### E7 — Thumbnail Variants
 - Status: not started
@@ -309,12 +318,25 @@ Representative samples:
     - keep
 
 ### E10 — Self-Host and Pin `hls.js`
-- Status: not started
+- Status: complete
 - Predicted result:
   - Remove `jsdelivr` variance and eliminate `@latest` version drift
   - Make player startup more reproducible across deploys
 - Actual result:
-  - TBD
+  - Change deployed on `2026-04-18`
+  - The site now serves the exact currently-live `hls.js` version from `/static/vendor/hls-1.6.16.min.js` instead of `https://cdn.jsdelivr.net/npm/hls.js@latest`
+  - Public HTML confirmed the local pinned script path
+  - Browser profiler result vs E9:
+    - median nav TTFB moved from `523ms` to `544ms`
+    - median DCL moved from `765ms` to `920ms`
+    - median load improved from `1028ms` to `924ms`
+    - `jsdelivr` disappeared from the startup request path on all runs
+    - the local HLS script appeared in the startup path on all runs, as expected
+  - Interpretation:
+    - this is a determinism / dependency-control win more than a clear median-speed win
+    - it removes third-party CDN dependency and eliminates `@latest` drift, but the measured startup improvement is mixed rather than dramatic
+  - Keep/revert:
+    - keep
 
 ## Notes
 - The first two suggested “optimizations” from the earlier audit were rejected because they degraded the product. This experiment plan intentionally avoids that class of change.
