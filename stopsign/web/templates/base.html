@@ -36,8 +36,27 @@
     {# HTMX #}
     <script src="https://unpkg.com/htmx.org@1.9.4" defer></script>
 
-    {# Analytics #}
-    <script src="https://analytics.drose.io/script.js" defer data-website-id="f5671ede-2232-44ea-9e5c-aabeeb766f95"></script>
+    {# Analytics: defer injection until after the page is loaded and idle #}
+    <script>
+        window.addEventListener('load', function() {
+            function loadAnalytics() {
+                if (document.querySelector('script[data-website-id="f5671ede-2232-44ea-9e5c-aabeeb766f95"]')) {
+                    return;
+                }
+                var script = document.createElement('script');
+                script.src = 'https://analytics.drose.io/script.js';
+                script.async = true;
+                script.dataset.websiteId = 'f5671ede-2232-44ea-9e5c-aabeeb766f95';
+                document.head.appendChild(script);
+            }
+
+            if ('requestIdleCallback' in window) {
+                requestIdleCallback(loadAnalytics, { timeout: 2000 });
+            } else {
+                setTimeout(loadAnalytics, 0);
+            }
+        }, { once: true });
+    </script>
 
     {% block head_extra %}{% endblock %}
 </head>
