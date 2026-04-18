@@ -95,7 +95,12 @@ async def add_cache_headers(request, call_next):
     else:
         response = await call_next(request)
         content_type = response.headers.get("content-type", "")
-        if content_type.startswith("text/html"):
+        if request.url.path == "/" and content_type.startswith("text/html"):
+            cache_value = "public, max-age=0, s-maxage=10, stale-while-revalidate=60"
+            response.headers["Cache-Control"] = cache_value
+            response.headers["CDN-Cache-Control"] = "public, s-maxage=10, stale-while-revalidate=60"
+            response.headers["Cloudflare-CDN-Cache-Control"] = "public, s-maxage=10, stale-while-revalidate=60"
+        elif content_type.startswith("text/html"):
             response.headers["Cache-Control"] = "no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
