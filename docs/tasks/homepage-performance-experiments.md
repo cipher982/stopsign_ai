@@ -271,24 +271,63 @@ Representative samples:
   - Meaningful live-feed startup improvement
   - Cleaner separation of dashboard traffic vs media traffic
 - Actual result:
-  - Live precondition checks on `2026-04-18` showed the direct path is not currently available:
+  - Initial live precondition checks on `2026-04-18` showed the direct path is not currently available:
     - `stream.crestwoodstopsign.com` is absent from hostname inventory and does not resolve in public DNS
     - `crestwoodstopsign.com` is explicitly `tunnel_public` with `origin_tls: missing`
     - cube is listening on `8002` and shared `80/443`, but not `8443`
     - the documented Crestwood WAN IP `108.85.39.61:8443` timed out from an external network over both HTTP and HTTPS
+  - Deeper live router/proxy inspection on `2026-04-18` confirmed this is a real infra block, not just missing frontend wiring:
+    - read-only login to the AT&T gateway showed the existing `stopsign-stream` and `ssh-jelly` port forwards both point at an old MSI host (`Micro-Star INTL CO., LTD.`), not cube
+    - cube is present in the router device list separately as `64:6e:e0:6a:db:7d`
+    - a temporary router experiment added the built-in `HTTPS` service to cube and the rule appeared in the hosted-applications table, but external `443` still timed out from:
+      - this laptop
+      - `clifford`
+      - `zerg`
+    - that temporary `HTTPS -> cube` rule was removed after the check
+    - cube’s Coolify proxy is not currently configured for direct TLS host routing for the stop-sign app:
+      - generated proxy config shows `http://crestwoodstopsign.com` and `http://www.crestwoodstopsign.com` routes on `:80`
+      - `:443` currently has only the automatic HTTPS catch-all / fallback server, not a real host route for Crestwood
+      - local TLS handshakes to `127.0.0.1:443` and SNI handshakes for `crestwoodstopsign.com` on `:443` both fail with `tls alert internal error`
   - Interpretation:
     - this is not a code-level optimization waiting to be flipped on
-    - it requires real infra work first: public DNS, direct origin TLS, and a reachable router forward or equivalent direct ingress
+    - there are at least three missing prerequisites:
+      - working public WAN forwarding to cube on an ACME-capable port (`80` and/or `443`) and likely the final media port
+      - a real direct-TLS Caddy hostname on cube (for example `https://stream.crestwoodstopsign.com`), not the current tunnel-oriented `http://...` labels
+      - a managed DNS-only Cloudflare record for `stream.crestwoodstopsign.com`
+    - the stale router target explains why the historical `8443` path no longer works, but fixing that alone is still not enough because direct TLS on cube is not ready today
   - Keep/revisit:
-    - revisit only after direct-origin ingress exists
+    - revisit only after direct-origin ingress and direct TLS are both real
 
 ### E7 — Thumbnail Variants
-- Status: not started
+- Status: complete
 - Predicted result:
   - Lower image tail without losing the recent-pass panel
   - Smaller payoff than fixing the public-path partials, but still real
 - Actual result:
-  - TBD
+  - Change deployed on `2026-04-18`
+  - Recent-pass cards now request a dedicated `/vehicle-thumb/{object}` URL while keeping the existing full-size image URL for detail views and card links
+  - The thumbnail route generates a `112x80` JPEG, caches it locally on cube, and returns immutable public cache headers
+  - Public cache verification on a warmed thumbnail showed:
+    - `cf-cache-status: HIT`
+    - `age: 85`
+    - `cache-control: public, max-age=31536000, immutable`
+  - Sample byte comparison on five live cards:
+    - full images: median about `24.5 KB`
+    - thumbnails: median about `3.6 KB`
+    - median byte reduction: about `85.5%`
+  - Browser profiler result vs E10:
+    - median nav TTFB improved from `544ms` to `511ms`
+    - median DCL improved from `920ms` to `759ms`
+    - median load improved from `924ms` to `762ms`
+  - Cold/warm behavior matters:
+    - first browser run after deploy still showed thumbnail requests around `592-596ms` each during startup
+    - by runs 2 and 3, warmed thumbnail requests in the startup window were down to about `62-65ms`
+  - Interpretation:
+    - this is a real no-regression win
+    - the cards keep the same count, layout, and click-through behavior, but the browser and edge move far fewer bytes
+    - the remaining biggest startup costs are still HLS segment fetches and the analytics send request, not the card images
+  - Keep/revert:
+    - keep
 
 ### E8 — Request Header / Cache Tuning Follow-Up
 - Status: not started
