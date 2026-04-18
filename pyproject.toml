@@ -40,7 +40,7 @@ db = [
 ]
 # Object storage (video_analyzer + web_server)
 storage = [
-    "minio>=7.2.9",
+    "minio>=7.2.20",
 ]
 # Web UI (web_server only)
 web = [
