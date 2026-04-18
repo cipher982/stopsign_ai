@@ -235,12 +235,35 @@ Representative samples:
     - the headers were not delivering the intended edge behavior, so they should not stay in prod as a misleading no-op
 
 ### E4 — Stable Asset Versioning
-- Status: not started
+- Status: complete
 - Predicted result:
   - Fewer cold static fetches after deploys
   - Little change on a single already-cold run, larger change across deploy churn
 - Actual result:
-  - TBD
+  - Change deployed on `2026-04-18`
+  - Static asset URLs now use a content hash instead of process start time:
+    - before: timestamp-like values such as `base.css?v=1776530771`
+    - after: stable content hash `base.css?v=2a721aeab080`
+  - Verification deploy sequence:
+    - deploy 1 switched production HTML to the hash-based versioned asset URLs
+    - deploy 2 was a no-content redeploy of the same code
+    - the asset version stayed exactly the same across both deploys:
+      - `/static/base.css?v=2a721aeab080`
+      - `/static/js/video-player.js?v=2a721aeab080`
+      - `/static/js/home.js?v=2a721aeab080`
+  - Cache verification on the new hashed asset URL:
+    - first direct CSS request: `cf-cache-status: MISS`
+    - immediate second request: `cf-cache-status: HIT`
+  - Browser profiler result after the change:
+    - 2-run median nav TTFB: about `512ms`
+    - 2-run median DCL: about `797ms`
+    - 2-run median load: about `806ms`
+  - Interpretation:
+    - this is mostly a cache-correctness and deploy-churn fix, not a dramatic first-load speed win
+    - the important result is that restarts and no-op redeploys no longer force brand-new asset URLs
+    - that should preserve browser and CDN cache usefulness across routine deploys instead of making every user refetch CSS/JS after each restart
+  - Keep/revert:
+    - keep
 
 ### E5 — Post-Load Analytics
 - Status: complete
