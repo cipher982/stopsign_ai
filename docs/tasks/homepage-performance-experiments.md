@@ -226,12 +226,27 @@ Representative samples:
   - TBD
 
 ### E5 — Post-Load Analytics
-- Status: not started
+- Status: complete
 - Predicted result:
   - Lower startup contention and fewer bad-tail cases
   - No visible regression
 - Actual result:
-  - TBD
+  - Change deployed on `2026-04-18`
+  - The Umami script is no longer a static head `<script ... defer>` tag; the page now injects it after `load` via `requestIdleCallback` with a short timeout fallback
+  - Browser profiler result vs E2:
+    - median nav TTFB moved from `506ms` to `527ms`
+    - median DCL moved from `805ms` to `861ms`
+    - median load improved from `1114ms` to `1040ms`
+    - startup XHR count moved from `4,4,4` to `3,4,4`
+  - Important observation:
+    - the analytics script still showed up inside the startup window on `1/3` runs because the page finished `load` quickly and the idle callback fired immediately after
+    - the analytics send request still appeared in the startup window on all runs
+  - Interpretation:
+    - this is a small cleanup, not a primary lever
+    - moving analytics out of the head reduces some overlap with the core app path, but the current implementation still allows analytics traffic to land during the first couple of seconds
+  - Keep/revert:
+    - keep
+    - harmless and directionally better, but not enough on its own; if we want analytics fully out of startup we need to delay it more aggressively than “right after load”
 
 ### E6 — Dedicated Direct HTTPS HLS Hostname
 - Status: not started
