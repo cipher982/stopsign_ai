@@ -122,12 +122,12 @@ Representative samples:
 
 | ID | Change | Theory | Expected outcome | Status |
 |---|---|---|---|---|
-| E0 | Codify measurement harness | A repeatable harness will reduce false positives and make every later result comparable | Stable before/after measurements for every prod experiment | Planned |
-| E1 | Inline video shell in `/` and remove `/load-video` fetch | The extra HTMX request buys no UX benefit and costs one public roundtrip | Lower startup latency with identical visible video panel | Planned |
-| E2 | Server-render recent passes in the initial homepage HTML | The worst startup request is the recents partial; moving the same UI into the first response should avoid the slow extra public roundtrip | Faster time-to-useful-content with same cards and images | Planned |
-| E3 | Add short edge caching for homepage HTML fragments | The app is fast at origin; public dynamic latency is the real tax | Big reduction in public-path variability for `/`, `/api/recent-vehicle-passes`, `/api/live-stats`, `/load-video` | Planned |
+| E0 | Codify measurement harness | A repeatable harness will reduce false positives and make every later result comparable | Stable before/after measurements for every prod experiment | Complete |
+| E1 | Inline video shell in `/` and remove `/load-video` fetch | The extra HTMX request buys no UX benefit and costs one public roundtrip | Lower startup latency with identical visible video panel | Complete |
+| E2 | Server-render recent passes in the initial homepage HTML | The worst startup request is the recents partial; moving the same UI into the first response should avoid the slow extra public roundtrip | Faster time-to-useful-content with same cards and images | Complete |
+| E3 | Add short edge caching for homepage HTML fragments | The app is fast at origin; public dynamic latency is the real tax | Big reduction in public-path variability for `/`, `/api/recent-vehicle-passes`, `/api/live-stats`, `/load-video` | Reverted |
 | E4 | Use a stable build hash for asset versioning | Restart-based asset busting causes unnecessary cold static fetches after deploys | Better cache retention across deploys and container restarts | Planned |
-| E5 | Load analytics after page load / idle | Umami should not compete with startup-critical scripts | Lower DCL variance with no visible UX change | Planned |
+| E5 | Load analytics after page load / idle | Umami should not compete with startup-critical scripts | Lower DCL variance with no visible UX change | Complete |
 | E6 | Restore a dedicated direct HTTPS media hostname for HLS | Same-origin tunnel delivery is the wrong transport for low-latency media | Faster live-feed startup and lower HLS manifest latency without changing the panel | Planned |
 | E7 | Generate true thumbnail variants for recent-pass cards | The cards render tiny images but download larger originals | Lower image tail latency with unchanged card visuals at current size | Planned |
 | E8 | Tune request headers / cache policy for media and thumbnails only if measurements justify it | Existing thumbnail cache hits may already be good enough; optimize only if remaining image tail is still dominant | Possible incremental win, but only after E1-E7 are tested | Planned |
