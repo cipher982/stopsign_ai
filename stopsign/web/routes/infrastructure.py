@@ -1,22 +1,29 @@
 # ruff: noqa: E501
 """Infrastructure routes — static files, image proxy, performance debug."""
 
+import hashlib
 import logging
 import os
 import time
+from io import BytesIO
+from pathlib import Path
 
 import redis
 from fastapi import APIRouter
 from fastapi import Request
 from fastapi.responses import FileResponse
 from fastapi.responses import HTMLResponse
+from fastapi.responses import Response
 from fastapi.responses import StreamingResponse
 from minio import Minio
+from PIL import Image
+from PIL import ImageOps
 
 from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
 from stopsign.settings import BREMEN_MINIO_BUCKET
 from stopsign.settings import BREMEN_MINIO_ENDPOINT
 from stopsign.settings import BREMEN_MINIO_SECRET_KEY
+from stopsign.settings import LOCAL_IMAGE_DIR
 from stopsign.settings import MINIO_ACCESS_KEY
 from stopsign.settings import MINIO_BUCKET
 from stopsign.settings import MINIO_ENDPOINT
@@ -27,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+THUMBNAIL_SIZE = (112, 80)
+THUMBNAIL_QUALITY = 82
+THUMBNAIL_CACHE_DIR = Path(LOCAL_IMAGE_DIR) / ".thumb-cache"
+
 
 def get_minio_client():
     return Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=True)
@@ -36,6 +47,56 @@ def get_bremen_minio_client():
     return Minio(
         BREMEN_MINIO_ENDPOINT, access_key=BREMEN_MINIO_ACCESS_KEY, secret_key=BREMEN_MINIO_SECRET_KEY, secure=False
     )
+
+
+def _normalize_object_name(object_name: str) -> str:
+    if not object_name or not isinstance(object_name, str) or object_name.strip() == "":
+        raise ValueError("Invalid image request")
+
+    normalized = Path(object_name)
+    if normalized.is_absolute() or ".." in normalized.parts:
+        raise ValueError("Invalid image request")
+
+    return normalized.as_posix().lstrip("./")
+
+
+def _thumbnail_cache_path(object_name: str) -> Path:
+    cache_key = hashlib.sha256(f"{THUMBNAIL_SIZE}:{object_name}".encode("utf-8")).hexdigest()[:24]
+    stem = Path(object_name).stem[:32] or "thumb"
+    return THUMBNAIL_CACHE_DIR / f"{stem}-{cache_key}.jpg"
+
+
+def _read_source_image_bytes(object_name: str) -> bytes:
+    local_path = Path(LOCAL_IMAGE_DIR) / object_name
+    if local_path.exists():
+        return local_path.read_bytes()
+
+    data = get_bremen_minio_client().get_object(BREMEN_MINIO_BUCKET, object_name)
+    try:
+        return data.read()
+    finally:
+        data.close()
+        data.release_conn()
+
+
+def _build_thumbnail_bytes(source_bytes: bytes) -> bytes:
+    with Image.open(BytesIO(source_bytes)) as image:
+        fitted = ImageOps.fit(
+            image.convert("RGB"),
+            THUMBNAIL_SIZE,
+            method=Image.Resampling.LANCZOS,
+        )
+        output = BytesIO()
+        fitted.save(output, format="JPEG", quality=THUMBNAIL_QUALITY, optimize=True)
+        return output.getvalue()
+
+
+def _thumbnail_response_headers(object_name: str) -> dict[str, str]:
+    digest = hashlib.sha256(f"{THUMBNAIL_SIZE}:{object_name}".encode("utf-8")).hexdigest()[:24]
+    return {
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "ETag": f'"thumb-{digest}"',
+    }
 
 
 @router.get("/vehicle-image/{object_name:path}")
@@ -53,6 +114,38 @@ def get_image(object_name: str):
         return response
     except Exception as e:
         logger.error(f"Error fetching image from Bremen MinIO: {str(e)}", exc_info=True)
+        return HTMLResponse("Image not found", status_code=404)
+
+
+@router.get("/vehicle-thumb/{object_name:path}")
+def get_thumbnail(object_name: str):
+    try:
+        normalized_name = _normalize_object_name(object_name)
+    except ValueError:
+        logger.warning(f"Invalid thumbnail object requested: {object_name}")
+        return HTMLResponse("Invalid image request", status_code=400)
+
+    cache_path = _thumbnail_cache_path(normalized_name)
+    headers = _thumbnail_response_headers(normalized_name)
+
+    try:
+        if cache_path.exists():
+            response = FileResponse(cache_path, media_type="image/jpeg")
+            response.headers.update(headers)
+            return response
+
+        source_bytes = _read_source_image_bytes(normalized_name)
+        thumbnail_bytes = _build_thumbnail_bytes(source_bytes)
+
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_bytes(thumbnail_bytes)
+        except OSError as cache_error:
+            logger.warning(f"Could not persist thumbnail cache for {normalized_name}: {cache_error}")
+
+        return Response(content=thumbnail_bytes, media_type="image/jpeg", headers=headers)
+    except Exception as e:
+        logger.error(f"Error building thumbnail for {normalized_name}: {str(e)}", exc_info=True)
         return HTMLResponse("Image not found", status_code=404)
 
 

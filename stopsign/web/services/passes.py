@@ -6,6 +6,7 @@ import time
 from collections.abc import Sequence
 from zoneinfo import ZoneInfo
 
+from stopsign.web.services.images import resolve_card_thumbnail_url
 from stopsign.web.services.images import resolve_image_url
 from stopsign.web.services.scoring import get_speed_color
 from stopsign.web.services.scoring import get_time_color
@@ -15,6 +16,7 @@ from stopsign.web.services.scoring import get_verdict_color
 def format_pass_item(pass_data, vehicle_attrs=None, score=None):
     """Build template context dict for a single pass card."""
     image_url = resolve_image_url(pass_data.image_path)
+    thumbnail_url = resolve_card_thumbnail_url(pass_data.image_path)
 
     if hasattr(pass_data, "timestamp") and pass_data.timestamp:
         utc_time = pass_data.timestamp.replace(tzinfo=ZoneInfo("UTC"))
@@ -61,6 +63,7 @@ def format_pass_item(pass_data, vehicle_attrs=None, score=None):
     return {
         "pass_id": getattr(pass_data, "id", None),
         "image_url": image_url,
+        "thumbnail_url": thumbnail_url,
         "time_str": time_str,
         "time_absolute": time_absolute,
         "min_speed": pass_data.min_speed,
