@@ -184,12 +184,30 @@ Representative samples:
     - it preserves the exact UX, simplifies the page, and removes a pointless roundtrip even though the measured page-level win is small
 
 ### E2 — Server-Render Recent Passes
-- Status: not started
+- Status: complete
 - Predicted result:
   - Eliminate the slowest startup XHR from the critical path
   - Same visible card list, earlier
 - Actual result:
-  - TBD
+  - Change deployed on `2026-04-18`
+  - The homepage now renders the same 30 recent-pass cards directly in `/` instead of waiting on the initial `/api/recent-vehicle-passes` HTMX request
+  - Public HTML no longer contains `hx-get="/api/recent-vehicle-passes"` and the cards are present in the first response
+  - Browser profiler result vs E1:
+    - `/api/recent-vehicle-passes` disappeared from the startup request path on all runs
+    - median nav TTFB moved from `423ms` to `506ms`
+    - median DCL improved from `1005ms` to `805ms`
+    - median load moved from `1034ms` to `1114ms`
+    - first recent-pass image requests started earlier: median about `1126ms` in E1 to about `754ms` in E2
+  - URL matrix / HTML size result:
+    - homepage HTML grew from about `17 KB` to about `51 KB`
+    - public `/` TTFB in the matrix moved from about `0.453s` to about `0.566s`
+  - Interpretation:
+    - this removes the slow recents XHR cleanly and makes the panel content available earlier
+    - it does not reduce total work; it shifts the card markup and image discovery into the initial document
+    - the trade is earlier visible recents vs a heavier initial HTML response and slightly worse shell TTFB
+  - Keep/revert:
+    - keep for now
+    - it improves perceived completeness of the homepage without removing any functionality, but it is not the standalone fix for overall startup latency
 
 ### E3 — Short Edge Caching for Homepage Fragments
 - Status: not started
