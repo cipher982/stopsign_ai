@@ -128,7 +128,7 @@ Representative samples:
 | E3 | Add short edge caching for homepage HTML fragments | The app is fast at origin; public dynamic latency is the real tax | Big reduction in public-path variability for `/`, `/api/recent-vehicle-passes`, `/api/live-stats`, `/load-video` | Reverted |
 | E4 | Use a stable build hash for asset versioning | Restart-based asset busting causes unnecessary cold static fetches after deploys | Better cache retention across deploys and container restarts | Planned |
 | E5 | Load analytics after page load / idle | Umami should not compete with startup-critical scripts | Lower DCL variance with no visible UX change | Complete |
-| E6 | Restore a dedicated direct HTTPS media hostname for HLS | Same-origin tunnel delivery is the wrong transport for low-latency media | Faster live-feed startup and lower HLS manifest latency without changing the panel | Blocked |
+| E6 | Restore a dedicated direct HTTPS media hostname for HLS | Same-origin tunnel delivery is the wrong transport for low-latency media | Faster live-feed startup and lower HLS manifest latency without changing the panel | Complete (Reverted) |
 | E7 | Generate true thumbnail variants for recent-pass cards | The cards render tiny images but download larger originals | Lower image tail latency with unchanged card visuals at current size | Planned |
 | E8 | Tune request headers / cache policy for media and thumbnails only if measurements justify it | Existing thumbnail cache hits may already be good enough; optimize only if remaining image tail is still dominant | Possible incremental win, but only after E1-E7 are tested | Planned |
 | E9 | Self-host HTMX | External `unpkg` stalls can block startup despite HTMX being a tiny, stable dependency | Lower bad-tail startup variance with no UX change | Complete |
@@ -289,55 +289,57 @@ Representative samples:
     - harmless and directionally better, but not enough on its own; if we want analytics fully out of startup we need to delay it more aggressively than “right after load”
 
 ### E6 — Dedicated Direct HTTPS HLS Hostname
-- Status: blocked
+- Status: complete, reverted in production
 - Predicted result:
   - Meaningful live-feed startup improvement
   - Cleaner separation of dashboard traffic vs media traffic
 - Actual result:
-  - Initial live precondition checks on `2026-04-18` showed the direct path is not currently available:
-    - `stream.crestwoodstopsign.com` is absent from hostname inventory and does not resolve in public DNS
-    - `crestwoodstopsign.com` is explicitly `tunnel_public` with `origin_tls: missing`
-    - cube is listening on `8002` and shared `80/443`, but not `8443`
-    - the documented Crestwood WAN IP `108.85.39.61:8443` timed out from an external network over both HTTP and HTTPS
-  - Deeper live router/proxy inspection on `2026-04-18` confirmed this is a real infra block, not just missing frontend wiring:
-    - read-only login to the AT&T gateway showed the existing `stopsign-stream` and `ssh-jelly` port forwards both point at an old MSI host (`Micro-Star INTL CO., LTD.`), not cube
-    - cube is present in the router device list separately as `64:6e:e0:6a:db:7d`
-    - a temporary router experiment added the built-in `HTTPS` service to cube and the rule appeared in the hosted-applications table, but external `443` still timed out from:
-      - this laptop
-      - `clifford`
-      - `zerg`
-    - that temporary `HTTPS -> cube` rule was removed after the check
-    - cube’s Coolify proxy is not currently configured for direct TLS host routing for the stop-sign app:
-      - generated proxy config shows `http://crestwoodstopsign.com` and `http://www.crestwoodstopsign.com` routes on `:80`
-      - `:443` currently has only the automatic HTTPS catch-all / fallback server, not a real host route for Crestwood
-      - local TLS handshakes to `127.0.0.1:443` and SNI handshakes for `crestwoodstopsign.com` on `:443` both fail with `tls alert internal error`
-  - Final ingress-layer experiments on `2026-04-18` resolved the remaining ambiguity:
-    - cube UFW was initially not allowing the ports that the direct public path actually needs
-    - the historical `stopsign-stream` custom service is not `8443 -> 8443`; on the gateway it is defined as:
-      - global port range `8443-8443`
-      - protocol `TCP`
-      - host port `8002`
-    - the router mapping was corrected so `stopsign-stream` now points at cube (`Intel Corporate`) instead of the dead MSI host
-    - cube now intentionally keeps `ufw allow 8002/tcp`, because `8002` is the real internal destination behind the old `8443` direct-stream path
-    - after correcting that mapping and opening `8002/tcp`, external `http://108.85.39.61:8443/stream/stream.m3u8` still timed out from:
-      - this laptop
-      - `clifford`
-      - `zerg`
-    - the key packet-level signal is now clear:
-      - `iptables` counters for `tcp dpt:8002` stayed at `0` during those external `8443` probes
-      - `iptables` counters for `tcp dpt:443` stayed at `0` during the temporary external `443` probes
-    - that means the probes never reached cube at all, even after the router target and host firewall were corrected for the direct stream path
-  - Interpretation:
-    - this is not a code-level optimization waiting to be flipped on
-    - the highest-confidence root cause is now upstream of the app and upstream of cube itself:
-      - either the BGW320 is not actually forwarding the hosted-application pinholes to LAN clients
-      - or AT&T is filtering / blackholing the inbound traffic before it ever reaches the gateway LAN side
-    - the stale router target did matter, and it has now been corrected for `stopsign-stream`, but that was not the final blocker
-    - direct TLS and DNS are still future requirements for a browser-usable `https://stream.crestwoodstopsign.com` path, but they are not the current blocker because packets are not arriving at cube yet
+  - The first direct-to-cube version of this idea was fully investigated and rejected:
+    - the historical router docs were stale
+    - the old `8443` forwarding path actually targets internal `8002`
+    - even after correcting the stale router target and opening the host firewall, public packets still never reached cube
+    - that path is not a viable browser-facing solution
+  - The safer version was then implemented on `2026-04-18`:
+    - added `stream.crestwoodstopsign.com` on `clifford`
+    - installed a manual Caddy route that proxies `/stream/*` and `/health/stream` to cube over Tailscale
+    - terminated public HTTPS on `clifford`
+    - constrained CORS to `https://crestwoodstopsign.com`
+    - tightened cube `8002/tcp` so only `clifford`'s Tailscale IP (`100.118.94.100`) can reach it
+    - added app support for an external `PUBLIC_STREAM_URL`
+    - deployed production with the homepage player pointed at `https://stream.crestwoodstopsign.com/stream/stream.m3u8`
+  - The production measurements did not support keeping it:
+    - page-shell metrics stayed roughly flat vs the pre-E6 baseline:
+      - pre-E6 median nav TTFB about `512ms`
+      - E6 median nav TTFB about `515ms`
+      - pre-E6 median DCL about `797ms`
+      - E6 median DCL about `815ms`
+      - pre-E6 median load about `806ms`
+      - E6 median load about `819ms`
+    - the HLS startup path got materially worse in the browser:
+      - pre-E6 startup manifest median about `195ms`
+      - E6 startup manifest median about `521ms`
+      - pre-E6 startup segment median about `804ms`
+      - E6 startup segment median about `4198ms`
+    - direct like-for-like public fetches made the regression unambiguous:
+      - tunnel manifest: about `240-255ms`
+      - clifford manifest: about `529-731ms`
+      - tunnel first segment: about `0.57-0.89s`
+      - clifford first segment: about `3.42s`, `8.22s`, and `17.16s`
+  - First-principles interpretation:
+    - the clifford media proxy removes Cloudflare Tunnel from the path, but it also hairpins every large HLS segment through `cube -> clifford -> browser`
+    - from this measurement location, that doubled path is worse than letting Cloudflare carry the stream from cube to a nearby edge POP
+    - the result is that the architecture is cleaner, but the actual delivered video bytes arrive slower
+  - Revert / post-check:
+    - production was reverted to same-origin `/stream/stream.m3u8`
+    - the homepage HTML is back to `data-stream-url="/stream/stream.m3u8"`
+    - short post-revert sanity profiling showed the HLS startup path back near the earlier baseline:
+      - revert startup manifest median about `195ms`
+      - revert startup segment median about `765ms`
   - Keep/revisit:
-    - keep the corrected `stopsign-stream -> cube` router mapping
-    - keep `ufw allow 8002/tcp` on cube, because that is the actual host port the historical direct stream path needs
-    - revisit direct TLS hostname work only after public packets demonstrably reach cube
+    - keep the generic app support for `PUBLIC_STREAM_URL`; it is a harmless capability hook for future experiments
+    - keep cube `8002/tcp` restricted to `clifford` only; this closes the earlier broad exposure
+    - do not use the clifford proxy path for production streaming in its current form
+    - if live-feed performance work resumes, the next path should be a transport change that does not relay each HLS segment through a second public server
 
 ### E7 — Thumbnail Variants
 - Status: complete
