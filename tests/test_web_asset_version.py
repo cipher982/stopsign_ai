@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from stopsign.web.app import _compute_static_asset_hash
 from stopsign.web.app import resolve_asset_version
+from stopsign.web.app import resolve_public_stream_url
 
 
 def test_static_asset_hash_is_stable_for_identical_content(tmp_path, monkeypatch):
@@ -41,3 +42,15 @@ def test_resolve_asset_version_prefers_explicit_override(tmp_path, monkeypatch):
     monkeypatch.setenv("ASSET_VERSION", "manual-build-id")
 
     assert resolve_asset_version(static_dir) == "manual-build-id"
+
+
+def test_resolve_public_stream_url_prefers_explicit_override(monkeypatch):
+    monkeypatch.setenv("PUBLIC_STREAM_URL", "https://stream.crestwoodstopsign.com/stream/stream.m3u8")
+
+    assert resolve_public_stream_url() == "https://stream.crestwoodstopsign.com/stream/stream.m3u8"
+
+
+def test_resolve_public_stream_url_defaults_to_same_origin(monkeypatch):
+    monkeypatch.delenv("PUBLIC_STREAM_URL", raising=False)
+
+    assert resolve_public_stream_url("/stream/stream.m3u8") == "/stream/stream.m3u8"

@@ -77,7 +77,7 @@ function initializeVideoPlayer() {
         return;
     }
 
-    var streamUrl = '/stream/stream.m3u8';
+    var streamUrl = video.dataset.streamUrl || '/stream/stream.m3u8';
     console.log('Attempting to load video');
     setStreamStatus('connecting');
 

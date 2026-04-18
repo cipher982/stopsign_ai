@@ -56,12 +56,18 @@ def resolve_asset_version(static_dir: Path = STATIC_DIR) -> str:
         return str(int(WEB_START_TIME))
 
 
+def resolve_public_stream_url(default_stream_url: str = STREAM_URL) -> str:
+    return os.getenv("PUBLIC_STREAM_URL") or default_stream_url
+
+
 ASSET_VERSION = resolve_asset_version()
+PUBLIC_STREAM_URL = resolve_public_stream_url()
 
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 templates.env.globals["asset_version"] = ASSET_VERSION
+templates.env.globals["public_stream_url"] = PUBLIC_STREAM_URL
 
 
 def create_app() -> FastAPI:
