@@ -399,3 +399,49 @@ Representative samples:
 - The first two suggested “optimizations” from the earlier audit were rejected because they degraded the product. This experiment plan intentionally avoids that class of change.
 - The strongest current evidence is that the public delivery path is the dominant problem, not the Python app itself.
 - The profiling harness now resolves the current versioned local CSS/JS asset URLs from the homepage HTML before running the public/direct URL matrix. That avoids stale query-string cache keys skewing later comparisons.
+
+## Operational Note — Detection Gap on 2026-04-18
+- Trigger:
+  - During the performance work, the homepage showed `lastDetection` at about `58-59m ago`, which looked suspicious for a clear Saturday around noon.
+- What was verified:
+  - This was a real data gap, not just stale frontend HTML.
+  - Direct DB query showed the most recent pass timestamps in Central Time were:
+    - `2026-04-18 11:21`
+    - then nothing until `2026-04-18 12:20:43`
+    - then another pass at `2026-04-18 12:23:03`
+  - `vehicle_passes` counts confirmed the same gap even when checking all rows, not just rows used by the recent-pass UI.
+- Was it caused by the latest homepage deploy?
+  - No evidence for that.
+  - The current app containers restarted at about `2026-04-18 11:46:07` Central, which is about 25 minutes after the `11:21` detection gap began.
+  - So the gap started before the latest restart / deploy.
+- What the live pipeline showed during the investigation:
+  - `rtsp_to_redis` stayed connected to both Redis and RTSP, but it showed intermittent input-rate collapses during the same general window:
+    - about `1.30 FPS` at `11:17`
+    - about `1.92 FPS` at `11:37`
+    - about `0.19 FPS` at `11:47`
+    - then back to about `14.98 FPS`
+  - After the `11:46` restart, `video_analyzer` logged repeated `No frame available in Redis` warnings from about `11:46` through `12:00`, then more sporadically around `12:10-12:11` and once again at `12:19`.
+  - `ffmpeg_service` was not dead during that time. It kept serving HLS, but logs showed short periods of degraded freshness / backlog, including:
+    - new-frame rate dips
+    - elevated duplicate / snap counts
+    - FIFO backlog trimming events
+- Current state at the end of the investigation:
+  - The system recovered without any code changes.
+  - Live checks from inside the containers showed:
+    - analyzer `/ready`: `200`, `frame_lag_seconds` about `0.03s`
+    - ffmpeg `/ready`: `200`, `hls_ok=true`, `redis_ok=true`, `recent_frame_ok=true`
+    - web `/health`: `200`
+    - web `/health/stream`: `fresh=true`
+  - Redis state at recovery:
+    - `raw_frame_buffer`: `0`
+    - `processed_frame_buffer`: `9`
+    - latest frame metadata showed fresh capture timestamps and active tracked cars
+  - Public homepage stats also recovered during the check, moving from about `59m ago` to about `2m ago`
+- Interpretation:
+  - There was a real detection lull visible in prod.
+  - The timing does not support “the homepage perf changes caused detection to stop.”
+  - The best evidence points to transient ingest / pipeline instability on the camera-to-analyzer path, not a web rendering change.
+  - The exact size of the “real outage” versus “just an unusually quiet traffic window” remains mixed:
+    - the `11:21-12:20` Saturday window had only `1` pass today
+    - prior four Saturdays in that same window were `5`, `1`, `8`, `8`
+  - So today was low and suspicious, but not statistically impossible even before considering the observed ingest jitter.

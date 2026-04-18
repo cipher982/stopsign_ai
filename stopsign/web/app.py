@@ -1,4 +1,5 @@
 # ruff: noqa: E501
+import hashlib
 import logging
 import os
 import threading
@@ -23,10 +24,39 @@ from stopsign.web.services.clips import clip_worker_loop
 logger = logging.getLogger(__name__)
 
 # Constants
+REPO_ROOT = Path(__file__).resolve().parents[2]
+STATIC_DIR = REPO_ROOT / "static"
 STREAM_FS_PATH = "/app/data/stream/stream.m3u8"
 STREAM_URL = "/stream/stream.m3u8"
 WEB_START_TIME = time.time()
-ASSET_VERSION = os.getenv("ASSET_VERSION") or str(int(WEB_START_TIME))
+
+
+def _compute_static_asset_hash(static_dir: Path) -> str:
+    digest = hashlib.sha256()
+
+    for asset_path in sorted(path for path in static_dir.rglob("*") if path.is_file()):
+        rel_path = asset_path.relative_to(static_dir).as_posix().encode("utf-8")
+        digest.update(rel_path)
+        digest.update(b"\0")
+        digest.update(asset_path.read_bytes())
+        digest.update(b"\0")
+
+    return digest.hexdigest()[:12]
+
+
+def resolve_asset_version(static_dir: Path = STATIC_DIR) -> str:
+    forced_version = os.getenv("ASSET_VERSION")
+    if forced_version:
+        return forced_version
+
+    try:
+        return _compute_static_asset_hash(static_dir)
+    except OSError as exc:
+        logger.warning("Falling back to startup-timestamp asset version: %s", exc)
+        return str(int(WEB_START_TIME))
+
+
+ASSET_VERSION = resolve_asset_version()
 
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -39,7 +69,7 @@ def create_app() -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
 
     # Static mounts
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # These directories only exist in Docker containers; create if possible, skip if not
     for mount_path, directory, name in [
@@ -109,8 +139,7 @@ def main():
         except Exception as e:
             db_init_attempts += 1
             logger.warning(
-                f"Database connection attempt {db_init_attempts} failed: {e}. "
-                f"Retrying in {db_init_delay} seconds..."
+                f"Database connection attempt {db_init_attempts} failed: {e}. Retrying in {db_init_delay} seconds..."
             )
             time.sleep(db_init_delay)
 
