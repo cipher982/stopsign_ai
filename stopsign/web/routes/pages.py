@@ -13,6 +13,7 @@ from stopsign.database import Database
 from stopsign.settings import DB_URL
 from stopsign.web.app import templates
 from stopsign.web.services.images import resolve_image_url
+from stopsign.web.services.passes import build_recent_pass_items
 from stopsign.web.services.scoring import get_speed_color
 from stopsign.web.services.scoring import get_time_color
 from stopsign.web.services.seo import PAGE_METADATA
@@ -43,6 +44,7 @@ async def home(request: Request):
         "vehicle_count": "--",
         "last_detection": "--",
     }
+    passes = []
     try:
         db = _get_db(request)
         total_passes_24h = db.get_total_passes_last_24h()
@@ -75,6 +77,12 @@ async def home(request: Request):
     except Exception as e:
         logger.warning(f"Failed to pre-fetch homepage stats: {e}")
 
+    if "db" in locals():
+        try:
+            passes = build_recent_pass_items(db, recent_passes[:30])
+        except Exception as e:
+            logger.warning(f"Failed to pre-fetch homepage recent passes: {e}")
+
     return templates.TemplateResponse(
         "home.html",
         {
@@ -86,6 +94,7 @@ async def home(request: Request):
             "meta_image": meta["image"],
             "json_ld": build_json_ld(BASE_URL, meta, "home"),
             "stats": stats,
+            "passes": passes,
         },
     )
 

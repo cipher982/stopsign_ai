@@ -1,5 +1,7 @@
-<div id="recentPasses">
+{% if passes %}
     {% for item in passes %}
     {% include "partials/pass_item.html" %}
     {% endfor %}
-</div>
+{% else %}
+<div style="text-align: center; padding: 12px; color: var(--text-muted); font-size: 12px;">No recent passes yet.</div>
+{% endif %}

@@ -80,12 +80,8 @@
         <div class="home-panel home-recents raised">
             <div class="home-panel-title">Recent Passes</div>
             <div class="home-panel-body home-recents-body sunken">
-                <div id="recentPasses"
-                     hx-get="/api/recent-vehicle-passes"
-                     hx-trigger="load"
-                     hx-swap="innerHTML"
-                     aria-live="polite">
-                    <div style="text-align: center; padding: 12px; color: var(--text-muted); font-size: 12px;">Loading...</div>
+                <div id="recentPasses" aria-live="polite">
+                    {% include "partials/recent_passes.html" %}
                 </div>
             </div>
         </div>
