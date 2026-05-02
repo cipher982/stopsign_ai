@@ -47,7 +47,19 @@
                 script.src = 'https://analytics.drose.io/script.js';
                 script.async = true;
                 script.dataset.websiteId = 'f5671ede-2232-44ea-9e5c-aabeeb766f95';
+                script.dataset.domains = 'crestwoodstopsign.com';
+                script.dataset.tag = 'prod';
+                script.dataset.performance = 'true';
                 document.head.appendChild(script);
+
+                var recorder = document.createElement('script');
+                recorder.src = 'https://analytics.drose.io/recorder.js';
+                recorder.async = true;
+                recorder.dataset.websiteId = 'f5671ede-2232-44ea-9e5c-aabeeb766f95';
+                recorder.dataset.sampleRate = '1';
+                recorder.dataset.maskLevel = 'moderate';
+                recorder.dataset.maxDuration = '1800000';
+                document.head.appendChild(recorder);
             }
 
             if ('requestIdleCallback' in window) {
