@@ -14,6 +14,7 @@ COPY rtsp_to_redis/ ./rtsp_to_redis/
 COPY stopsign/telemetry.py ./stopsign/
 COPY stopsign/service_status.py ./stopsign/
 COPY stopsign/freeze_detector.py ./stopsign/
+COPY stopsign/frame_codec.py ./stopsign/
 COPY stopsign/settings/ ./stopsign/settings/
 RUN touch ./stopsign/__init__.py
 
