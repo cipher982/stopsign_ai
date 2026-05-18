@@ -570,6 +570,80 @@ class TestTimeDebouncedZoneTransitions:
         assert car.state.zone.in_zone is True
 
 
+class TestLatePreStopRecovery:
+    """Handle tracks that start after the pre-stop line because the tracker fragmented."""
+
+    def _make_detector(self, mock_config, mock_database):
+        mock_config.in_zone_frame_threshold = 2
+        mock_config.out_zone_frame_threshold = 2
+        mock_config.in_zone_time_threshold = 0.1
+        mock_config.out_zone_time_threshold = 0.1
+        mock_config.stop_speed_threshold = 20.0
+        mock_database.add_vehicle_pass.return_value = 123
+        mock_database.save_vehicle_pass_raw.return_value = True
+
+        detector = StopDetector(mock_config, mock_database)
+        detector.stop_zone = np.array([[900, 700], [1150, 700], [1150, 860], [900, 860]], dtype=np.float32)
+        detector.pre_stop_line_proc = np.array([[1660, 650], [1660, 900]], dtype=np.float32)
+        detector.capture_line_proc = np.array([[1460, 650], [1460, 900]], dtype=np.float32)
+        return detector
+
+    def _update_car(self, car, timestamp, location, bbox):
+        car.update(location, timestamp, bbox)
+        car.state.raw_speed = car.state.speed
+
+    def test_late_track_entering_from_pre_stop_side_records_pass(self, mock_config, mock_database):
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=42, config=mock_config)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+        base = 1000.0
+
+        # Track starts after the pre-stop line, then moves right-to-left into the stop zone.
+        samples = [
+            ((1185.0, 735.0), (1160.0, 670.0, 1260.0, 780.0)),
+            ((1120.0, 735.0), (1040.0, 690.0, 1200.0, 780.0)),
+            ((1060.0, 740.0), (980.0, 700.0, 1140.0, 790.0)),
+            ((1000.0, 745.0), (920.0, 705.0, 1080.0, 795.0)),
+        ]
+        for idx, (location, bbox) in enumerate(samples):
+            ts = base + idx * 0.1
+            self._update_car(car, ts, location, bbox)
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + max(idx - 1, 0) * 0.1)
+
+        assert car.state.zone.passed_pre_stop is True
+        assert car.state.zone.in_zone is True
+
+        # Sustained exit should complete the pass.
+        for idx, bbox in enumerate(
+            [
+                (780.0, 705.0, 880.0, 795.0),
+                (700.0, 705.0, 800.0, 795.0),
+                (620.0, 705.0, 720.0, 795.0),
+            ],
+            start=5,
+        ):
+            ts = base + idx * 0.1
+            self._update_car(car, ts, (bbox[0] + 50.0, 750.0), bbox)
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + (idx - 1) * 0.1)
+
+        assert mock_database.add_vehicle_pass.called
+
+    def test_parked_jitter_in_zone_does_not_recover_pre_stop(self, mock_config, mock_database):
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=7, config=mock_config)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+        base = 1000.0
+
+        for idx, x in enumerate([1040.0, 1042.0, 1039.0, 1041.0]):
+            ts = base + idx * 0.1
+            bbox = (980.0, 710.0, 1100.0, 800.0)
+            self._update_car(car, ts, (x, 750.0), bbox)
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + max(idx - 1, 0) * 0.1)
+
+        assert car.state.zone.passed_pre_stop is False
+        assert mock_database.add_vehicle_pass.call_count == 0
+
+
 class TestResetCarState:
     """Test that _reset_car_state fully resets all sub-states."""
 
