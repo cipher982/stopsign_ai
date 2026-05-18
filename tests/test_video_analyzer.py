@@ -4,6 +4,9 @@ These tests focus on the frame timing and YOLO gating logic
 introduced to decouple AI inference from video output.
 """
 
+from unittest.mock import MagicMock
+
+import numpy as np
 import pytest
 
 
@@ -206,3 +209,42 @@ class TestVisualizationWithInterpolation:
         from stopsign.video_analyzer import VideoAnalyzer
 
         assert hasattr(VideoAnalyzer, "draw_car_interpolated")
+
+
+class TestRawDimensionSetup:
+    """Test raw frame dimension setup without raw-frame overlay copies."""
+
+    def test_ensure_raw_dimensions_initializes_geometry(self):
+        from stopsign.video_analyzer import VideoAnalyzer
+
+        analyzer = VideoAnalyzer.__new__(VideoAnalyzer)
+        analyzer.raw_width = None
+        analyzer.raw_height = None
+        analyzer.frame_dimensions = None
+        analyzer.stop_detector = MagicMock()
+        analyzer._update_coordinate_system = MagicMock()
+
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        analyzer.ensure_raw_dimensions(frame)
+
+        assert analyzer.raw_width == 1280
+        assert analyzer.raw_height == 720
+        assert analyzer.frame_dimensions == (1280, 720)
+        analyzer._update_coordinate_system.assert_called_once()
+        analyzer.stop_detector.set_video_analyzer.assert_called_once_with(analyzer)
+
+    def test_ensure_raw_dimensions_is_noop_when_shape_unchanged(self):
+        from stopsign.video_analyzer import VideoAnalyzer
+
+        analyzer = VideoAnalyzer.__new__(VideoAnalyzer)
+        analyzer.raw_width = 1280
+        analyzer.raw_height = 720
+        analyzer.frame_dimensions = (1280, 720)
+        analyzer.stop_detector = MagicMock()
+        analyzer._update_coordinate_system = MagicMock()
+
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        analyzer.ensure_raw_dimensions(frame)
+
+        analyzer._update_coordinate_system.assert_not_called()
+        analyzer.stop_detector.set_video_analyzer.assert_not_called()

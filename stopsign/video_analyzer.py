@@ -559,10 +559,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         should_run_yolo = (ts_for_logic - self.last_yolo_ts) >= self.min_yolo_interval and not yolo_lag_skip
 
         if should_run_yolo:
-            # YOLO PATH: Full processing with stop zone drawing on raw frame
-            # Draw stop zone on raw frame BEFORE crop/scale for coordinate mapping
-            frame_with_stop_zone = self.draw_stop_zone_on_raw_frame(frame)
-            frame = self.crop_scale_frame(frame_with_stop_zone)
+            # YOLO PATH: Full processing after raw -> processing coordinate setup.
+            self.ensure_raw_dimensions(frame)
+            frame = self.crop_scale_frame(frame)
 
             # Object Detection (expensive - only run when scheduled)
             object_detection_start = time.time()
@@ -620,10 +619,9 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             stop_detection_time = time.time() - stop_detection_start
             self.stop_detection_time.observe(stop_detection_time)
         else:
-            # FAST PATH: Skip YOLO and stop detection, but still draw stop zone
-            # Use existing tracking state for visualization
-            frame_with_stop_zone = self.draw_stop_zone_on_raw_frame(frame)
-            frame = self.crop_scale_frame(frame_with_stop_zone)
+            # FAST PATH: Skip YOLO and stop detection; visualization uses existing tracking state.
+            self.ensure_raw_dimensions(frame)
+            frame = self.crop_scale_frame(frame)
             processed_frame = frame
             boxes = []
 
@@ -680,43 +678,18 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         return annotated_frame, metadata
 
-    def draw_stop_zone_on_raw_frame(self, frame: np.ndarray) -> np.ndarray:
-        """
-        Draw stop zone on raw frame before crop/scale operations.
-        This allows direct mapping from browser coordinates to raw frame coordinates.
-        """
-        # Create a copy to avoid modifying the original frame
-        frame_copy = frame.copy()
+    def ensure_raw_dimensions(self, frame: np.ndarray) -> None:
+        """Initialize raw dimensions and geometry from the current frame shape."""
+        raw_height, raw_width = frame.shape[:2]
+        if self.raw_width == raw_width and self.raw_height == raw_height:
+            return
 
-        # Update raw dimensions if not set
-        if self.raw_width is None or self.raw_height is None:
-            self.raw_height, self.raw_width = frame.shape[:2]
-            logger.info(f"Detected raw video dimensions: {self.raw_width}x{self.raw_height}")
-            # Now that we have dimensions, initialize the stop detector's stop zone
-            self.stop_detector.set_video_analyzer(self)
-
-        # Stop zone coordinates are in raw frame coordinate system
-        stop_zone = self.config.stop_zone
-
-        if stop_zone:
-            if len(stop_zone) != 4:
-                raise ValueError(f"Expected stop zone to contain four points, found {len(stop_zone)}")
-
-            points = []
-            for i, p in enumerate(stop_zone):
-                if p is None:
-                    raise ValueError(f"Stop zone point {i + 1} is None. Stop zone: {stop_zone}")
-                if not isinstance(p, (list, tuple)) or len(p) != 2:
-                    raise ValueError(f"Stop zone point {i + 1} must be a [x, y] pair, got: {p}")
-                points.append((int(p[0]), int(p[1])))
-            points = np.array(points, dtype=np.int32)
-            cv2.polylines(frame_copy, [points], True, (0, 0, 255), 3)
-
-            # Draw corner points for visibility
-            for point in points:
-                cv2.circle(frame_copy, tuple(point), 8, (0, 0, 255), -1)
-
-        return frame_copy
+        self.raw_width = raw_width
+        self.raw_height = raw_height
+        self.frame_dimensions = (raw_width, raw_height)
+        logger.info(f"Detected raw video dimensions: {self.raw_width}x{self.raw_height}")
+        self._update_coordinate_system()
+        self.stop_detector.set_video_analyzer(self)
 
     def raw_to_processing_coordinates(self, raw_x: float, raw_y: float) -> tuple[float, float]:
         """Convert raw frame coordinates to processing coordinates for stop detection."""
