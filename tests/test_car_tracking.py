@@ -682,6 +682,41 @@ class TestLatePreStopRecovery:
         assert car.state.zone.passed_pre_stop is False
         assert mock_database.add_vehicle_pass.call_count == 0
 
+    def test_wrong_direction_in_zone_does_not_recover_pre_stop(self, mock_config, mock_database):
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=8, config=mock_config)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+        base = 1000.0
+
+        # This moves away from the pre-stop -> stop-zone approach vector.
+        for idx, x in enumerate([980.0, 1010.0, 1040.0, 1070.0]):
+            ts = base + idx * 0.1
+            bbox = (x - 50.0, 710.0, x + 50.0, 800.0)
+            self._update_car(car, ts, (x, 750.0), bbox)
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + max(idx - 1, 0) * 0.1)
+
+        assert car.state.zone.passed_pre_stop is False
+        assert mock_database.add_vehicle_pass.call_count == 0
+
+    def test_diagonal_approach_in_zone_recovers_pre_stop(self, mock_config, mock_database):
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=9, config=mock_config)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+        base = 1000.0
+
+        samples = [
+            ((1180.0, 710.0), (1120.0, 680.0, 1240.0, 770.0)),
+            ((1120.0, 740.0), (1060.0, 700.0, 1180.0, 790.0)),
+            ((1060.0, 780.0), (1000.0, 730.0, 1120.0, 830.0)),
+            ((1000.0, 820.0), (940.0, 760.0, 1060.0, 860.0)),
+        ]
+        for idx, (location, bbox) in enumerate(samples):
+            ts = base + idx * 0.1
+            self._update_car(car, ts, location, bbox)
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + max(idx - 1, 0) * 0.1)
+
+        assert car.state.zone.passed_pre_stop is True
+
 
 class TestResetCarState:
     """Test that _reset_car_state fully resets all sub-states."""

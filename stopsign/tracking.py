@@ -359,8 +359,7 @@ class CarTracker:
 class StopDetector:
     # Max time a car can be in_zone before we treat it as parking, not a pass
     ZONE_TIMEOUT_SECONDS = 60.0
-    LATE_PRE_STOP_MIN_TRAVEL_PX = 20.0
-    LATE_PRE_STOP_APPROACH_MARGIN_PX = 30.0
+    APPROACH_MIN_PROGRESS_PX = 20.0
 
     def __init__(self, config: Config, db: Database):
         self.config = config
@@ -596,14 +595,7 @@ class StopDetector:
 
         return has_positive and has_negative
 
-    def _should_recover_late_pre_stop(self, car: Car, in_stop_zone: bool) -> bool:
-        """Recover tracks that were acquired after crossing the pre-stop line.
-
-        A parked car near the capture line can cause ByteTrack to fragment or wake a
-        track after the vehicle has already crossed the pre-stop line. Without this,
-        the stop-zone logic ignores that vehicle forever because passed_pre_stop is
-        never set.
-        """
+    def _trajectory_approaches_stop_zone(self, car: Car, in_stop_zone: bool) -> bool:
         if not in_stop_zone or self.stop_zone is None or self.pre_stop_line_proc is None:
             return False
 
@@ -614,27 +606,22 @@ class StopDetector:
         stop_center = np.mean(self.stop_zone, axis=0)
         pre_stop_center = np.mean(self.pre_stop_line_proc, axis=0)
         approach_vector = stop_center - pre_stop_center
-        axis = 0 if abs(float(approach_vector[0])) >= abs(float(approach_vector[1])) else 1
-        expected_delta = float(approach_vector[axis])
-        if abs(expected_delta) < 1e-6:
+        approach_norm = float(np.linalg.norm(approach_vector))
+        if approach_norm < 1e-6:
             return False
 
-        coords = [float(location[axis]) for location, _ in recent_track]
-        travel = coords[-1] - coords[0]
-        if abs(travel) < self.LATE_PRE_STOP_MIN_TRAVEL_PX:
-            return False
+        unit_approach = approach_vector / approach_norm
+        start = np.array(recent_track[0][0], dtype=float)
+        end = np.array(recent_track[-1][0], dtype=float)
+        progress = float(np.dot(end - start, unit_approach))
 
-        # The vehicle must be moving from the pre-stop side toward the stop zone.
-        if travel * expected_delta <= 0:
-            return False
+        return progress >= self.APPROACH_MIN_PROGRESS_PX
 
-        zone_coords = [float(point[axis]) for point in self.stop_zone]
-        if expected_delta < 0:
-            approach_edge = max(zone_coords)
-            return max(coords) >= approach_edge - self.LATE_PRE_STOP_APPROACH_MARGIN_PX
-
-        approach_edge = min(zone_coords)
-        return min(coords) <= approach_edge + self.LATE_PRE_STOP_APPROACH_MARGIN_PX
+    def _has_pre_stop_approach(self, car: Car, car_polygon: np.ndarray, in_stop_zone: bool) -> bool:
+        crossed_pre_stop_line = self._polygon_crosses_line(car_polygon, self.pre_stop_line_proc)
+        if crossed_pre_stop_line and not in_stop_zone:
+            return True
+        return self._trajectory_approaches_stop_zone(car, in_stop_zone)
 
     def _update_stop_duration(self, car: Car, timestamp: float, prev_timestamp: float) -> None:
         if car.state.raw_speed <= self.stop_speed_threshold:
@@ -674,20 +661,11 @@ class StopDetector:
 
         car_polygon = self._get_car_polygon(car.state.bbox)
 
-        crossed_pre_stop_line = self._polygon_crosses_line(car_polygon, self.pre_stop_line_proc)
-
         # Check if car is in stop zone
         in_stop_zone = self._check_polygon_intersection(car_polygon, self.stop_zone)
 
-        # Update pre-stop zone flag only if not already in stop zone
-        if crossed_pre_stop_line and not in_stop_zone and not car.state.zone.passed_pre_stop:
+        if not car.state.zone.passed_pre_stop and self._has_pre_stop_approach(car, car_polygon, in_stop_zone):
             car.state.zone.passed_pre_stop = True
-        elif not car.state.zone.passed_pre_stop and self._should_recover_late_pre_stop(car, in_stop_zone):
-            car.state.zone.passed_pre_stop = True
-            logger.info(
-                "Recovered late pre-stop crossing for Car %s from recent trajectory near stop zone",
-                car.id,
-            )
 
         # Check if car crosses the capture line (only capture if pre-stop line was crossed first)
         # This ensures we only capture cars going the correct direction (right-to-left)
