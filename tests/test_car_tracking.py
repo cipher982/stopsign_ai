@@ -76,6 +76,24 @@ class TestCar:
 
         assert len(car.state.track) == 5
 
+    def test_track_history_is_time_bounded(self, mock_config):
+        """Long-lived parked cars should not accumulate unbounded trajectory history."""
+        car = Car(id=1, config=mock_config)
+        car.TRACK_WINDOW_SECONDS = 1.0
+        base_time = time.time()
+
+        for i in range(30):
+            car.update(
+                location=(100.0, 100.0),
+                timestamp=base_time + i * 0.1,
+                bbox=(90.0, 95.0, 110.0, 105.0),
+            )
+
+        earliest_ts = car.state.track[0][1]
+        latest_ts = car.state.track[-1][1]
+        assert earliest_ts >= latest_ts - car.TRACK_WINDOW_SECONDS
+        assert len(car.state.track) < 30
+
     def test_velocity_calculation_after_multiple_updates(self, mock_config):
         """Test that velocity is calculated from position history."""
         car = Car(id=1, config=mock_config)
@@ -90,10 +108,26 @@ class TestCar:
             )
 
         # Velocity magnitude should be approximately 150 px/s
-        # Sign may vary based on velocity calculation internals
         vx, vy = car.state.velocity
-        assert abs(vx) == pytest.approx(150.0, rel=0.5)  # 50% tolerance for Kalman smoothing
+        assert vx == pytest.approx(150.0, rel=0.5)  # 50% tolerance for Kalman smoothing
         assert abs(vy) < 50  # Should be close to zero
+
+    def test_duplicate_timestamps_do_not_create_invalid_velocity(self, mock_config):
+        """Duplicate timestamps should not produce NaN or infinite velocity."""
+        car = Car(id=1, config=mock_config)
+        base_time = time.time()
+
+        for i in range(5):
+            car.update(
+                location=(100.0 + i * 10, 100.0),
+                timestamp=base_time,
+                bbox=(90.0, 95.0, 110.0, 105.0),
+            )
+
+        vx, vy = car.state.velocity
+        assert np.isfinite(vx)
+        assert np.isfinite(vy)
+        assert np.isfinite(car.state.speed)
 
 
 class TestCarInterpolation:

@@ -77,6 +77,12 @@ class CarState:
 
 
 class Car:
+    TRACK_WINDOW_SECONDS = 120.0
+    SPEED_HISTORY_POINTS = 10
+    RAW_SPEED_HISTORY_POINTS = 6
+    # 10-minute sliding window for samples (bounds memory for long-lived cars)
+    SAMPLE_WINDOW_SECONDS = 600.0
+
     def __init__(self, id: int, config: Config):
         self.id = id
         self.state = CarState()
@@ -95,15 +101,12 @@ class Car:
         """
         prev_timestamp = self.state.last_update_time
         self._update_location(location, timestamp)
-        self._update_speed(timestamp)
+        self._update_speed()
         self._update_movement_status()
         self._update_parked_status()
         self.state.bbox = bbox
         self._record_sample(timestamp)
         return prev_timestamp
-
-    # 10-minute sliding window for samples (bounds memory for long-lived cars)
-    SAMPLE_WINDOW_SECONDS = 600.0
 
     def _record_sample(self, timestamp: float) -> None:
         x, y = self.state.location
@@ -134,33 +137,62 @@ class Car:
         smoothed_location = self.kalman_filter.update(np.array(location))
         self.state.location = (float(smoothed_location[0]), float(smoothed_location[1]))
         self.state.track.append((self.state.location, timestamp))
+        self._trim_track(timestamp)
         self.state.last_update_time = timestamp
 
-    def _update_speed(self, current_timestamp: float) -> None:
+    def _trim_track(self, timestamp: float) -> None:
+        cutoff = timestamp - self.TRACK_WINDOW_SECONDS
+        drop_count = 0
+        for _, sample_ts in self.state.track:
+            if sample_ts >= cutoff:
+                break
+            drop_count += 1
+        if drop_count:
+            del self.state.track[:drop_count]
+
+    @staticmethod
+    def _velocities_from_track(track: List[Tuple[Point, float]]) -> np.ndarray:
+        if len(track) < 2:
+            return np.empty((0, 2), dtype=float)
+
+        positions = np.array([pos for pos, _ in track], dtype=float)
+        times = np.array([ts for _, ts in track], dtype=float)
+        dt = np.diff(times)
+        valid = dt > 1e-6
+        if not np.any(valid):
+            return np.empty((0, 2), dtype=float)
+
+        deltas = np.diff(positions, axis=0)
+        return deltas[valid] / dt[valid, np.newaxis]
+
+    def _update_speed(self) -> None:
         """Calculate and update the car's velocity, raw speed, and smoothed speed."""
-        history_length = min(len(self.state.track), 10)
+        history_length = min(len(self.state.track), self.SPEED_HISTORY_POINTS)
         if history_length > 2:
             recent_track = self.state.track[-history_length:]
-            time_diffs = [current_timestamp - t for _, t in recent_track]
-            positions = np.array([pos for pos, _ in recent_track])
+            velocities = self._velocities_from_track(recent_track)
+            if len(velocities) == 0:
+                self.state.velocity = (0.0, 0.0)
+                self.state.speed = 0.0
+                self.state.raw_speed = 0.0
+            else:
+                median_velocity = np.median(velocities, axis=0)
 
-            # Calculate velocity vector
-            velocities = np.diff(positions, axis=0) / np.diff(time_diffs)[:, np.newaxis]
-            median_velocity = np.median(velocities, axis=0)
+                self.state.velocity = (float(median_velocity[0]), float(median_velocity[1]))
+                self.state.speed = float(np.linalg.norm(median_velocity))
 
-            self.state.velocity = (float(median_velocity[0]), float(median_velocity[1]))
-            self.state.speed = float(np.linalg.norm(median_velocity))
+                # Calculate raw speed using the last 6 frames (median filters bbox jitter)
+                if history_length >= self.RAW_SPEED_HISTORY_POINTS:
+                    raw_track = self.state.track[-self.RAW_SPEED_HISTORY_POINTS :]
+                    raw_velocities = self._velocities_from_track(raw_track)
+                    if len(raw_velocities) == 0:
+                        raw_speed = 0.0
+                    else:
+                        raw_speed = float(np.median(np.linalg.norm(raw_velocities, axis=1)))
 
-            # Calculate raw speed using the last 6 frames (median filters bbox jitter)
-            if history_length >= 6:
-                last_n_positions = positions[-6:]
-                last_n_times = time_diffs[-6:]
-                raw_velocities = np.diff(last_n_positions, axis=0) / np.diff(last_n_times)[:, np.newaxis]
-                raw_speed = float(np.median(np.linalg.norm(raw_velocities, axis=1)))
-
-                # Apply light smoothing to raw speed
-                raw_alpha = 0.5
-                self.state.raw_speed = raw_alpha * raw_speed + (1 - raw_alpha) * self.state.raw_speed
+                    # Apply light smoothing to raw speed
+                    raw_alpha = 0.5
+                    self.state.raw_speed = raw_alpha * raw_speed + (1 - raw_alpha) * self.state.raw_speed
         else:
             self.state.velocity = (0.0, 0.0)
             self.state.speed = 0.0
@@ -188,32 +220,19 @@ class Car:
             self.state.motion.stationary_since = 0.0
 
     def get_direction(self) -> float:
-        """Calculate the direction based on recent trajectory using linear regression."""
-        history_length = min(len(self.state.track), 10)
+        """Calculate horizontal direction from recent trajectory."""
+        history_length = min(len(self.state.track), self.SPEED_HISTORY_POINTS)
         if history_length > 2:
             recent_track = self.state.track[-history_length:]
-            positions = np.array([pos for pos, _ in recent_track])
+            velocities = self._velocities_from_track(recent_track)
+            if len(velocities) == 0:
+                return 0.0
 
-            # Use linear regression to find the best fit line
-            x = positions[:, 0]
-            y = positions[:, 1]
-            A = np.vstack([x, np.ones(len(x))]).T
-            m, _ = np.linalg.lstsq(A, y, rcond=None)[0]
-
-            # Determine the direction of movement along X
-            dx_total = x[-1] - x[0]
-            sign_dx = np.sign(dx_total) if dx_total != 0 else 1.0
-
-            # Calculate unit direction vector from the slope
-            dx = sign_dx / np.sqrt(1 + m**2)
-            dy = (m * sign_dx) / np.sqrt(1 + m**2)
-
-            # Calculate total movement
-            total_movement = abs(dx) + abs(dy)
+            vx, vy = np.median(velocities, axis=0)
+            total_movement = abs(vx) + abs(vy)
 
             if total_movement > 0:
-                # Calculate direction value
-                return dx / total_movement
+                return float(vx / total_movement)
             else:
                 return 0.0
         else:
