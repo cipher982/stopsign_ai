@@ -791,6 +791,14 @@ class StopDetector:
 
                 # Save data to the database
                 stream_queue_depth_exit, stream_lag_est_sec = self._estimate_stream_lag_at_exit()
+                raw_payload = None
+                sample_count = 0
+                try:
+                    raw_payload = self._build_raw_payload(car)
+                    sample_count = len(car.state.samples)
+                except Exception as e:
+                    logger.error("Failed to build raw payload for car_id=%s: %s", car.id, e)
+
                 pass_id = self.db.add_vehicle_pass(
                     vehicle_id=car.id,
                     time_in_zone=car.state.zone.time_in_zone,
@@ -806,21 +814,12 @@ class StopDetector:
                     stop_pos_y=stop_pos_y,
                     stream_queue_depth_exit=stream_queue_depth_exit,
                     stream_lag_est_sec=stream_lag_est_sec,
+                    raw_payload=raw_payload,
+                    sample_count=sample_count,
+                    raw_complete=raw_payload.get("raw_complete", False) if raw_payload else False,
                 )
-                if pass_id is not None:
-                    try:
-                        raw_payload = self._build_raw_payload(car)
-                        sample_count = len(car.state.samples)
-                        saved = self.db.save_vehicle_pass_raw(
-                            vehicle_pass_id=pass_id,
-                            raw_payload=raw_payload,
-                            sample_count=sample_count,
-                            raw_complete=True,
-                        )
-                        if not saved:
-                            logger.warning("Failed to persist raw payload for pass_id=%s", pass_id)
-                    except Exception as e:
-                        logger.error("Failed to build/save raw payload for pass_id=%s: %s", pass_id, e)
+                if pass_id is None:
+                    logger.warning("Failed to persist vehicle pass for car_id=%s", car.id)
                 logger.info(
                     f"Vehicle pass recorded: ID={car.id}, "
                     f"Time in zone={car.state.zone.time_in_zone:.2f}s, "

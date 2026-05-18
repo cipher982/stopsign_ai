@@ -267,6 +267,9 @@ class Database:
         stop_pos_y: float | None = None,
         stream_queue_depth_exit: int | None = None,
         stream_lag_est_sec: float | None = None,
+        raw_payload: dict | None = None,
+        sample_count: int = 0,
+        raw_complete: bool = True,
     ):
         if self.read_only_mode:
             logger.debug("🚫 Blocked add_vehicle_pass (READ-ONLY MODE)")
@@ -290,8 +293,21 @@ class Database:
                 stream_lag_est_sec=stream_lag_est_sec,
             )
             session.add(vehicle_pass)
+            session.flush()
+            pass_id = vehicle_pass.id
+
+            if raw_payload is not None:
+                session.add(
+                    VehiclePassRaw(
+                        vehicle_pass_id=pass_id,
+                        raw_payload=raw_payload,
+                        sample_count=sample_count,
+                        raw_complete=raw_complete,
+                    )
+                )
+
             session.commit()
-            return vehicle_pass.id
+            return pass_id
 
     @log_execution_time
     def save_vehicle_pass_raw(

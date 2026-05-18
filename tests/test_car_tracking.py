@@ -661,6 +661,11 @@ class TestLatePreStopRecovery:
             detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + (idx - 1) * 0.1)
 
         assert mock_database.add_vehicle_pass.called
+        _, kwargs = mock_database.add_vehicle_pass.call_args
+        assert kwargs["raw_payload"]["raw_complete"] is True
+        assert kwargs["raw_complete"] is True
+        assert kwargs["sample_count"] == len(kwargs["raw_payload"]["samples"])
+        assert not mock_database.save_vehicle_pass_raw.called
 
     def test_parked_jitter_in_zone_does_not_recover_pre_stop(self, mock_config, mock_database):
         detector = self._make_detector(mock_config, mock_database)
