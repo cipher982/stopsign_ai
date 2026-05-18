@@ -90,8 +90,8 @@ Camera (WiFi) → RTSP → rtsp_to_redis → Redis → ffmpeg_service → HLS fi
 **PostgreSQL is host-level on clifford, NOT in a container.** The postgres containers visible via `docker ps` on clifford are for traccar and umami — not stopsign. Do not use them.
 
 ```bash
-# Get credentials from the running web_server container on cube
-ssh cube 'docker exec $(docker ps --format "{{.Names}}" | grep web_server) sh -c "echo \$DB_URL"'
+# Get credentials from Infisical; DB_URL is injected into the app process and is not visible via docker exec env
+python3 ~/git/me/scripts/infisical-get.py DB_URL --project-id 9c373776-768f-454b-a7b3-d1cc40deb475 --env prod
 # Returns: postgresql://postgres:<password>@clifford.coin-castor.ts.net:5432/stopsign
 
 # Query directly from local machine (Tailscale required)
