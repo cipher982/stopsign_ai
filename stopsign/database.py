@@ -172,7 +172,7 @@ class Database:
         if self.read_only_mode:
             logger.warning("🔒 DATABASE IN READ-ONLY MODE - All write operations will be blocked")
 
-        logger.info(f"Database connection established at {db_url}")
+        logger.info("Database connection established")
         self._ensure_vehicle_pass_columns()
         self.log_database_summary()
 

@@ -127,7 +127,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.tracer = tracer
 
     def initialize_redis(self):
-        logger.info(f"Attempting to connect to Redis at {self.redis_url}")
+        logger.info("Attempting to connect to Redis")
         try:
             self.redis_client = redis.from_url(self.redis_url, socket_timeout=5)
             self.redis_client.ping()
@@ -157,7 +157,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
             return cap
 
         # Standard RTSP connection logic
-        logger.info(f"Attempting to connect to RTSP at {self.rtsp_url}")
+        logger.info("Attempting to connect to RTSP source")
         max_attempts = 5
         for attempt in range(max_attempts):
             if not self.rtsp_url:

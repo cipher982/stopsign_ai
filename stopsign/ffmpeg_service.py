@@ -354,7 +354,7 @@ def connect_redis_with_backoff(url: str) -> redis.Redis:
             client = redis.from_url(url, socket_timeout=None, socket_connect_timeout=5)
             client.ping()
             status.update_status_metric("redis_connected", True)
-            logger.info("Connected to Redis at %s", url)
+            logger.info("Connected to Redis")
             global REDIS_CLIENT
             REDIS_CLIENT = client
             return client
