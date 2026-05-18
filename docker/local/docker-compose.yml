@@ -65,6 +65,7 @@ services:
       - RTSP_URL=${RTSP_URL}
       - RAW_FRAME_KEY=${RAW_FRAME_KEY}
       - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE}
+      - RTSP_JPEG_QUALITY=${RTSP_JPEG_QUALITY:-85}
       - PROMETHEUS_PORT=${PROMETHEUS_PORT}
     depends_on:
       - redis

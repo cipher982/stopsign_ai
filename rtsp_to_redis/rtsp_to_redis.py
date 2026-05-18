@@ -30,6 +30,7 @@ import subprocess
 import cv2
 import redis
 from redis.exceptions import RedisError
+from stopsign.frame_codec import pack_legacy_jpeg_frame
 from stopsign.freeze_detector import FrameFreezeDetector
 from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
 from stopsign.service_status import RTSPServiceStatusMixin
@@ -78,7 +79,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.prometheus_port = PROMETHEUS_PORT
         self.frame_buffer_size = FRAME_BUFFER_SIZE
         self.fps = 15
-        self.jpeg_quality = 85
+        self.jpeg_quality = max(1, min(100, int(os.getenv("RTSP_JPEG_QUALITY", "85"))))
 
         # Service state
         self.redis_client: Optional[redis.Redis] = None
@@ -179,20 +180,8 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         # Connection status tracked in OpenTelemetry
         raise ValueError("Failed to initialize video capture after multiple attempts")
 
-    # Frame wire format (for RAW_FRAME_KEY)
-    #   magic: 4 bytes 'SSFM' (StopSign Frame Metadata)
-    #   version: 1 byte (currently 1)
-    #   json_len: 4 bytes big-endian unsigned
-    #   json_payload: UTF-8 JSON (e.g., {"ts": 1690000000.123, "w": 1920, "h": 1080})
-    #   jpeg_bytes: remaining bytes (cv2.imencode output)
-    HEADER_MAGIC = b"SSFM"
-    HEADER_VERSION = 1
-
     def _pack_frame(self, jpeg_bytes: bytes, capture_ts: float, width: int, height: int) -> bytes:
-        meta = {"ts": float(capture_ts), "w": int(width), "h": int(height), "src": "rtsp_to_redis"}
-        meta_bytes = json.dumps(meta, separators=(",", ":")).encode("utf-8")
-        header = self.HEADER_MAGIC + bytes([self.HEADER_VERSION]) + len(meta_bytes).to_bytes(4, "big")
-        return header + meta_bytes + jpeg_bytes
+        return pack_legacy_jpeg_frame(jpeg_bytes, capture_ts=capture_ts, width=width, height=height)
 
     def process_frames(self):
         frames_processed = 0
