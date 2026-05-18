@@ -45,7 +45,10 @@ logger = logging.getLogger(__name__)
 def get_env(key: str) -> str:
     value = os.getenv(key)
     assert value is not None, f"{key} is not set"
-    logger.info(f"Loaded env var {key}: {value}")
+    if any(sensitive in key.lower() for sensitive in ["password", "secret", "key", "token", "url"]):
+        logger.info(f"Loaded env var {key}: [REDACTED]")
+    else:
+        logger.info(f"Loaded env var {key}: {value}")
     return value
 
 

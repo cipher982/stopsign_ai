@@ -28,7 +28,7 @@ def get_env(key: str, default: Optional[str] = None, required: bool = True) -> s
         raise ConfigError(f"Required environment variable {key} is not set")
     if value:
         # Don't log sensitive values
-        if any(sensitive in key.lower() for sensitive in ["password", "secret", "key", "token"]):
+        if any(sensitive in key.lower() for sensitive in ["password", "secret", "key", "token", "url"]):
             logger.info(f"Loaded env var {key}: [REDACTED]")
         else:
             logger.info(f"Loaded env var {key}: {value}")
