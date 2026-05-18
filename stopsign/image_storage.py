@@ -1,5 +1,4 @@
 import logging
-import os
 import queue
 import threading
 import time
@@ -26,6 +25,9 @@ logger = logging.getLogger(__name__)
 _upload_queue: queue.Queue = queue.Queue(maxsize=100)
 _worker_started = False
 _worker_lock = threading.Lock()
+_prune_lock = threading.Lock()
+_last_prune_monotonic = 0.0
+PRUNE_INTERVAL_SECONDS = 60.0
 
 
 def _start_upload_worker():
@@ -125,6 +127,33 @@ def _prune_old_images():
         logger.error(f"Error pruning old images: {e}")
 
 
+def _run_prune_worker() -> None:
+    try:
+        _prune_old_images()
+    finally:
+        _prune_lock.release()
+
+
+def _start_prune_worker() -> None:
+    thread = threading.Thread(target=_run_prune_worker, daemon=True)
+    thread.start()
+
+
+def _maybe_prune_old_images(now: Optional[float] = None) -> None:
+    """Rate-limit pruning and keep directory scans out of the capture path."""
+    global _last_prune_monotonic
+
+    now = time.monotonic() if now is None else now
+    if now - _last_prune_monotonic < PRUNE_INTERVAL_SECONDS:
+        return
+
+    if not _prune_lock.acquire(blocking=False):
+        return
+
+    _last_prune_monotonic = now
+    _start_prune_worker()
+
+
 def save_vehicle_image(
     frame: np.ndarray,
     timestamp: float,
@@ -160,13 +189,12 @@ def save_vehicle_image(
 
     local_path = image_dir / filename
 
-    # Save to local filesystem (synchronous, ensure file is fully written)
+    # Save to local filesystem. Closing the file makes the image visible to the
+    # upload worker without blocking the analyzer on a disk fsync.
     try:
         _, img_encoded = cv2.imencode(".jpg", cropped_image)
         with open(local_path, "wb") as f:
             f.write(img_encoded.tobytes())
-            f.flush()
-            os.fsync(f.fileno())  # Ensure data is written to disk
 
         logger.debug(f"Saved vehicle image locally: {filename}")
 
@@ -179,8 +207,7 @@ def save_vehicle_image(
         except queue.Full:
             logger.warning(f"Upload queue full, skipping archive of {filename}")
 
-        # Prune old images to maintain disk space
-        _prune_old_images()
+        _maybe_prune_old_images()
 
         return f"local://{filename}"
 
