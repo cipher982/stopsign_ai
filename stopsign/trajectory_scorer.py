@@ -1,8 +1,7 @@
 """Completed-trajectory scoring for stop-sign passes.
 
 This module is deliberately pure: it reads recorded bbox samples and geometry
-and returns what it would have decided. The online detector can run it in
-shadow mode without changing pass-recording behavior.
+and returns the pass decision and metrics for the online detector.
 """
 
 from __future__ import annotations
@@ -24,6 +23,8 @@ class TrajectoryScore:
     time_in_zone: float = 0.0
     min_speed: float | None = None
     stop_duration: float = 0.0
+    entry_time: float = 0.0
+    exit_time: float = 0.0
     approach_progress: float = 0.0
     zone_sample_count: int = 0
 
@@ -150,12 +151,18 @@ def score_samples(
 
     start_idx, end_idx = interval
     zone_samples = parsed[start_idx : end_idx + 1]
-    time_in_zone = max(0.0, parsed[end_idx].t - parsed[start_idx].t)
+    entry_time = parsed[start_idx].t
+    exit_time = parsed[end_idx].t
+    time_in_zone = max(0.0, exit_time - entry_time)
 
     if time_in_zone < min_zone_time_sec:
-        return TrajectoryScore(False, "zone_too_short", time_in_zone=time_in_zone)
+        return TrajectoryScore(
+            False, "zone_too_short", time_in_zone=time_in_zone, entry_time=entry_time, exit_time=exit_time
+        )
     if time_in_zone > max_zone_time_sec:
-        return TrajectoryScore(False, "zone_timeout", time_in_zone=time_in_zone)
+        return TrajectoryScore(
+            False, "zone_timeout", time_in_zone=time_in_zone, entry_time=entry_time, exit_time=exit_time
+        )
 
     stop_center = np.mean(stop_zone, axis=0)
     pre_stop_center = np.mean(pre_stop_line, axis=0)
@@ -175,6 +182,8 @@ def score_samples(
             False,
             "insufficient_progress",
             time_in_zone=time_in_zone,
+            entry_time=entry_time,
+            exit_time=exit_time,
             approach_progress=approach_progress,
             zone_sample_count=len(zone_samples),
         )
@@ -194,6 +203,8 @@ def score_samples(
         time_in_zone=time_in_zone,
         min_speed=min_speed,
         stop_duration=stop_duration,
+        entry_time=entry_time,
+        exit_time=exit_time,
         approach_progress=approach_progress,
         zone_sample_count=len(zone_samples),
     )

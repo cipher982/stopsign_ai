@@ -35,6 +35,8 @@ def test_scores_completed_approach_pass():
     assert score.would_record_pass is True
     assert score.reason == "pass"
     assert score.time_in_zone == pytest.approx(0.5)
+    assert score.entry_time == pytest.approx(1000.1)
+    assert score.exit_time == pytest.approx(1000.6)
     assert score.min_speed is not None
     assert score.stop_duration > 0
     assert score.approach_progress > 20.0

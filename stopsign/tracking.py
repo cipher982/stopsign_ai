@@ -1,6 +1,5 @@
 import logging
 import math
-import os
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -18,7 +17,6 @@ from stopsign.image_storage import save_vehicle_image
 from stopsign.kalman_filter import KalmanFilterWrapper
 from stopsign.settings import PROCESSED_FRAME_KEY
 from stopsign.trajectory_scorer import TrajectoryScore
-from stopsign.trajectory_scorer import score_raw_payload
 from stopsign.trajectory_scorer import score_samples
 
 Point = Tuple[float, float]
@@ -377,14 +375,6 @@ class StopDetector:
         self.out_zone_time_threshold = getattr(config, "out_zone_time_threshold", 0.2)
         self.stop_speed_threshold = config.stop_speed_threshold
         self._video_analyzer = None  # Will be set by video analyzer
-        self.trajectory_shadow_enabled = os.getenv("TRAJECTORY_SHADOW_MODE", "true").lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        self._trajectory_shadow_logged_car_ids: set[int] = set()
-        self._trajectory_shadow_last_score_ts: dict[int, float] = {}
 
         # Initialize tracer once for better performance
         from stopsign.telemetry import get_tracer
@@ -650,65 +640,14 @@ class StopDetector:
             min_approach_progress_px=self.APPROACH_MIN_PROGRESS_PX,
         )
 
-    def _log_trajectory_shadow_candidate(self, car: Car) -> None:
-        """Log cases where completed-trajectory scoring would recover a pass."""
-        if not self.trajectory_shadow_enabled:
-            return
-        if car.id in self._trajectory_shadow_logged_car_ids:
-            return
-        if car.state.zone.passed_pre_stop:
-            return
-        last_score_ts = self._trajectory_shadow_last_score_ts.get(car.id, 0.0)
-        if car.state.last_update_time - last_score_ts < 1.0:
-            return
-
-        self._trajectory_shadow_last_score_ts[car.id] = car.state.last_update_time
-        score = self._score_current_trajectory(car, samples=car.state.samples[-180:])
-        if not score.would_record_pass:
-            return
-
-        self._trajectory_shadow_logged_car_ids.add(car.id)
-        logger.info(
-            "Trajectory shadow candidate: car_id=%s time_in_zone=%.2fs min_speed=%s "
-            "stop_duration=%.2fs progress=%.1fpx samples=%d",
-            car.id,
-            score.time_in_zone,
-            f"{score.min_speed:.2f}" if score.min_speed is not None else "n/a",
-            score.stop_duration,
-            score.approach_progress,
-            score.zone_sample_count,
-        )
-
-    def _log_completed_trajectory_shadow(self, car: Car, raw_payload: dict) -> None:
-        if not self.trajectory_shadow_enabled:
-            return
-
-        score = score_raw_payload(
-            raw_payload,
-            min_approach_progress_px=self.APPROACH_MIN_PROGRESS_PX,
-        )
-        if not score.would_record_pass:
-            logger.warning(
-                "Trajectory shadow mismatch for recorded pass: car_id=%s reason=%s "
-                "time_in_zone=%.2fs progress=%.1fpx samples=%d",
-                car.id,
-                score.reason,
-                score.time_in_zone,
-                score.approach_progress,
-                score.zone_sample_count,
-            )
-            return
-
-        logger.debug(
-            "Trajectory shadow matched recorded pass: car_id=%s time_in_zone=%.2fs "
-            "min_speed=%s stop_duration=%.2fs progress=%.1fpx samples=%d",
-            car.id,
-            score.time_in_zone,
-            f"{score.min_speed:.2f}" if score.min_speed is not None else "n/a",
-            score.stop_duration,
-            score.approach_progress,
-            score.zone_sample_count,
-        )
+    @staticmethod
+    def _apply_trajectory_score(car: Car, score: TrajectoryScore) -> None:
+        car.state.zone.entry_time = score.entry_time
+        car.state.zone.exit_time = score.exit_time
+        car.state.zone.time_in_zone = score.time_in_zone
+        car.state.zone.stop_duration = score.stop_duration
+        if score.min_speed is not None:
+            car.state.zone.min_speed = score.min_speed
 
     def _update_stop_duration(self, car: Car, timestamp: float, prev_timestamp: float) -> None:
         if car.state.raw_speed <= self.stop_speed_threshold:
@@ -763,11 +702,6 @@ class StopDetector:
         ):
             self.capture_car_image(car, timestamp, frame)
 
-        # Only proceed with stop zone logic if pre-stop zone was passed
-        if not car.state.zone.passed_pre_stop:
-            self._log_trajectory_shadow_candidate(car)
-            return
-
         # Update consecutive frame counters and time-based debounce timestamps
         if in_stop_zone:
             car.state.zone.consecutive_in_frames += 1
@@ -813,6 +747,21 @@ class StopDetector:
                 car.state.zone.time_in_zone = car.state.zone.exit_time - car.state.zone.entry_time
                 logger.debug(f"Car {car.id} has exited the stop zone at {timestamp}")
 
+                trajectory_score = self._score_current_trajectory(car)
+                if not trajectory_score.would_record_pass:
+                    logger.info(
+                        "Trajectory scorer skipped car_id=%s reason=%s time_in_zone=%.2fs progress=%.1fpx samples=%d",
+                        car.id,
+                        trajectory_score.reason,
+                        trajectory_score.time_in_zone,
+                        trajectory_score.approach_progress,
+                        trajectory_score.zone_sample_count,
+                    )
+                    self._reset_car_state(car)
+                    return
+
+                self._apply_trajectory_score(car, trajectory_score)
+
                 # Emit business telemetry for completed vehicle pass
                 try:
                     with self._tracer.start_as_current_span("vehicle_pass_completed") as span:
@@ -828,7 +777,9 @@ class StopDetector:
 
                 # Compute robust min speed from collected samples (5th percentile)
                 samples = car.state.zone.speed_samples
-                if len(samples) >= 3:
+                if trajectory_score.min_speed is not None:
+                    car.state.zone.min_speed = trajectory_score.min_speed
+                elif len(samples) >= 3:
                     car.state.zone.min_speed = float(np.percentile(samples, 5))
                 elif samples:
                     car.state.zone.min_speed = min(samples)
@@ -856,13 +807,15 @@ class StopDetector:
                     track_quality = float(min(1.0, len(samples) / expected))
 
                 # Save data to the database
+                if not car.state.capture.image_captured:
+                    self.capture_car_image(car, timestamp, frame)
+
                 stream_queue_depth_exit, stream_lag_est_sec = self._estimate_stream_lag_at_exit()
                 raw_payload = None
                 sample_count = 0
                 try:
                     raw_payload = self._build_raw_payload(car)
                     sample_count = len(car.state.samples)
-                    self._log_completed_trajectory_shadow(car, raw_payload)
                 except Exception as e:
                     logger.error("Failed to build raw payload for car_id=%s: %s", car.id, e)
 
@@ -915,8 +868,6 @@ class StopDetector:
         car.state.capture = CaptureState()
         car.state.motion = MotionState()
         car.state.samples = []
-        self._trajectory_shadow_logged_car_ids.discard(car.id)
-        self._trajectory_shadow_last_score_ts.pop(car.id, None)
         logger.debug(f"Reset state for Car {car.id}")
 
     def is_in_capture_zone(self, bbox: Tuple[float, float, float, float]) -> bool:
