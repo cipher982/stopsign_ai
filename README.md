@@ -71,7 +71,7 @@ graph LR
 Service | Purpose | Code | Docker image (local)
 ---|---|---|---
 RTSP → Redis | Grabs frames from an RTSP feed (or sample .mp4) and publishes JPEGs to Redis with SSFM frame headers containing capture timestamps | `rtsp_to_redis/rtsp_to_redis.py` | `Dockerfile.rtsp.local`
-Video Analyzer | YOLO11 inference + object tracking + stop-sign logic. Uses capture timestamps for accurate timing. Stores metadata in Postgres and images in MinIO. Publishes annotated frames. | `stopsign/video_analyzer.py` | `Dockerfile.processor.local`
+Video Analyzer | YOLO11 inference + object tracking + stop-sign logic. Uses capture timestamps for accurate timing. Stores metadata in Postgres and images in MinIO. Publishes self-describing annotated BGR frames. | `stopsign/video_analyzer.py` | `Dockerfile.processor.local`
 FFmpeg Service | Converts annotated frames → HLS stream (m3u8 + .ts) with Redis resilience and auto-recovery watchdog | `stopsign/ffmpeg_service.py` | `Dockerfile.ffmpeg.local`
 Web Server | Simple FastAPI + FastHTML UI that shows the live stream & recent violations | `stopsign/web_server.py` | `Dockerfile.web.local`
 Infrastructure | Redis, Postgres, MinIO (+ console) | Official upstream images | –
@@ -81,7 +81,7 @@ All of the above are declared in `docker/local/docker-compose.yml` and wired tog
 ### Queue Semantics & Backlog Policy
 
 - Raw → Analyzer: `LPUSH` (producer) + `BRPOP` (consumer) on `RAW_FRAME_KEY` = FIFO; buffer bounded via `LTRIM`.
-- Analyzer → FFmpeg: `LPUSH` + `BRPOP` on `PROCESSED_FRAME_KEY` = FIFO.
+- Analyzer → FFmpeg: `LPUSH` + `BRPOP` on `PROCESSED_FRAME_KEY` = FIFO. Processed frames use the `SSF2` envelope so dimensions travel with the frame; FFmpeg still accepts legacy raw BGR bytes during migration.
 - Catch‑up policy: if a raw frame’s capture timestamp is older than `ANALYZER_CATCHUP_SEC`, trim RAW to last `ANALYZER_CATCHUP_KEEP_N` frames to jump back to near‑live.
 
 ---
@@ -145,15 +145,21 @@ docker exec <container> cp /app/config.example.yaml /app/config/config.yaml
 
 ## 4. Frame Format & Timestamp Accuracy
 
-### SSFM Wire Format
+### Frame Wire Formats
 
-The pipeline uses a custom SSFM (StopSign Frame Message) format to ensure timestamp accuracy throughout the video processing chain:
+The pipeline uses compact frame headers so timestamps and dimensions travel with frame bytes:
 
-**Frame Structure:**
-- Bytes 0-3: `b'SSFM'` (magic header)
+**Legacy raw input structure:**
+- Bytes 0-3: `b'SSFM'` (magic header for RTSP JPEG frames)
 - Byte 4: Version (currently `1`)
 - Bytes 5-8: Big-endian uint32 JSON metadata length
 - Bytes 9+: JSON metadata + JPEG frame data
+
+**Processed-frame structure:**
+- Bytes 0-3: `b'SSF2'` (self-describing frame envelope)
+- Byte 4: Version (currently `1`)
+- Bytes 5-8: Big-endian uint32 JSON metadata length
+- Bytes 9+: JSON metadata + BGR24 frame bytes
 
 **JSON Metadata:**
 ```json

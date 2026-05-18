@@ -12,6 +12,7 @@ from http.server import HTTPServer
 import redis
 from redis import exceptions as redis_exceptions
 
+from stopsign.frame_codec import unpack_frame
 from stopsign.hls_health import parse_hls_playlist
 from stopsign.service_status import FFmpegServiceStatusMixin
 from stopsign.settings import GRACE_STARTUP_SEC
@@ -312,7 +313,34 @@ def get_frame_shape(r: redis.Redis) -> tuple[int, int] | None:
                     return (width, height)
             except Exception as e:
                 logger.warning("Failed to parse processed frame shape: %s", e)
+
+        frame_data = r.lindex(PROCESSED_FRAME_KEY, 0)
+        if frame_data:
+            decoded = unpack_frame(frame_data)
+            if decoded is not None:
+                try:
+                    width = int(decoded.metadata.get("width", 0))
+                    height = int(decoded.metadata.get("height", 0))
+                    if width > 0 and height > 0:
+                        return (width, height)
+                except Exception as e:
+                    logger.warning("Failed to parse processed frame envelope shape: %s", e)
         time.sleep(0.5)
+
+
+def decode_processed_frame(data: bytes) -> tuple[bytes, tuple[int, int] | None]:
+    """Return raw BGR bytes and optional (width, height) from either queue format."""
+    decoded = unpack_frame(data)
+    if decoded is None:
+        return data, None
+
+    try:
+        width = int(decoded.metadata.get("width", 0))
+        height = int(decoded.metadata.get("height", 0))
+        shape = (width, height) if width > 0 and height > 0 else None
+    except Exception:
+        shape = None
+    return decoded.payload, shape
 
 
 def connect_redis_with_backoff(url: str) -> redis.Redis:
@@ -501,14 +529,32 @@ def main():
 
             if task:
                 _, data = task
-                if len(data) != expected_frame_bytes:
+                frame_bytes, envelope_shape = decode_processed_frame(data)
+                if envelope_shape is not None and envelope_shape != frame_shape:
+                    logger.warning(
+                        "Processed frame shape changed (got %s, expected %s); restarting ffmpeg",
+                        envelope_shape,
+                        frame_shape,
+                    )
+                    if ffmpeg_process and ffmpeg_process.stdin:
+                        ffmpeg_process.stdin.close()
+                    if ffmpeg_process:
+                        ffmpeg_process.terminate()
+                        ffmpeg_process.wait()
+                    frame_shape = envelope_shape
+                    expected_frame_bytes = frame_shape[0] * frame_shape[1] * 3
+                    ffmpeg_process = start_ffmpeg_process(frame_shape)
+                    last_raw_frame = None
+                    continue
+
+                if len(frame_bytes) != expected_frame_bytes:
                     logger.warning(
                         "Processed frame size mismatch (got %d bytes, expected %d)",
-                        len(data),
+                        len(frame_bytes),
                         expected_frame_bytes,
                     )
                 else:
-                    last_raw_frame = data
+                    last_raw_frame = frame_bytes
                     new_frame_count += 1
                     if FFMPEG_POP_MODE == "latest":
                         # Keep only a tiny backlog so stream time tracks capture time.

@@ -36,6 +36,10 @@ except ImportError:
 from stopsign.config import Config
 from stopsign.coordinate_transform import Resolution
 from stopsign.database import Database
+from stopsign.frame_codec import HEADER_MIN_LEN
+from stopsign.frame_codec import LEGACY_MAGIC
+from stopsign.frame_codec import pack_frame
+from stopsign.frame_codec import unpack_frame
 from stopsign.service_status import VideoAnalyzerStatusMixin
 from stopsign.settings import DB_URL
 from stopsign.settings import FRAME_METADATA_KEY
@@ -69,14 +73,8 @@ ANALYZER_CATCHUP_KEEP_N = int(os.getenv("ANALYZER_CATCHUP_KEEP_N", "30"))  # kee
 ANALYZER_HEALTH_PORT = int(os.getenv("ANALYZER_HEALTH_PORT", "8081"))
 ANALYZER_STALL_SEC = float(os.getenv("ANALYZER_STALL_SEC", "120"))
 
-# RAW frame wire format header (when produced by rtsp_to_redis)
-#   magic: 4 bytes 'SSFM'
-#   version: 1 byte (1)
-#   json_len: 4 bytes big-endian length
-#   json: UTF-8 JSON (at least {"ts": <float>})
-#   jpeg: remaining bytes
-RAW_HEADER_MAGIC = b"SSFM"
-RAW_HEADER_MIN_LEN = 9  # 4 + 1 + 4
+RAW_HEADER_MAGIC = LEGACY_MAGIC
+RAW_HEADER_MIN_LEN = HEADER_MIN_LEN
 
 
 class VideoAnalyzer(VideoAnalyzerStatusMixin):
@@ -300,31 +298,16 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         Returns (frame, capture_ts). If header missing/invalid, returns (frame, None).
         """
-        capture_ts: Optional[float] = None
-        jpeg_bytes = data
-        try:
-            if len(data) >= RAW_HEADER_MIN_LEN and data[0:4] == RAW_HEADER_MAGIC:
-                _version = data[4]
-                meta_len = int.from_bytes(data[5:9], "big")
-                meta_start = 9
-                meta_end = meta_start + meta_len
-                if 0 <= meta_len <= len(data) - meta_start:
-                    meta_bytes = data[meta_start:meta_end]
-                    meta = json.loads(meta_bytes.decode("utf-8"))
-                    if isinstance(meta, dict) and "ts" in meta:
-                        capture_ts = float(meta.get("ts"))
-                        jpeg_bytes = data[meta_end:]
-                    else:
-                        # Missing required ts field -> invalid
-                        return None, None
-                else:
-                    return None, None
-            else:
-                return None, None
-        except Exception:
+        decoded = unpack_frame(data)
+        if decoded is None:
             return None, None
 
-        nparr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+        try:
+            capture_ts = float(decoded.metadata["ts"])
+        except (KeyError, TypeError, ValueError):
+            return None, None
+
+        nparr = np.frombuffer(decoded.payload, dtype=np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         return frame, capture_ts
 
@@ -955,16 +938,23 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         if frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3:
             raise ValueError("Frame must be in BGR24 format (3-channel uint8 numpy array)")
 
-        # Store raw BGR bytes to avoid JPEG encode/decode overhead
-        raw_frame_data = frame.tobytes()
         frame_height, frame_width = frame.shape[:2]
         shape_payload = json.dumps({"width": frame_width, "height": frame_height, "format": "raw"})
+        frame_metadata = {
+            "format": "bgr24",
+            "width": frame_width,
+            "height": frame_height,
+            "channels": 3,
+            "ts": float(metadata.get("capture_timestamp", time.time())) if metadata else time.time(),
+            "src": "video_analyzer",
+        }
+        frame_data = pack_frame(frame.tobytes(), frame_metadata)
 
         start_time = time.time()
         pipeline = self.redis_client.pipeline()
 
         # Store processed frame data
-        pipeline.lpush(PROCESSED_FRAME_KEY, raw_frame_data)
+        pipeline.lpush(PROCESSED_FRAME_KEY, frame_data)
         pipeline.ltrim(PROCESSED_FRAME_KEY, 0, self.frame_buffer_size - 1)
 
         # Store latest processed frame shape (used by ffmpeg_service)

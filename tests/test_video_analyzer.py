@@ -6,6 +6,7 @@ introduced to decouple AI inference from video output.
 
 from unittest.mock import MagicMock
 
+import cv2
 import numpy as np
 import pytest
 
@@ -248,3 +249,48 @@ class TestRawDimensionSetup:
 
         analyzer._update_coordinate_system.assert_not_called()
         analyzer.stop_detector.set_video_analyzer.assert_not_called()
+
+
+class TestFrameEnvelopeHandling:
+    def test_parse_raw_frame_accepts_legacy_jpeg_envelope(self):
+        from stopsign.frame_codec import pack_legacy_jpeg_frame
+        from stopsign.video_analyzer import VideoAnalyzer
+
+        frame = np.zeros((20, 30, 3), dtype=np.uint8)
+        frame[:, :, 1] = 255
+        ok, jpeg = cv2.imencode(".jpg", frame)
+        assert ok
+
+        analyzer = VideoAnalyzer.__new__(VideoAnalyzer)
+        decoded, capture_ts = analyzer._parse_raw_frame(
+            pack_legacy_jpeg_frame(jpeg.tobytes(), capture_ts=123.45, width=30, height=20)
+        )
+
+        assert capture_ts == pytest.approx(123.45)
+        assert decoded is not None
+        assert decoded.shape == frame.shape
+
+    def test_store_frame_data_writes_self_describing_processed_frame(self):
+        from stopsign.frame_codec import unpack_frame
+        from stopsign.video_analyzer import VideoAnalyzer
+
+        pipeline = MagicMock()
+        redis_client = MagicMock()
+        redis_client.pipeline.return_value = pipeline
+        analyzer = VideoAnalyzer.__new__(VideoAnalyzer)
+        analyzer.redis_client = redis_client
+        analyzer.frame_buffer_size = 10
+        analyzer.frame_count = 5
+        analyzer.redis_op_latency = MagicMock()
+
+        frame = np.zeros((20, 30, 3), dtype=np.uint8)
+        analyzer.store_frame_data(frame, {"capture_timestamp": 123.45})
+
+        pushed = pipeline.lpush.call_args.args[1]
+        decoded = unpack_frame(pushed)
+        assert decoded is not None
+        assert decoded.metadata["format"] == "bgr24"
+        assert decoded.metadata["width"] == 30
+        assert decoded.metadata["height"] == 20
+        assert decoded.metadata["ts"] == pytest.approx(123.45)
+        assert decoded.payload == frame.tobytes()
