@@ -79,6 +79,10 @@ volumes/
 samples/
 tmp_stream_buffer/
 scratch/
+image_cache/
+migration_baseline/
+..bfg-report/
+scripts/deploy_checks/
 
 # Configuration & secrets
 .sesskey
@@ -91,6 +95,8 @@ config/config.yaml
 sample_data/*.mp4
 sample_data/*.avi
 sample_data/*.mov
+*.onnx
+*.pt
 
 # Deployment artifacts
 rtsp_to_redis/stopsign/
