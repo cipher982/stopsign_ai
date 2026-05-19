@@ -626,8 +626,7 @@ class TestLatePreStopRecovery:
         car.update(location, timestamp, bbox)
         car.state.raw_speed = car.state.speed
 
-    def test_late_track_entering_from_pre_stop_side_records_pass(self, mock_config, mock_database, monkeypatch):
-        monkeypatch.setattr("stopsign.tracking.save_vehicle_image", lambda **kwargs: "local://test.jpg")
+    def test_late_track_entering_from_pre_stop_side_records_pass(self, mock_config, mock_database):
         detector = self._make_detector(mock_config, mock_database)
         car = Car(id=42, config=mock_config)
         frame = np.zeros((900, 1800, 3), dtype=np.uint8)
@@ -666,7 +665,7 @@ class TestLatePreStopRecovery:
         assert kwargs["raw_payload"]["raw_complete"] is True
         assert kwargs["raw_complete"] is True
         assert kwargs["sample_count"] == len(kwargs["raw_payload"]["samples"])
-        assert kwargs["image_path"] == "local://test.jpg"
+        assert kwargs["image_path"] == ""
         assert not mock_database.save_vehicle_pass_raw.called
 
     def test_parked_jitter_in_zone_does_not_recover_pre_stop(self, mock_config, mock_database):

@@ -55,8 +55,35 @@ def test_trajectory_primary_records_late_track(mock_config, mock_database):
     assert mock_database.add_vehicle_pass.called
     _, kwargs = mock_database.add_vehicle_pass.call_args
     assert kwargs["raw_payload"]["raw_complete"] is True
-    assert kwargs["image_path"] == "local://test.jpg"
+    assert kwargs["image_path"] == ""
     assert kwargs["time_in_zone"] == kwargs["raw_payload"]["summary"]["time_in_zone"]
+    assert detector.capture_car_image.call_count == 0
+
+
+def test_trajectory_primary_preserves_capture_line_image(mock_config, mock_database):
+    detector = _make_detector(mock_config, mock_database)
+    car = Car(id=43, config=mock_config)
+    frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+    base = 1000.0
+
+    for idx, (location, bbox) in enumerate(
+        [
+            ((1690.0, 735.0), (1630.0, 670.0, 1750.0, 780.0)),
+            ((1580.0, 735.0), (1520.0, 670.0, 1640.0, 780.0)),
+            ((1460.0, 735.0), (1400.0, 670.0, 1520.0, 780.0)),
+            ((1185.0, 735.0), (1120.0, 670.0, 1250.0, 780.0)),
+            ((1060.0, 740.0), (980.0, 700.0, 1140.0, 790.0)),
+            ((1000.0, 745.0), (920.0, 705.0, 1080.0, 795.0)),
+            ((850.0, 745.0), (780.0, 705.0, 880.0, 795.0)),
+            ((760.0, 745.0), (700.0, 705.0, 800.0, 795.0)),
+        ]
+    ):
+        _update_car(car, detector, base + idx * 0.1, location, bbox, frame)
+
+    assert mock_database.add_vehicle_pass.called
+    _, kwargs = mock_database.add_vehicle_pass.call_args
+    assert kwargs["image_path"] == "local://test.jpg"
+    assert detector.capture_car_image.call_count == 1
 
 
 def test_trajectory_primary_rejects_backward_artifact_even_if_old_gate_passed(mock_config, mock_database):

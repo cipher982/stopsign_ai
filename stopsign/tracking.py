@@ -806,10 +806,8 @@ class StopDetector:
                     expected = max(car.state.zone.time_in_zone * 15.0, 1.0)
                     track_quality = float(min(1.0, len(samples) / expected))
 
-                # Save data to the database
-                if not car.state.capture.image_captured:
-                    self.capture_car_image(car, timestamp, frame)
-
+                # Save data to the database. Images are only captured at the configured
+                # capture line; a recovered late track should not save an exit-angle crop.
                 stream_queue_depth_exit, stream_lag_est_sec = self._estimate_stream_lag_at_exit()
                 raw_payload = None
                 sample_count = 0
