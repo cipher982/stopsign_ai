@@ -3,7 +3,7 @@
 ## Deployment Overview
 Production runs on **cube** in two Docker deployment tracks:
 1. **rtsp_to_redis** - Direct Docker Compose at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis`; captures RTSP stream and pushes frames to Redis
-2. **Main compose stack** (docker/production/docker-compose.yml; still Coolify-managed until migrated):
+2. **Main compose stack** - Direct Docker Compose at `/home/drose/manual-apps/stopsign_ai/docker/production`; run with project name `is844go80k088kcgo88s8cs8` so existing Docker volumes are reused:
    - `video_analyzer` - AI detection and tracking (GPU-accelerated)
    - `ffmpeg_service` - HLS stream generation for web viewing
    - `web_server` - FastAPI web interface and API
@@ -99,7 +99,7 @@ PGPASSWORD="<from above>" psql -h clifford.coin-castor.ts.net -p 5432 -U postgre
 ```
 
 - MinIO access: Use mc client or web console at MinIO endpoint
-- All credentials are server-side environment variables. RTSP uses `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env`; the main stack still uses its cube Coolify deployment env until migrated.
+- All credentials are server-side environment variables. RTSP uses `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env`; the main stack uses `/home/drose/manual-apps/stopsign_ai/docker/production/.env`.
 
 ## Speed Tracking Implementation
 
