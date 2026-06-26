@@ -30,13 +30,13 @@ services:
     networks:
       - default
       - monitoring
-      - coolify
+      - stopsign-net
 
 networks:
   default:
   monitoring:
     name: monitoring
     external: true
-  coolify:
-    name: coolify
+  stopsign-net:
+    name: stopsign-net
     external: true

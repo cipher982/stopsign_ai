@@ -28,7 +28,7 @@ services:
     networks:
       - default
       - monitoring
-      - coolify
+      - stopsign-net
     deploy:
       resources:
         reservations:
@@ -63,7 +63,7 @@ services:
     networks:
       - default
       - monitoring
-      - coolify
+      - stopsign-net
     # GPU removed - using libx264 software encoding instead of h264_nvenc
     healthcheck:
       # Use liveness-only endpoint to avoid flapping on transient HLS staleness
@@ -98,7 +98,7 @@ services:
     networks:
       - default
       - monitoring
-      - coolify
+      - stopsign-net
     healthcheck:
       test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:8000/healthz"]
       interval: 60s
@@ -112,8 +112,8 @@ networks:
   monitoring:
     name: monitoring
     external: true
-  coolify:
-    name: coolify
+  stopsign-net:
+    name: stopsign-net
     external: true
 
 volumes:

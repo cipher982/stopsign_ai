@@ -22,7 +22,7 @@ This was a first production attempt outside core ML. It works, but complexity + 
 
 Compose/topology (local and production variants):
 - `docker/local/docker-compose.yml` runs `redis`, `postgres`, `minio`, `rtsp_to_redis`, `video_analyzer`, `ffmpeg_service`, `web_server` on one bridge network.
-- `docker/production/docker-compose.yml` splits services across multiple networks (e.g., `coolify`, `monitoring`).
+- `docker/production/docker-compose.yml` splits services across multiple networks (e.g., `stopsign-net`, `monitoring`).
 
 Primary data path:
 1) Camera (RTSP) → `rtsp_to_redis/rtsp_to_redis.py` encodes frames to JPEG and `LPUSH`es into `RAW_FRAME_KEY` (Redis list) with `LTRIM` for a bounded buffer.
