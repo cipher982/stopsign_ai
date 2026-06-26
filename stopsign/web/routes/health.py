@@ -8,6 +8,7 @@ import time
 from fastapi import APIRouter
 from fastapi import Request
 from fastapi.responses import HTMLResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from stopsign.database import Database
@@ -80,6 +81,13 @@ db_health_tracker = DBHealthTracker()
 @router.get("/healthz")
 async def healthz():
     return {"status": "ok"}
+
+
+@router.api_route("/readyz", methods=["GET", "HEAD"])
+async def readyz():
+    resp = JSONResponse({"status": "ready"})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @router.get("/health/stream")

@@ -200,7 +200,7 @@ Grafana dashboards are provided in `static/`.
 - **rtsp_to_redis** — `/healthz` (liveness) and `/ready` (Redis push freshness + visual freeze detection).
 - **video_analyzer** — `/healthz` (liveness) and `/ready` (frame gap ≤ `ANALYZER_STALL_SEC`).
 - **ffmpeg_service** — `/healthz` (liveness) and `/ready` (fresh HLS + Redis + recent frame).
-- **web_server** — `/healthz` (process up) and `/health/stream` (HLS freshness for external monitors).
+- **web_server** — `/healthz` (process up), `/readyz` (public uptime probe, supports GET/HEAD), and `/health/stream` (HLS freshness for external monitors).
 - Legacy `/health` on ffmpeg_service remains for backwards compatibility.
 
 Docker healthchecks now target the liveness endpoints (`/healthz`) so short upstream hiccups don’t flip container health; alerting systems should watch `/ready` and treat `/health/stream` as an external freshness signal.
@@ -235,6 +235,7 @@ Silent failures in HLS segment generation can be hard to catch with simple HTTP 
 - `ffmpeg_service` readiness: `http://localhost:8080/ready` – HLS + Redis + recent frames
 - `ffmpeg_service` liveness: `http://localhost:8080/healthz`
 - `web_server` liveness: `http://localhost:8000/healthz`
+- `web_server` public uptime probe: `http://localhost:8000/readyz`
 - `web_server` stream freshness: `http://localhost:8000/health/stream`
 
 **Auto-Recovery:** FFmpeg service includes a configurable watchdog that automatically restarts the container when HLS generation stalls, eliminating the need for manual intervention during network hiccups.
