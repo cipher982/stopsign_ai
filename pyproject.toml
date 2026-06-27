@@ -59,7 +59,7 @@ clustering = [
     "hdbscan>=0.8.33",
     "openai>=1.30.0",
     "click>=8.1.0",
-    "tqdm>=4.66.0",
+    "tqdm>=4.67.3",
     "scikit-learn>=1.4.0",
     "umap-learn>=0.5.5",
 ]
