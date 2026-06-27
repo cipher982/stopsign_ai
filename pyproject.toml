@@ -9,7 +9,7 @@ description = ""
 authors = [{name = "David Rose", email = "david@drose.io"}]
 requires-python = "~=3.12.0"
 dependencies = [
-    "python-dotenv>=1.0.1",
+    "python-dotenv>=1.2.2",
     "pyyaml>=6.0",
     "redis>=5.0.8",
     "opentelemetry-distro>=0.55b1",
