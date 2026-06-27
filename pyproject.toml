@@ -35,7 +35,7 @@ ml = [
 db = [
     "psycopg2-binary>=2.9.10",
     "sqlalchemy>=2.0.36",
-    "sqlalchemy-utils>=0.41.2",
+    "sqlalchemy-utils>=0.42.1",
     "opentelemetry-instrumentation-sqlalchemy>=0.55b1",
 ]
 # Object storage (video_analyzer + web_server)
