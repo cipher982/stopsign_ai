@@ -2,13 +2,13 @@
 
 **Summary**
 - Phase 1 (Kalman-only speed) is not safe with current tuning. Expect laggy deceleration and/or noisy velocity, which directly impacts stop duration and minimum speed metrics.
-- The spec misses a few real dependencies: `raw_speed` is used in stop detection and DB metrics, `direction` is used in debug overlays, and `track` is saved to the DB.
+- The spec misses a few real dependencies: `raw_speed` is used in stop detection and DB metrics, and `direction` is used in debug overlays.
 - Phase ordering should put explicit timestamps earlier and treat Phase 1 as an opt-in experiment behind a flag.
 
 **Feasibility And Hidden Dependencies**
 - `raw_speed` is not a "nice-to-have." It is used for stop duration gating, speed samples in zone, and telemetry (`StopDetector._update_stop_duration`, speed sampling, and spans). Removing it changes recorded metrics and stop/no-stop decisions. See `stopsign/tracking.py`.
 - `direction` is not dead. It is used in the debug overlay labels in `stopsign/video_analyzer.py` (`draw_box`, `draw_car_interpolated`). If removed, those labels must be updated or removed.
-- `track` is persisted to the DB (`Database.save_car_state` uses `car.state.track`). If you change its structure or stop appending, you'll lose data or break DB assumptions.
+- `track` is process-local state. The unused `car_state_history` write path was retired in July 2026; raw per-pass evidence lives in `vehicle_pass_raw`.
 - The rewrite assumes `timestamp` behavior is stable. The analyzer can skip frames and perform catch-up; `timestamp` gaps can be large. Time-based debouncing and Kalman velocity will be sensitive to this unless you clamp or guard large `dt` values.
 - There is a `tracking.use_kalman_filter` config flag, but it is not used anywhere. This is an easy safety valve for Phase 1 and is currently missing from the plan.
 

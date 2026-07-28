@@ -215,7 +215,7 @@ Reset: `car.state.zone = ZoneState()` — one line, can't miss a field.
    - etc.
 4. Replace `_reset_car_state` body with sub-state reconstruction
 5. Update tests and `video_analyzer.py` accessors
-6. Note: `track` is persisted to DB via `Database.save_car_state` — structure must not change
+6. `track` is process-local state; raw per-pass evidence is persisted separately in `vehicle_pass_raw`.
 
 ### Risk
 
