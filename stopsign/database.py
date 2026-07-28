@@ -2,7 +2,6 @@ import functools
 import logging
 import os
 import time
-from datetime import datetime
 from typing import Dict
 from typing import List
 
@@ -51,24 +50,6 @@ def log_execution_time(func):
             return result
 
     return wrapper
-
-
-class CarStateHistory(Base):
-    __tablename__ = "car_state_history"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    car_id = Column(Integer)
-    last_seen = Column(DateTime)
-    location = Column(JSON)
-    speed = Column(Float)
-    is_parked = Column(Boolean)
-    in_stop_zone = Column(Boolean)
-    time_in_zone = Column(Float)
-    min_speed_in_zone = Column(Float)
-    stop_duration = Column(Float)
-    entry_time = Column(Float)
-    exit_time = Column(Float)
-    track = Column(JSON)
 
 
 class VehiclePass(Base):
@@ -225,30 +206,6 @@ class Database:
             summary = "Database summary:\n"
             summary += f"Total vehicle passes: {total_passes:,}\n"
             logger.info(summary)
-
-    @log_execution_time
-    def save_car_state(self, car):
-        if self.read_only_mode:
-            logger.debug("🚫 Blocked save_car_state (READ-ONLY MODE)")
-            return
-
-        with self.Session() as session:
-            car_state = CarStateHistory(
-                car_id=car.id,
-                last_seen=datetime.fromtimestamp(car.state.last_update_time),
-                location=car.state.location,
-                speed=car.state.speed,
-                is_parked=car.state.motion.is_parked,
-                in_stop_zone=car.state.zone.in_zone,
-                time_in_zone=car.state.zone.time_in_zone,
-                min_speed_in_zone=car.state.zone.min_speed,
-                stop_duration=car.state.zone.stop_duration,
-                entry_time=car.state.zone.entry_time,
-                exit_time=car.state.zone.exit_time,
-                track=car.state.track,
-            )
-            session.add(car_state)
-            session.commit()
 
     @log_execution_time
     def add_vehicle_pass(

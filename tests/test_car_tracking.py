@@ -791,3 +791,16 @@ class TestCurrentFrameCarIds:
         frame = np.zeros((300, 300, 3), dtype=np.uint8)
         tracker.update_cars([], 1000.0, frame)
         assert tracker.current_frame_car_ids == set()
+
+    def test_expired_car_is_removed_without_database_history_write(self, mock_config, mock_database):
+        tracker = CarTracker(mock_config, mock_database)
+        tracker.cars[1] = Car(id=1, config=mock_config)
+        tracker.last_seen[1] = 1000.0
+        tracker.prev_timestamps[1] = 1000.0
+
+        tracker.remove_car(1)
+
+        assert 1 not in tracker.cars
+        assert 1 not in tracker.last_seen
+        assert 1 not in tracker.prev_timestamps
+        assert mock_database.method_calls == []

@@ -60,7 +60,6 @@ def mock_database():
     """Create a mock Database object."""
     db = MagicMock()
     db.save_vehicle_pass = MagicMock(return_value=True)
-    db.save_car_state_history = MagicMock(return_value=True)
     return db
 
 

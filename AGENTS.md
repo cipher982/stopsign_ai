@@ -10,12 +10,12 @@ Production runs on **cube** in two Docker deployment tracks:
 
 ## Data Persistence Architecture
 
-### PostgreSQL Database (clifford, NOT cube)
+### PostgreSQL Database (shared PostgreSQL container on clifford, NOT cube)
 - **Location**: `5.161.97.53:5432/stopsign`
-- **Container**: Find with `ssh clifford "docker ps | grep postgres"` (Coolify hash changes on deploy)
+- **Container**: `kgcos0o4cw4ok0ss0g08wswo` (shared temporarily with collector and rag)
 - **Tables**:
   - `vehicle_passes` - Core metrics (timestamp, speed, stop duration, time_in_zone, image_path)
-  - `car_state_history` - Full tracking history per vehicle
+  - `vehicle_pass_raw` - Per-pass raw evidence used for later analysis
   - `config_settings` - Dynamic configuration with version history
 - **Current Data**: ~41k passes as of Dec 2025 (query `SELECT COUNT(*) FROM vehicle_passes` for current)
 - **Environment Var**: `DB_URL` in cube containers points to clifford's PostgreSQL
@@ -87,7 +87,7 @@ Camera (WiFi) → RTSP → rtsp_to_redis → Redis → ffmpeg_service → HLS fi
 
 ## Troubleshooting Data Issues
 
-**PostgreSQL is host-level on clifford, NOT in a container.** The postgres containers visible via `docker ps` on clifford are for traccar and umami — not stopsign. Do not use them.
+**PostgreSQL is in the shared container on clifford, not a native host service.**
 
 ```bash
 # Get credentials from Infisical; DB_URL is injected into the app process and is not visible via docker exec env

@@ -345,11 +345,9 @@ class CarTracker:
         for car_id in list(self.cars.keys()):
             if car_id not in current_car_ids:
                 if timestamp - self.last_seen[car_id] > self.persistence_threshold:
-                    self.persist_and_remove_car(car_id)
+                    self.remove_car(car_id)
 
-    def persist_and_remove_car(self, car_id: int) -> None:
-        car = self.cars[car_id]
-        self.db.save_car_state(car)
+    def remove_car(self, car_id: int) -> None:
         del self.cars[car_id]
         del self.last_seen[car_id]
         self.prev_timestamps.pop(car_id, None)
