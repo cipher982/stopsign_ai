@@ -11,8 +11,8 @@ Production runs on **cube** in two Docker deployment tracks:
 ## Data Persistence Architecture
 
 ### PostgreSQL Database (shared PostgreSQL container on clifford, NOT cube)
-- **Location**: `5.161.97.53:5432/stopsign`
-- **Container**: `kgcos0o4cw4ok0ss0g08wswo` (shared temporarily with collector and rag)
+- **Location**: `clifford.coin-castor.ts.net:5432/stopsign` (Tailscale TCP forward)
+- **Container**: `kgcos0o4cw4ok0ss0g08wswo` (one retained PostgreSQL 16 daemon shared with Collector; the empty legacy `rag` database was retired 2026-07-29)
 - **Tables**:
   - `vehicle_passes` - Core metrics (timestamp, speed, stop duration, time_in_zone, image_path)
   - `vehicle_pass_raw` - Per-pass raw evidence used for later analysis
