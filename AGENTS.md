@@ -18,7 +18,10 @@ Production runs on **cube** in two Docker deployment tracks:
   - `vehicle_pass_raw` - Per-pass raw evidence used for later analysis
   - `config_settings` - Dynamic configuration with version history
 - **Current Data**: ~41k passes as of Dec 2025 (query `SELECT COUNT(*) FROM vehicle_passes` for current)
-- **Environment Var**: `DB_URL` in cube containers points to clifford's PostgreSQL
+- **Environment Var**: Infisical `DB_URL` injects restricted owner/login
+  `stopsign_app` into the analyzer and web processes. The old shared-superuser
+  URL is a bounded rollback artifact through 2026-08-05, not an application
+  credential.
 
 ### MinIO S3 Storage (clifford, NOT cube)
 - **Endpoint**: `minio-nwcs0c4g0w8gcgow0gscgckg.5.161.97.53.sslip.io`
@@ -92,10 +95,10 @@ Camera (WiFi) → RTSP → rtsp_to_redis → Redis → ffmpeg_service → HLS fi
 ```bash
 # Get credentials from Infisical; DB_URL is injected into the app process and is not visible via docker exec env
 python3 ~/git/me/scripts/infisical-get.py DB_URL --project-id 9c373776-768f-454b-a7b3-d1cc40deb475 --env prod
-# Returns: postgresql://postgres:<password>@clifford.coin-castor.ts.net:5432/stopsign
+# Returns: postgresql://stopsign_app:<password>@clifford.coin-castor.ts.net:5432/stopsign
 
 # Query directly from local machine (Tailscale required)
-PGPASSWORD="<from above>" psql -h clifford.coin-castor.ts.net -p 5432 -U postgres -d stopsign
+PGPASSWORD="<from above>" psql -h clifford.coin-castor.ts.net -p 5432 -U stopsign_app -d stopsign
 ```
 
 - MinIO access: Use mc client or web console at MinIO endpoint
