@@ -10,6 +10,7 @@ from typing import Tuple
 
 import cv2
 import numpy as np
+import urllib3
 from minio import Minio
 
 from stopsign.database import Database
@@ -216,7 +217,7 @@ def _process_upload_item(local_path: str, object_name: str, db: Optional[Databas
                 access_key=BREMEN_MINIO_ACCESS_KEY,
                 secret_key=BREMEN_MINIO_SECRET_KEY,
                 secure=False,  # Bremen is on local network
-                timeout=BREMEN_MINIO_TIMEOUT_SECONDS,
+                http_client=urllib3.PoolManager(timeout=BREMEN_MINIO_TIMEOUT_SECONDS),
             )
 
             # Upload the file
