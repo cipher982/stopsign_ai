@@ -5,6 +5,7 @@ import logging
 import os
 import time
 
+import redis as redis_lib
 from fastapi import APIRouter
 from fastapi import Request
 from fastapi.responses import HTMLResponse
@@ -13,8 +14,10 @@ from sqlalchemy import text
 
 from stopsign.database import Database
 from stopsign.hls_health import parse_hls_playlist
+from stopsign.settings import ARCHIVE_HEALTH_REDIS_KEY
 from stopsign.settings import DB_URL
 from stopsign.settings import GRACE_STARTUP_SEC
+from stopsign.settings import REDIS_URL
 from stopsign.web.app import STREAM_FS_PATH
 from stopsign.web.app import WEB_START_TIME
 
@@ -88,6 +91,28 @@ async def readyz():
     resp = JSONResponse({"status": "ready"})
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@router.get("/api/archive-health")
+async def archive_health():
+    """Surface the analyzer's archive health signal (written to Redis on each event).
+
+    The video_analyzer writes counters/timestamps for local saves and Bremen uploads;
+    this lets the next hardening pass alert when archival is silently degrading.
+    """
+    try:
+        r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=0.3, socket_timeout=0.3)
+        raw = r.get(ARCHIVE_HEALTH_REDIS_KEY)
+        if not raw:
+            return JSONResponse(
+                {"available": False, "detail": "No archive health signal yet (analyzer has not recorded one)"}
+            )
+        payload = json.loads(raw)
+        payload["available"] = True
+        return JSONResponse(payload)
+    except Exception as e:
+        logger.warning(f"archive_health read failed: {e}")
+        return JSONResponse({"available": False, "error": str(e)})
 
 
 @router.get("/health/stream")

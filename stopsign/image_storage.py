@@ -1,3 +1,4 @@
+import json
 import logging
 import queue
 import threading
@@ -12,12 +13,14 @@ import numpy as np
 from minio import Minio
 
 from stopsign.database import Database
+from stopsign.settings import ARCHIVE_HEALTH_REDIS_KEY
 from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
 from stopsign.settings import BREMEN_MINIO_BUCKET
 from stopsign.settings import BREMEN_MINIO_ENDPOINT
 from stopsign.settings import BREMEN_MINIO_SECRET_KEY
 from stopsign.settings import LOCAL_IMAGE_DIR
 from stopsign.settings import LOCAL_IMAGE_MAX_COUNT
+from stopsign.settings import REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,133 @@ _worker_lock = threading.Lock()
 _prune_lock = threading.Lock()
 _last_prune_monotonic = 0.0
 PRUNE_INTERVAL_SECONDS = 60.0
+
+# MinIO client timeout (seconds). The archive worker must never hang forever on a
+# half-open connection; a timeout surfaces as a retryable error instead.
+BREMEN_MINIO_TIMEOUT_SECONDS = 10.0
+
+# ---------------------------------------------------------------------------
+# Archive health signal (shared with web_server via Redis; in-memory mirror for tests)
+# ---------------------------------------------------------------------------
+_health_lock = threading.Lock()
+_health = {
+    "local_saves": 0,
+    "local_save_failures": 0,
+    "upload_attempts": 0,
+    "upload_successes": 0,
+    "upload_failures": 0,
+    "last_local_save_ts": None,
+    "last_local_save_failure_ts": None,
+    "last_upload_attempt_ts": None,
+    "last_upload_success_ts": None,
+    "last_upload_failure_ts": None,
+}
+_redis_client = None
+_redis_attempted = False
+
+# Per-file upload state so the pruner never deletes a file whose pass still needs it.
+#   "pending"  -> queued / waiting to upload (DB path is local://, must stay on disk)
+#   "failed"   -> upload or DB flip did not complete (DB path is local://, must stay)
+#   "uploaded" -> object archived AND DB path flipped to bremen:// (local copy redundant)
+_upload_state: dict[str, str] = {}
+_UPLOAD_STATE_MAX = 20000
+_upload_state_lock = threading.Lock()
+
+
+def _get_redis_client():
+    """Lazily build a short-timeout Redis client (best-effort; never raises)."""
+    global _redis_client, _redis_attempted
+    if _redis_attempted:
+        return _redis_client
+    _redis_attempted = True
+    try:
+        import redis
+
+        client = redis.from_url(REDIS_URL, socket_connect_timeout=0.3, socket_timeout=0.3)
+        client.ping()
+        _redis_client = client
+    except Exception:
+        _redis_client = None
+    return _redis_client
+
+
+def _health_snapshot() -> dict:
+    with _health_lock:
+        h = dict(_health)
+    h["upload_healthy"] = h["upload_failures"] == 0 or (
+        h["last_upload_success_ts"] is not None and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
+    )
+    h["local_save_healthy"] = h["local_save_failures"] == 0 or (
+        h["last_local_save_ts"] is not None and h["last_local_save_ts"] >= h["last_local_save_failure_ts"]
+    )
+    with _upload_state_lock:
+        h["pending_local_files"] = sum(1 for s in _upload_state.values() if s in ("pending", "failed"))
+    return h
+
+
+def _write_health_to_redis() -> None:
+    """Persist the health signal for the web_server to read. Best-effort, non-blocking."""
+    try:
+        client = _get_redis_client()
+        if client is not None:
+            client.set(ARCHIVE_HEALTH_REDIS_KEY, json.dumps(_health_snapshot()))
+    except Exception:
+        # The signal is best-effort; local in-memory counters still surface in logs/tests.
+        pass
+
+
+def get_archive_health() -> dict:
+    """Return the current archive health signal (counters + timestamps + derived flags)."""
+    return _health_snapshot()
+
+
+def _record_local_save_success() -> None:
+    with _health_lock:
+        _health["local_saves"] += 1
+        _health["last_local_save_ts"] = time.time()
+    _write_health_to_redis()
+
+
+def _record_local_save_failure() -> None:
+    with _health_lock:
+        _health["local_save_failures"] += 1
+        _health["last_local_save_failure_ts"] = time.time()
+    _write_health_to_redis()
+
+
+def _record_upload_attempt() -> None:
+    with _health_lock:
+        _health["upload_attempts"] += 1
+        _health["last_upload_attempt_ts"] = time.time()
+    _write_health_to_redis()
+
+
+def _record_upload_success() -> None:
+    with _health_lock:
+        _health["upload_successes"] += 1
+        _health["last_upload_success_ts"] = time.time()
+    _write_health_to_redis()
+
+
+def _record_upload_failure() -> None:
+    with _health_lock:
+        _health["upload_failures"] += 1
+        _health["last_upload_failure_ts"] = time.time()
+    _write_health_to_redis()
+
+
+def _mark_upload_state(object_name: str, state: str) -> None:
+    with _upload_state_lock:
+        if len(_upload_state) >= _UPLOAD_STATE_MAX:
+            # Bound memory: evicting a state only makes the pruner more conservative
+            # (unknown files are never pruned), so this is safe.
+            _upload_state.pop(next(iter(_upload_state)))
+        _upload_state[object_name] = state
+
+
+def _get_upload_state(object_name: str) -> Optional[str]:
+    with _upload_state_lock:
+        return _upload_state.get(object_name)
 
 
 def _start_upload_worker():
@@ -41,64 +171,102 @@ def _start_upload_worker():
             logger.info("Bremen upload worker thread started")
 
 
+def _flip_db_path_with_retry(db: Optional[Database], object_name: str) -> bool:
+    """Flip the pass path local:// -> bremen:// once the pass row exists.
+
+    The archive upload completes asynchronously, usually several seconds BEFORE the
+    pass is recorded (the pass is persisted at zone exit). A single immediate
+    update_image_path therefore finds 0 rows and silently no-ops, leaving the path
+    stuck at local:// forever. Retry briefly so we catch the pass insert.
+    """
+    if db is None:
+        return False
+    old_path = f"local://{object_name}"
+    new_path = f"bremen://{object_name}"
+    for _ in range(20):
+        try:
+            rows = db.update_image_path(old_path, new_path)
+        except Exception as db_err:
+            logger.warning(f"Failed to update DB path for {object_name}: {db_err}")
+            return False
+        if rows:
+            logger.info(f"Updated DB path for {object_name}: local:// -> bremen://")
+            return True
+        time.sleep(1.0)
+    logger.warning(f"Gave up waiting to flip DB path for {object_name} (pass not recorded in time)")
+    return False
+
+
+def _process_upload_item(local_path: str, object_name: str, db: Optional[Database]) -> None:
+    """Upload a single queued image to Bremen MinIO and flip its DB path.
+
+    Extracted from the worker loop so tests can exercise one item deterministically.
+    """
+    # Skip if Bremen credentials not configured
+    if not BREMEN_MINIO_SECRET_KEY:
+        logger.debug(f"Bremen MinIO not configured, skipping archive of {object_name}")
+        return
+
+    _record_upload_attempt()
+    # Retry up to 3 times with exponential backoff
+    for attempt in range(3):
+        try:
+            client = Minio(
+                BREMEN_MINIO_ENDPOINT,
+                access_key=BREMEN_MINIO_ACCESS_KEY,
+                secret_key=BREMEN_MINIO_SECRET_KEY,
+                secure=False,  # Bremen is on local network
+                timeout=BREMEN_MINIO_TIMEOUT_SECONDS,
+            )
+
+            # Upload the file
+            client.fput_object(
+                BREMEN_MINIO_BUCKET,
+                object_name,
+                local_path,
+                content_type="image/jpeg",
+            )
+            logger.debug(f"Archived {object_name} to Bremen MinIO")
+            _record_upload_success()
+
+            # Only release the local file for pruning once BOTH the object is
+            # archived AND the DB path points at the archive (bremen://).
+            if _flip_db_path_with_retry(db, object_name):
+                _mark_upload_state(object_name, "uploaded")
+            else:
+                _mark_upload_state(object_name, "failed")
+            return
+        except Exception as e:
+            if attempt == 2:
+                logger.error(f"Failed to archive {object_name} after 3 attempts: {e}")
+                _mark_upload_state(object_name, "failed")
+                _record_upload_failure()
+            else:
+                logger.warning(f"Bremen upload attempt {attempt + 1} failed for {object_name}: {e}")
+                time.sleep(2**attempt)  # Exponential backoff: 1s, 2s
+
+
 def _bremen_upload_worker():
     """Background worker that uploads images to Bremen MinIO with retry logic."""
     while True:
         try:
             local_path, object_name, db = _upload_queue.get()
-
-            # Skip if Bremen credentials not configured
-            if not BREMEN_MINIO_SECRET_KEY:
-                logger.debug(f"Bremen MinIO not configured, skipping archive of {object_name}")
+            try:
+                _process_upload_item(local_path, object_name, db)
+            finally:
                 _upload_queue.task_done()
-                continue
-
-            # Retry up to 3 times with exponential backoff
-            for attempt in range(3):
-                try:
-                    client = Minio(
-                        BREMEN_MINIO_ENDPOINT,
-                        access_key=BREMEN_MINIO_ACCESS_KEY,
-                        secret_key=BREMEN_MINIO_SECRET_KEY,
-                        secure=False,  # Bremen is on local network
-                    )
-
-                    # Upload the file
-                    client.fput_object(
-                        BREMEN_MINIO_BUCKET,
-                        object_name,
-                        local_path,
-                        content_type="image/jpeg",
-                    )
-                    logger.debug(f"Archived {object_name} to Bremen MinIO")
-
-                    # Flip DB path from local:// to bremen://
-                    if db is not None:
-                        try:
-                            rows = db.update_image_path(
-                                f"local://{object_name}",
-                                f"bremen://{object_name}",
-                            )
-                            if rows:
-                                logger.info(f"Updated DB path for {object_name}: local:// -> bremen://")
-                        except Exception as db_err:
-                            logger.warning(f"Failed to update DB path for {object_name}: {db_err}")
-
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        logger.error(f"Failed to archive {object_name} after 3 attempts: {e}")
-                    else:
-                        logger.warning(f"Bremen upload attempt {attempt + 1} failed for {object_name}: {e}")
-                        time.sleep(2**attempt)  # Exponential backoff: 1s, 2s
-
-            _upload_queue.task_done()
         except Exception as e:
             logger.error(f"Unexpected error in Bremen upload worker: {e}")
 
 
 def _prune_old_images():
-    """Remove oldest images when count exceeds LOCAL_IMAGE_MAX_COUNT."""
+    """Remove oldest locally-captured images that have been safely archived.
+
+    Only files whose object was uploaded AND whose DB path was flipped to bremen://
+    are eligible. Files still pending or failed retain a local:// DB reference and
+    must stay on disk so the pass continues to serve; never delete a file its pass
+    still needs.
+    """
     try:
         image_dir = Path(LOCAL_IMAGE_DIR)
         if not image_dir.exists():
@@ -110,19 +278,27 @@ def _prune_old_images():
         if len(images) <= LOCAL_IMAGE_MAX_COUNT:
             return
 
-        # Sort by modification time (oldest first)
-        images.sort(key=lambda p: p.stat().st_mtime)
+        # Only known-uploaded files may be pruned.
+        prunable = [p for p in images if _get_upload_state(p.name) == "uploaded"]
+        if not prunable:
+            logger.debug("No archived images eligible for pruning; keeping pending/failed local files")
+            return
 
-        # Remove oldest images to get back under limit
+        # Sort by modification time (oldest first)
+        prunable.sort(key=lambda p: p.stat().st_mtime)
+
+        # Remove oldest uploaded files to get back under limit
         to_remove = len(images) - LOCAL_IMAGE_MAX_COUNT
-        for img_path in images[:to_remove]:
+        removed = 0
+        for img_path in prunable[:to_remove]:
             try:
                 img_path.unlink()
-                logger.debug(f"Pruned old image: {img_path.name}")
+                removed += 1
+                logger.debug(f"Pruned archived image: {img_path.name}")
             except Exception as e:
                 logger.warning(f"Failed to prune {img_path.name}: {e}")
 
-        logger.info(f"Pruned {to_remove} old images to maintain {LOCAL_IMAGE_MAX_COUNT} limit")
+        logger.info(f"Pruned {removed} archived images to maintain {LOCAL_IMAGE_MAX_COUNT} limit")
     except Exception as e:
         logger.error(f"Error pruning old images: {e}")
 
@@ -162,7 +338,9 @@ def save_vehicle_image(
 ) -> str:
     """Save vehicle image locally and queue upload to Bremen MinIO for archival.
 
-    Returns local:// path for fast serving from cube.
+    Returns the local:// path when the LOCAL save succeeds, regardless of whether the
+    later async Bremen upload succeeds or fails. Returns "" only when the LOCAL save
+    itself fails (the capture failed and must not masquerade as success).
     """
     # Generate a random UUID for the filename
     file_id = uuid.uuid4().hex
@@ -197,6 +375,10 @@ def save_vehicle_image(
             f.write(img_encoded.tobytes())
 
         logger.debug(f"Saved vehicle image locally: {filename}")
+        _record_local_save_success()
+
+        # Protect the file from pruning until it is archived and the DB path flips.
+        _mark_upload_state(filename, "pending")
 
         # Start upload worker if not already running
         _start_upload_worker()
@@ -213,4 +395,5 @@ def save_vehicle_image(
 
     except Exception as e:
         logger.error(f"Failed to save vehicle image locally: {str(e)}", exc_info=True)
+        _record_local_save_failure()
         return ""

@@ -880,5 +880,16 @@ class StopDetector:
             bbox=car.state.bbox,
             db=self.db,
         )
-        car.state.capture.image_captured = True
-        car.state.capture.image_path = image_path
+        if image_path:
+            # Local save succeeded (archive upload is async and trailing). Record the
+            # real local path so the pass is honest and visible in live stats.
+            car.state.capture.image_captured = True
+            car.state.capture.image_path = image_path
+        else:
+            # Local save failed. Do NOT masquerade as a successful capture: leave the
+            # path empty (the pass is recorded without an image) and surface the
+            # failure loudly via the health signal so the next hardening pass can alert.
+            logger.error(
+                "Vehicle image LOCAL save failed for car_id=%s; pass recorded without image",
+                car.id,
+            )

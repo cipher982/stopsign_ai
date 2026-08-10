@@ -804,3 +804,38 @@ class TestCurrentFrameCarIds:
         assert 1 not in tracker.last_seen
         assert 1 not in tracker.prev_timestamps
         assert mock_database.method_calls == []
+
+
+class TestCaptureCarImage:
+    """capture_car_image must distinguish local-save success from silence on failure."""
+
+    def _make_detector(self, mock_config, mock_database):
+        detector = StopDetector(mock_config, mock_database)
+        return detector
+
+    def test_capture_sets_path_and_flag_on_local_save_success(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: "local://vehicle_abc_123.jpg")
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=1, config=mock_config)
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        detector.capture_car_image(car, 1000.0, frame)
+
+        assert car.state.capture.image_captured is True
+        assert car.state.capture.image_path == "local://vehicle_abc_123.jpg"
+
+    def test_capture_does_not_masquerade_failure_as_success(self, monkeypatch, mock_config, mock_database):
+        """A failed local save must NOT set image_captured or store an empty path as success."""
+        import stopsign.tracking as tracking
+
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: "")
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=1, config=mock_config)
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        detector.capture_car_image(car, 1000.0, frame)
+
+        assert car.state.capture.image_captured is False
+        assert car.state.capture.image_path == ""

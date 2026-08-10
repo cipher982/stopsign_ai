@@ -197,6 +197,12 @@ BREMEN_MINIO_CLIP_BUCKET = get_env("BREMEN_MINIO_CLIP_BUCKET", "vehicle-clips", 
 # Local image retention
 LOCAL_IMAGE_MAX_COUNT = get_env_int("LOCAL_IMAGE_MAX_COUNT", 500, required=False)
 
+# Archive health signal shared between the analyzer (writer) and web (reader) via Redis.
+# The analyzer writes counters/timestamps on every local save, upload success and upload
+# failure; the web surfaces them on /api/archive-health so the next hardening pass can
+# alert when the archive is silently degrading.
+ARCHIVE_HEALTH_REDIS_KEY = get_env("ARCHIVE_HEALTH_REDIS_KEY", "stopsign.archive.health", required=False)
+
 # Telemetry (optional - set to empty string to disable)
 OTEL_EXPORTER_OTLP_ENDPOINT = get_env("OTEL_EXPORTER_OTLP_ENDPOINT", required=False) or None
 
