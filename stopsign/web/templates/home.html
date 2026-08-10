@@ -101,12 +101,30 @@
          hx-vals='{"update": "stats"}'
          style="display: none;"></div>
 </div>
+
+{# Below the fold: surface the interesting data so visitors keep scrolling. #}
+<div class="fold-peek scroll-reveal" id="foldPeek">
+    <span class="fold-chevron">&#9660;</span>
+    <span>Keep scrolling. The interesting part is below the fold.</span>
+</div>
+
+<section class="home-fold scroll-reveal" id="behaviorFold"
+         hx-get="/api/behavior" hx-trigger="load" hx-swap="innerHTML">
+    <div class="sunken" style="padding: 10px; font-size: 12px; color: var(--text-muted);">Loading behavior&hellip;</div>
+</section>
+
+<div class="home-nav-strip scroll-reveal">
+    <a class="btn98" href="/records">Every vehicle pass &rarr; Records</a>
+    <a class="btn98" href="/vehicles">Classification explorer &rarr; Vehicles</a>
+    <a class="btn98" href="/about">How it works &rarr;</a>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <style>
     .home-window {
-        height: calc(100vh - 62px);
+        min-height: calc(100vh - 62px);
+        height: auto;
     }
 
     .home-grid {
@@ -272,5 +290,86 @@
     @media (max-width: 480px) {
         .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
-</style>
+/* Below-the-fold sections: nudge to scroll + reveal as they enter view */
+    .fold-peek {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 14px;
+        font-size: 13px;
+        color: var(--text-muted);
+        border-top: 1px solid var(--dark);
+        margin: 8px 2px 0;
+    }
+    .fold-chevron {
+        display: inline-block;
+        animation: fold-bob 1.6s ease-in-out infinite;
+    }
+    @keyframes fold-bob {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(4px); }
+    }
+    .home-fold {
+        margin: 2px;
+    }
+    .home-fold-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 2px;
+        align-items: start;
+    }
+    .scroll-card .window-body {
+        overflow: visible;
+    }
+    .behavior-note {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--text-secondary);
+    }
+    .week-bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 3px;
+        height: 90px;
+        padding: 6px 2px 0;
+    }
+    .week-bar-wrap {
+        flex: 1;
+        display: flex;
+        align-items: flex-end;
+        height: 100%;
+    }
+    .week-bar {
+        width: 100%;
+        background: var(--hi);
+        min-height: 2px;
+    }
+    .week-caption {
+        font-size: 11px;
+        color: var(--text-muted);
+        text-align: center;
+        margin-top: 2px;
+    }
+    .home-nav-strip {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+        margin: 14px 2px 22px;
+    }
+    .scroll-reveal {
+        opacity: 0;
+        transform: translateY(12px);
+        transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+    .scroll-reveal.inview {
+        opacity: 1;
+        transform: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .scroll-reveal { opacity: 1; transform: none; transition: none; }
+        .fold-chevron { animation: none; }
+    }
+    </style>
 {% endblock %}

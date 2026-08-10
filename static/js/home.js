@@ -53,3 +53,21 @@ document.addEventListener('htmx:afterRequest', function(event) {
 
     updateLiveStats(statsData);
 });
+
+// Reveal below-the-fold sections as they enter the viewport, nudging the user to scroll.
+(function revealOnScroll() {
+    var sections = document.querySelectorAll('.scroll-reveal');
+    if (!('IntersectionObserver' in window)) {
+        sections.forEach(function (el) { el.classList.add('inview'); });
+        return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('inview');
+                io.unobserve(entry.target);
+            }
+        });
+    }, { threshold: 0.12 });
+    sections.forEach(function (el) { io.observe(el); });
+})();

@@ -1,0 +1,73 @@
+{# Homepage behavior analytics — rendered by /api/behavior (htmx fragment) #}
+<div id="behavior" class="home-fold-grid">
+    <div class="window scroll-card">
+        <div class="title-bar title-bar-inactive">
+            <span class="title-bar-text">Who Rolls the Sign? <span style="font-weight:400; color:var(--text-muted);">&middot; compliance by type, all-time (through Feb 2026)</span></span>
+        </div>
+        <div class="window-body">
+            {% if type_items %}
+            <table class="data-table" style="font-size: 12px;">
+                {% for item in type_items %}
+                <tr>
+                    <td style="width: 110px; white-space: nowrap;">{{ item.label | title }}</td>
+                    <td style="width: 100%;">
+                        <div style="background: #e0e0e0; height: 14px; width: 100%; position: relative;">
+                            <div style="height: 14px; width: {{ item.pct }}%; background-color: {{ item.color }};" class="bar-chart-bar"></div>
+                        </div>
+                    </td>
+                    <td class="mono" style="white-space: nowrap; text-align: right; font-size: 11px;">{{ item.value }}% <span style="color: var(--text-muted);">({{ "{:,}".format(item.n) }})</span></td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% if worst %}
+            <div class="behavior-note">Lowest compliance: <strong>{{ worst.label | title }}</strong> at {{ worst.compliance_pct }}% ({{ "{:,}".format(worst.n) }} passes).</div>
+            {% endif %}
+            {% else %}
+            <div style="font-size: 12px; color: var(--text-muted);">No classification data yet.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="window scroll-card">
+        <div class="title-bar title-bar-inactive">
+            <span class="title-bar-text">Compliance by Hour</span>
+        </div>
+        <div class="window-body">
+            <table class="data-table" style="font-size: 12px;">
+                {% for item in hour_items %}
+                <tr>
+                    <td style="width: 50px; white-space: nowrap; font-size: 11px;">{{ item.label }}</td>
+                    <td style="width: 100%;">
+                        <div style="background: #e0e0e0; height: 11px; width: 100%; position: relative;">
+                            <div style="height: 11px; width: {{ item.pct }}%; background-color: {{ item.color }};" class="bar-chart-bar"></div>
+                        </div>
+                    </td>
+                    <td class="mono" style="white-space: nowrap; text-align: right; font-size: 10px;">{{ item.value }}%</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+
+    <div class="window scroll-card">
+        <div class="title-bar title-bar-inactive">
+            <span class="title-bar-text">Violations &middot; last {{ week_items | length }} weeks</span>
+        </div>
+        <div class="window-body">
+            <div class="week-bars" role="img" aria-label="Weekly violation percentage for the last {{ week_items | length }} weeks">
+                {% for w in week_items %}
+                <div class="week-bar-wrap" {% if w.viol_pct is not none %}title="{{ w.week }}: {{ w.viol_pct }}% violations ({{ w.viols }}/{{ w.n }})"{% else %}title="{{ w.week }}: no data"{% endif %}>
+                    <div class="week-bar" style="height: {{ w.bar_pct }}%;{% if w.viol_pct is none %}background: var(--text-muted);{% endif %}"></div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="week-caption">
+                {% if this_week and this_week.viol_pct is not none %}
+                Latest week ({{ this_week.week }}): <strong>{{ this_week.viol_pct }}%</strong> violations
+                {% if prior_avg is not none %}(prior {{ prior_avg }}%){% endif %}
+                {% else %}No recent traffic data.{% endif %}
+                &middot; earlier data archived
+            </div>
+        </div>
+    </div>
+</div>

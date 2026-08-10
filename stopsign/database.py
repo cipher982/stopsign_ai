@@ -738,6 +738,78 @@ class Database:
             ]
 
     @log_execution_time
+    def get_compliance_by_type(self) -> list[dict]:
+        """Compliance + stop stats grouped by vehicle_type (classified subset, all-time)."""
+        with self.Session() as session:
+            rows = session.execute(
+                text("""
+                SELECT va.vehicle_type AS label,
+                       COUNT(*) AS n,
+                       ROUND(SUM((vp.time_in_zone >= 2)::int)::numeric * 100 / COUNT(*), 1) AS compliance_pct,
+                       ROUND(AVG(vp.time_in_zone)::numeric, 2) AS avg_stop_s,
+                       ROUND(AVG(vp.min_speed)::numeric, 1) AS avg_min_speed
+                FROM vehicle_passes vp
+                JOIN vehicle_attributes va ON va.vehicle_pass_id = vp.id
+                WHERE va.vehicle_type IS NOT NULL
+                GROUP BY va.vehicle_type
+                ORDER BY n DESC
+                """)
+            ).fetchall()
+            return [
+                {
+                    "label": r.label,
+                    "n": r.n,
+                    "compliance_pct": float(r.compliance_pct),
+                    "avg_stop_s": float(r.avg_stop_s),
+                    "avg_min_speed": float(r.avg_min_speed),
+                }
+                for r in rows
+            ]
+
+    @log_execution_time
+    def get_compliance_by_hour(self) -> list[dict]:
+        """Compliance by hour of day (Chicago), all passes."""
+        with self.Session() as session:
+            rows = session.execute(
+                text("""
+                SELECT to_char(date_trunc('hour', vp."timestamp" AT TIME ZONE 'America/Chicago'), 'HH24') AS hour,
+                       COUNT(*) AS n,
+                       ROUND(SUM((vp.time_in_zone >= 2)::int)::numeric * 100 / COUNT(*), 1) AS compliance_pct
+                FROM vehicle_passes vp
+                GROUP BY 1
+                ORDER BY 1
+                """)
+            ).fetchall()
+            return [{"hour": r.hour, "n": r.n, "compliance_pct": float(r.compliance_pct)} for r in rows]
+
+    @log_execution_time
+    def get_offenders_weekly(self, weeks: int = 16) -> list[dict]:
+        """Weekly violation rate over the trailing N weeks."""
+        with self.Session() as session:
+            rows = session.execute(
+                text("""
+                SELECT to_char(date_trunc('week', vp."timestamp" AT TIME ZONE 'America/Chicago'), 'YYYY-MM-DD') AS week,
+                       COUNT(*) AS n,
+                       SUM(CASE WHEN vp.time_in_zone < 2 THEN 1 ELSE 0 END) AS viols
+                FROM vehicle_passes vp
+                WHERE vp."timestamp" > now() - make_interval(weeks => :weeks)
+                GROUP BY 1
+                ORDER BY 1
+                """),
+                {"weeks": weeks},
+            ).fetchall()
+            return [
+                {
+                    "week": r.week,
+                    "n": r.n,
+                    "viols": r.viols,
+                    # Handle weeks with zero traffic so we don't report 0% as "great".
+                    "viol_pct": round(r.viols * 100.0 / r.n, 1) if r.n else None,
+                }
+                for r in rows
+            ]
+
+    @log_execution_time
     def get_vehicle_attributes_for_passes(self, pass_ids: list[int]) -> Dict[int, dict]:
         """Bulk lookup vehicle attributes keyed by vehicle_pass_id."""
         if not pass_ids:

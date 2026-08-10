@@ -198,6 +198,87 @@ async def get_best_passes(request: Request):
         return HTMLResponse(f'<div id="bestPasses"><p>Error: {str(e)}</p></div>')
 
 
+@router.get("/api/behavior")
+async def api_behavior(request: Request):
+    """Homepage behavior analytics: compliance by type, by hour, weekly violations."""
+    try:
+        db = _ensure_db(request)
+        by_type = db.get_compliance_by_type()
+        by_hour = db.get_compliance_by_hour()
+        weeks = db.get_offenders_weekly(weeks=16)
+    except Exception as e:
+        logger.error(f"Error in api_behavior: {e}")
+        from fastapi.responses import HTMLResponse
+
+        return HTMLResponse(
+            '<div id="behavior"><p>Behavior data unavailable.</p>'
+            '<button class="btn98" hx-get="/api/behavior" hx-target="#behavior" hx-swap="innerHTML">Retry</button></div>'
+        )
+
+    def risk_color(pct: float | None) -> str:
+        if pct is None:
+            return "var(--text-muted)"
+        if pct >= 90:
+            return "var(--ok)"
+        if pct >= 80:
+            return "var(--warn)"
+        return "var(--bad)"
+
+    type_items = [
+        {
+            "label": t["label"],
+            "n": t["n"],
+            "value": t["compliance_pct"],
+            "pct": max(0.0, min(100.0, t["compliance_pct"])),
+            "color": risk_color(t["compliance_pct"]),
+        }
+        for t in by_type
+    ]
+    hour_items = [
+        {
+            "label": h["hour"] + ":00",
+            "n": h["n"],
+            "value": h["compliance_pct"],
+            "pct": max(0.0, min(100.0, h["compliance_pct"])),
+            "color": risk_color(h["compliance_pct"]),
+        }
+        for h in by_hour
+    ]
+    max_viol = max((w["viol_pct"] or 0) for w in weeks) if weeks else 1
+    week_items = [
+        {
+            "week": w["week"],
+            "viol_pct": w["viol_pct"],
+            "viols": w["viols"],
+            "n": w["n"],
+            "bar_pct": round((w["viol_pct"] or 0) / max_viol * 100, 1) if max_viol else 0,
+        }
+        for w in weeks
+    ]
+    # Lowest-compliance vehicle class with a meaningful sample, for the caption.
+    worst = min(
+        (t for t in by_type if t["n"] >= 50),
+        key=lambda t: t["compliance_pct"],
+        default=None,
+    )
+    this_week = weeks[-1] if weeks else None
+    prior = [w for w in weeks[:-1] if w["viol_pct"] is not None]
+    prior_avg = round(sum(w["viol_pct"] for w in prior) / len(prior), 1) if prior else None
+
+    return templates.TemplateResponse(
+        "partials/behavior.html",
+        {
+            "request": request,
+            "type_items": type_items,
+            "hour_items": hour_items,
+            "week_items": week_items,
+            "worst": worst,
+            "this_week": this_week,
+            "prior_avg": prior_avg,
+        },
+    )
+
+
 @router.get("/api/vehicles/summary")
 async def api_vehicles_summary(request: Request):
     try:
