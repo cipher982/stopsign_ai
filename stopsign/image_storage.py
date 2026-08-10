@@ -236,6 +236,9 @@ def _process_upload_item(local_path: str, object_name: str, db: Optional[Databas
                 _mark_upload_state(object_name, "uploaded")
             else:
                 _mark_upload_state(object_name, "failed")
+            # The success write above happened before the state was final; persist
+            # the accurate pending/uploaded counts.
+            _write_health_to_redis()
             return
         except Exception as e:
             if attempt == 2:
