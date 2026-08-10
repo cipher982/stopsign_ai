@@ -1,185 +1,111 @@
 # Stop Sign AI - Deployment & Architecture
 
 ## Deployment Overview
-Production runs on **cube** in two Docker deployment tracks:
-1. **rtsp_to_redis** - Direct Docker Compose at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis`; captures RTSP stream and pushes frames to Redis
-2. **Main compose stack** - Direct Docker Compose at `/home/drose/manual-apps/stopsign_ai/docker/production`; run with project name `is844go80k088kcgo88s8cs8` so existing Docker volumes are reused:
-   - `video_analyzer` - AI detection and tracking (GPU-accelerated)
-   - `ffmpeg_service` - HLS stream generation for web viewing
-   - `web_server` - FastAPI web interface and API
+Production: two Docker tracks on **cube**:
+1. **rtsp_to_redis** Compose at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis` — captures RTSP stream, pushes frames to Redis. Capture runs `restart: always` (both stacks do).
+2. **Main stack** Compose at `/home/drose/manual-apps/stopsign_ai/docker/production`, project name `is84480g/k088kc/go88s8cs8` so existing Docker volumes are reused:
+   - `video_analyzer` - GPU AI detection/tracking
+   - `ffmpeg_service` - HLS segment generation for web
+   - `web_server` - FastAPI web interface + API
 
-## Data Persistence Architecture
+`make prod-help` prints the production deploy layout (compose files + targets). YOLO weights live in `models/` (gitignored); keep them on cube, don't commit.
 
-### PostgreSQL Database (shared PostgreSQL container on clifford, NOT cube)
-- **Location**: `clifford.coin-castor.ts.net:5432/stopsign` (Tailscale TCP forward)
-- **Container**: `kgcos0o4cw4ok0ss0g08wswo` (one retained PostgreSQL 16 daemon shared with Collector; the empty legacy `rag` database was retired 2026-07-29)
-- **Tables**:
-  - `vehicle_passes` - Core metrics (timestamp, speed, stop duration, time_in_zone, image_path)
-  - `vehicle_pass_raw` - Per-pass raw evidence used for later analysis
-  - `config_settings` - Dynamic configuration with version history
-- **Current Data**: ~41k passes as of Dec 2025 (query `SELECT COUNT(*) FROM vehicle_passes` for current)
-- **Environment Var**: Infisical `DB_URL` injects restricted owner/login
-  `stopsign_app` into the analyzer and web processes. The old shared-superuser
-  URL is a bounded rollback artifact through 2026-08-05, not an application
-  credential.
+## Data Persistence
 
-### MinIO S3 Storage (clifford, NOT cube)
-- **Endpoint**: `minio-nwcs0c4g0w8gcgow0gscgckg.5.161.97.53.sslip.io`
-- **Public URL**: `https://api.files.drose.io`
-- **Container**: Find with `ssh clifford "docker ps | grep minio"` (Coolify hash changes on deploy)
-- **Bucket**: `vehicle-images`
-- **Storage**: ~1.5 GiB, 119k+ images as of Dec 2025 (use `mc ls` for current)
-- **Format**: Cropped vehicle JPEGs named `vehicle_{uuid}_{timestamp}.jpg`
-- **Image Path in DB**: Stored as `minio://vehicle-images/vehicle_*.jpg`
+### PostgreSQL (shared container on clifford, NOT cube)
+- **Location**: `clifford.coin-castor.ts.net:5432/stopsign` (Tailscale TCP)
+- **Container**: `kgcos0o4cw4ok0ss0g08wswo` — one retained PostgreSQL 16 daemon shared with Collector; the empty legacy `rag` DB was retired 2026-07-29
+- **Tables**: `vehicle_passes` (timestamp, speed, stop duration, time_in_zone, image_path), `vehicle_pass_raw` (per-pass raw evidence), `config_settings` (versioned config, full history)
+- **Data**: ~41k passes as of Dec 2025 (`SELECT COUNT(*) FROM vehicle_passes`)
+- **Env**: Infisical `DB_URL` injects restricted owner/login `stopsign_app` into analyzer + web. The old shared-superuser URL is a bounded rollback artifact through 2026-08-05, not an app credential.
+
+### MinIO S3 (clifford, NOT cube)
+- **Endpoint**: `minio-nwcs0c4g0w8gcgow0gscgckg.5.161.97.53.sslip.io`; public `https://api.files.drose.io`
+- **App**: estate `object-storage` on clifford (`/home/drose/manual-apps/object-storage`, compose project `object-storage`, stable container `minio`)
+- **Bucket**: `vehicle-images` — ~1.5 GiB / 119k+ images as of Dec 2025 (`mc ls` for current)
+- **Format**: cropped JPEGs `vehicle_{uuid}_{timestamp}.jpg`; DB `image_path` = `minio://vehicle-images/vehicle_*.jpg`
 
 ### Data Flow
-1. **RTSP Camera** → rtsp_to_redis container → **Redis** (raw frames on cube)
-2. **video_analyzer** reads frames from Redis → YOLO detection → tracking logic
-3. When vehicle exits stop zone:
-   - Cropped vehicle image → **MinIO** (stopsign/tracking.py:547-593)
-   - Metrics record → **PostgreSQL** (stopsign/database.py:153-169)
-   - Both on **clifford** via network calls from cube
-4. **web_server** queries PostgreSQL + serves images via MinIO public URL
+1. RTSP camera → rtsp_to_redis → **Redis** (raw frames, cube)
+2. `video_analyzer`: Redis frames → YOLO → tracking logic
+3. Stop-zone exit: crop → **MinIO** (`stopsign/tracking.py:547-593`); metrics → **PostgreSQL** (`stopsign/database.py:153-169`) — both network calls from cube to clifford
+4. `web_server` queries PostgreSQL, serves images via MinIO public URL
 
-## HLS Stream Architecture
+## HLS Stream
 
-### Internal Pipeline (cube)
 ```
-Camera (WiFi) → RTSP → rtsp_to_redis → Redis → ffmpeg_service → HLS files → web_server
+Camera (WiFi) → RTSP → rtsp_to_redis → Redis → ffmpeg_service → HLS → web_server
 ```
+- `ffmpeg_service`: 10 segments × 2s; `web_server` serves `/stream/stream.m3u8`
 
-- **rtsp_to_redis**: Captures RTSP stream, pushes raw frames to Redis
-- **ffmpeg_service**: Reads from Redis, generates HLS segments (10 segments × 2 seconds each)
-- **web_server**: Serves HLS playlist at `/stream/stream.m3u8`
-
-### External Access (as of Jan 2026)
+External access (Jan 2026):
 
 | Path | URL | Latency |
 |------|-----|---------|
 | **Direct** (recommended) | `http://stream.crestwoodstopsign.com:8443/stream/stream.m3u8` | ~70ms |
-| Via Cloudflare Tunnel | `https://crestwoodstopsign.com/stream/stream.m3u8` | 4-14s |
+| Cloudflare Tunnel | `https://crestwoodstopsign.com/stream/stream.m3u8` | 4-14s |
 
-**Direct access setup:**
-- **DNS**: `stream.crestwoodstopsign.com` → home IP (Cloudflare DNS-only, grey cloud, NOT proxied)
-- **Router**: AT&T port forward 8443 → cube:8002 (TCP)
-- **Why**: Cloudflare Tunnel relays all traffic through their network, adding unacceptable latency for video streaming
+Direct setup: DNS `stream.crestwoodstopsign.com` → home IP (Cloudflare grey cloud, NOT proxied); AT&T router port-forwards 8443 → cube:8002 (TCP). Tunnel relay adds unacceptable video latency.
+Hybrid: main site behind Cloudflare Tunnel (no exposed ports); stream direct (70ms vs 4-14s).
+Used by Sauron's `crestwood-camera` job (AI vision, every 15 min).
 
-**Hybrid architecture:**
-- Main website (`crestwoodstopsign.com`) → Cloudflare Tunnel (security, no exposed ports)
-- Video stream → Direct port forward (performance, ~70ms vs 4-14s)
+## Implementation Details
+- **Capture**: images at "capture line" crossing (configurable via debug UI), 10% bbox padding, synchronous MinIO upload during pass processing, 1:1 `image_path` mapping
+- **Config**: `/app/config/config.yaml` (volume-mounted); dynamic web-UI updates → `config_settings` (versioned stop zones, lines, thresholds)
+- **Redis**: ephemeral frame buffer only (no persistence); `raw_frames` (in), `processed_frames` (out); inter-container comms on cube
 
-**Used by:** Sauron's `crestwood-camera` job for AI vision monitoring every 15 minutes.
-
-## Key Implementation Details
-
-### Image Capture
-- Images captured at "capture line" crossing (configurable via debug UI)
-- 10% padding added around vehicle bounding box
-- Uploaded synchronously to MinIO during vehicle pass processing
-- Path stored in database as `image_path` field for 1:1 mapping
-
-### Configuration Management
-- Config file: `/app/config/config.yaml` (mounted volume in containers)
-- Dynamic updates via web UI stored in `config_settings` table with full history
-- Stop zones, lines, thresholds all configurable and versioned
-
-### Redis Usage
-- Ephemeral frame buffer only (no persistence)
-- Keys: `raw_frames` (RTSP input), `processed_frames` (annotated output)
-- Used for inter-container communication on cube
-
-## Troubleshooting Data Issues
-
-**PostgreSQL is in the shared container on clifford, not a native host service.**
-
+## Troubleshooting Data
+PostgreSQL is in the shared clifford container, not a native host service. `DB_URL` is injected, not visible via `docker exec env`.
 ```bash
-# Get credentials from Infisical; DB_URL is injected into the app process and is not visible via docker exec env
+# Get creds from Infisical (Tailscale required for query)
 python3 ~/git/me/scripts/infisical-get.py DB_URL --project-id 9c373776-768f-454b-a7b3-d1cc40deb475 --env prod
-# Returns: postgresql://stopsign_app:<password>@clifford.coin-castor.ts.net:5432/stopsign
-
-# Query directly from local machine (Tailscale required)
-PGPASSWORD="<from above>" psql -h clifford.coin-castor.ts.net -p 5432 -U stopsign_app -d stopsign
+# → postgresql://stopsign_app:<password>@clifford.coin-castor.ts.net:5432/stopsign
+PGPASSWORD="<above>" psql -h clifford.coin-castor.ts.net -p 5432 -U stopsign_app -d stopsign
 ```
+- MinIO: `mc` client or web console at endpoint
+- Creds are server-side env vars: RTSP at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env`; main stack at `/home/drose/manual-apps/stopsign_ai/docker/production/.env`
 
-- MinIO access: Use mc client or web console at MinIO endpoint
-- All credentials are server-side environment variables. RTSP uses `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env`; the main stack uses `/home/drose/manual-apps/stopsign_ai/docker/production/.env`.
+## Speed Tracking
 
-## Speed Tracking Implementation
+Pipeline (tracking.py), layers before storage:
+1. **Median of last 6 raw YOLO positions** → kills single-frame bbox outliers
+2. **EMA α=0.5** → `raw_speed` (used for stop detection)
+3. **EMA α=0.3** → `speed` (heavier lag, display/parked logic)
 
-### Speed Pipeline (tracking.py)
-Speed goes through three layers before being stored:
-1. **Median over last 6 raw YOLO positions** → kills single-frame bbox outliers
-2. **EMA α=0.5** → `raw_speed` (lighter smoothing, used for stop detection)
-3. **EMA α=0.3** → `speed` (heavier lag, used for display/parked logic)
+`min_speed` stored in DB = **5th percentile of all `raw_speed`** samples while car in stop zone.
 
-`min_speed` stored in DB = **5th percentile of all `raw_speed` samples** collected while the car was in the stop zone.
+### Kalman Limitation
+Kalman smooths `state.location` (display) but speed = `state.track` (raw YOLO positions, tracking.py:134) — filter has no effect on speed; smoothing is the median+EMA pipeline above. Possible fix: append Kalman-smoothed position to `state.track`. Not implemented.
 
-### Kalman Filter Limitation
-The Kalman filter smooths `state.location` (used for display/visualization) but **speed is computed from `state.track` which stores raw YOLO positions** (tracking.py:134). The filter has no effect on speed measurement. Smoothing is handled by the median + EMA pipeline above.
-
-Potential fix: append Kalman-smoothed position to `state.track` instead of raw. Not yet implemented.
-
-### Key Thresholds (config/config.yaml)
+### Thresholds (config/config.yaml)
 - `stop_speed_threshold: 20` — raw_speed ≤ 20 px/s counts toward `stop_duration`
-- `max_movement_speed: 20` — same threshold for "stationary" state
-- `unparked_speed_threshold: 30` — speed to trigger unparked transition
+- `max_movement_speed: 20` — same threshold for "stationary"
+- `unparked_speed_threshold: 30` — triggers unparked transition
 
 ### Data Quality — What to Filter
-When doing any analysis on `vehicle_passes`:
-- **Exclude `time_in_zone >= 30`** (191 records as of Feb 2026): parked/street-parked cars where the 60s zone timeout didn't fire. These have `min_speed ≈ 0` and `time_in_zone` of hours — tracking artifacts, not real passes.
-- **Anomaly window `2026-02-19 18:00` – `2026-02-21 14:00`**: Stop zone was misconfigured (placed in intersection). Feb 20 has zero records; surrounding hours have elevated speed medians. Only 39 affected records.
+- **Exclude `time_in_zone >= 30`** (191 records, Feb 2026): parked cars where the 60s zone timeout didn't fire; `min_speed ≈ 0`, hours-long zones — tracking artifacts
+- **Anomaly window `2026-02-19 18:00` – `2026-02-21 14:00`**: stop zone misconfigured (in intersection); Feb 20 zero records; 39 affected records
+- **Calibrated stops** (parked-car noise floor, Feb 2026, ~53k passes — `docs/analysis/2026-02-21-stop-calibration.md`): noise floor ~6 px/s (parked p95 < 2.3, max 6.1); `min_speed < 10 px/s` = hardware-calibrated stop (above noise, below bimodal 10-15 dip); full stop = `min_speed < 10 AND time_in_zone >= 3s` ≈ 10.8% of clean traffic
+- Score on `time_in_zone` (primary); `min_speed` is a binary gate — don't use speed alone
 
-### Calibrated Stop Thresholds
-From parked-car noise floor analysis (Feb 2026, ~53k passes — see `docs/analysis/2026-02-21-stop-calibration.md`):
-- **Noise floor ceiling: ~6 px/s** (parked car p95 < 2.3 px/s, max 6.1 px/s)
-- **`min_speed < 10 px/s`** = hardware-calibrated "stopped" signal (sits clearly above noise, below the bimodal dip at 10–15 px/s)
-- **Full stop definition**: `min_speed < 10 AND time_in_zone >= 3s` ≈ 10.8% of clean traffic
-- Do NOT use speed alone for scoring — `time_in_zone` is the primary ranking signal; `min_speed` is a binary gate
+## Google Ads
 
-## Google Ads Campaign
+Campaign **Stop Sign Nanny - DIY Hackers**: ID `23374137482`, ad group `193403091587`. Search only, exact match, manual CPC, $1/day (~$30/mo), landing `/about`. No conversion tracking (awareness only).
 
-**Site**: https://crestwoodstopsign.com
-
-### Campaign Details (Dec 2025)
-- **Campaign ID**: `23374137482`
-- **Ad Group ID**: `193403091587`
-- **Name**: Stop Sign Nanny - DIY Hackers
-- **Budget**: $1/day (~$30/month)
-- **Strategy**: Search only, exact match, manual CPC
-- **Landing Page**: /about
-
-### Keywords (19 exact match, 3 audience segments)
+Keywords (19 exact, 3 audience segments):
 - **DIY/Maker**: raspberry pi traffic camera, raspberry pi yolo, diy ai camera, yolo live demo, computer vision live stream, traffic camera diy project, ai traffic camera project, home traffic camera ai, diy object detection
 - **Frustrated Neighbor**: cars running stop signs, stop sign violations neighborhood, do cars stop at stop signs, traffic safety residential
 - **Data/Voyeur**: traffic pattern analysis, vehicle counting camera, intersection traffic data, live traffic camera, real time street camera, watch traffic live
 
-### Common Commands
 ```bash
 cd ~/git/google-ads-cli
-
-# Check campaign performance
 uv run ads report summary --period week
 uv run ads keywords list --campaign-id 23374137482
-
-# Pause/enable campaign
 uv run ads campaigns pause 23374137482
 uv run ads campaigns enable 23374137482
-
-# Add more keywords
 uv run ads keywords add 193403091587 "new keyword here" --match-type exact
 ```
+Later gtag.js: follow HDRPop pattern in `~/git/hdr` (GOOGLE_ADS_ID env var + gtag snippet).
 
-### Notes
-- No conversion tracking (awareness campaign only)
-- To add gtag.js later: follow HDRPop pattern in ~/git/hdr (GOOGLE_ADS_ID env var + gtag snippet)
-
-## SEO & Structured Data
-
-**Implemented Dec 2025:**
-- **Meta tags**: Description, Open Graph, Twitter Cards in `stopsign/components.py` (`page_head_component`)
-- **JSON-LD**: WebSite, Person, WebApplication, VideoObject, Dataset schemas (same file)
-- **robots.txt**: `/static/robots.txt` served at `/robots.txt`
-- **sitemap.xml**: `/static/sitemap.xml` served at `/sitemap.xml`
-- **Google Search Console**: Sitemap submitted, 3 pages discovered
-
-Routes for SEO files defined in `stopsign/web_server.py` (search for `robots.txt`).
+## SEO
+Dec 2025: meta (description, Open Graph, Twitter Cards) + JSON-LD (WebSite, Person, WebApplication, VideoObject, Dataset) in `stopsign/components.py` (`page_head_component`); `/static/robots.txt` → `/robots.txt`; `/static/sitemap.xml` → `/sitemap.xml`; Google Search Console sitemap submitted, 3 pages. Routes in `stopsign/web_server.py` (search `robots.txt`).
