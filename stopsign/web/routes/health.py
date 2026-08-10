@@ -14,8 +14,12 @@ from sqlalchemy import text
 
 from stopsign.database import Database
 from stopsign.hls_health import parse_hls_playlist
+from stopsign.settings import ANALYZER_BOOT_TS_KEY
+from stopsign.settings import ANALYZER_LAST_FRAME_AT_KEY
+from stopsign.settings import ANALYZER_STALL_KEY
 from stopsign.settings import ARCHIVE_HEALTH_REDIS_KEY
 from stopsign.settings import DB_URL
+from stopsign.settings import FFMPEG_HEALTH_KEY
 from stopsign.settings import GRACE_STARTUP_SEC
 from stopsign.settings import REDIS_URL
 from stopsign.web.app import STREAM_FS_PATH
@@ -113,6 +117,90 @@ async def archive_health():
     except Exception as e:
         logger.warning(f"archive_health read failed: {e}")
         return JSONResponse({"available": False, "error": str(e)})
+
+
+@router.get("/api/pipeline-health")
+async def pipeline_health():
+    """Aggregated capture->analyzer->archive chain health for alerting.
+
+    Exposes, in one read-only endpoint: archive upload health (same signal as
+    /api/archive-health), analyzer frame age / uptime / last stall reason, the
+    ffmpeg new-vs-dup ratio, and HLS playlist freshness. The Sauron
+    stopsign-pipeline-health job polls this so a silent freeze anywhere in the
+    chain pages instead of going unnoticed for days.
+    """
+    try:
+        r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=0.3, socket_timeout=0.3)
+    except Exception as e:
+        return JSONResponse({"available": False, "error": f"redis client error: {e}"})
+
+    now = time.time()
+    payload: dict = {"generated_at": now, "available": True}
+
+    # Archive upload health (mirrors /api/archive-health).
+    try:
+        raw = r.get(ARCHIVE_HEALTH_REDIS_KEY)
+        if raw:
+            archive = json.loads(raw)
+            archive["available"] = True
+        else:
+            archive = {"available": False, "detail": "No archive health signal yet (analyzer has not recorded one)"}
+    except Exception as e:
+        archive = {"available": False, "error": str(e)}
+    payload["archive"] = archive
+
+    # Analyzer: last-frame time (age grows after death by design), boot time, last stall.
+    analyzer: dict = {}
+    try:
+        last_frame_raw = r.get(ANALYZER_LAST_FRAME_AT_KEY)
+        boot_raw = r.get(ANALYZER_BOOT_TS_KEY)
+        stall_raw = r.get(ANALYZER_STALL_KEY)
+        analyzer["available"] = bool(last_frame_raw or boot_raw)
+        if last_frame_raw:
+            last_frame_at = float(last_frame_raw)
+            analyzer["last_frame_at"] = last_frame_at
+            analyzer["frame_age_seconds"] = round(now - last_frame_at, 1)
+        if boot_raw:
+            boot_ts = float(boot_raw)
+            analyzer["started_at"] = boot_ts
+            analyzer["uptime_seconds"] = round(now - boot_ts, 1)
+        if stall_raw:
+            try:
+                analyzer["last_stall"] = json.loads(stall_raw)
+            except Exception:
+                analyzer["last_stall"] = None
+    except Exception as e:
+        analyzer = {"available": False, "error": str(e)}
+    payload["analyzer"] = analyzer
+
+    # FFmpeg: dup-ratio snapshot written every 5s. dup_pct -> ~100 means ffmpeg is
+    # repeating the last frame because the analyzer stopped producing new ones.
+    try:
+        ff_raw = r.get(FFMPEG_HEALTH_KEY)
+        if ff_raw:
+            ff = json.loads(ff_raw)
+            ff["available"] = True
+            ff_ts = ff.get("ts")
+            ff["snapshot_age_seconds"] = round(now - float(ff_ts), 1) if ff_ts else None
+        else:
+            ff = {"available": False, "detail": "No ffmpeg health snapshot yet (service starting?)"}
+    except Exception as e:
+        ff = {"available": False, "error": str(e)}
+    payload["ffmpeg"] = ff
+
+    # HLS playlist freshness (same source as /health/stream; one-stop for alerting).
+    try:
+        hls = _parse_hls_playlist(STREAM_FS_PATH)
+        age = hls.get("age_seconds")
+        payload["hls"] = {
+            "fresh": bool(hls.get("exists")) and age is not None and age <= hls.get("threshold_sec", 60.0),
+            "age_seconds": age,
+            "segments_count": hls.get("segments_count", 0),
+        }
+    except Exception as e:
+        payload["hls"] = {"available": False, "error": str(e)}
+
+    return JSONResponse(payload)
 
 
 @router.get("/health/stream")

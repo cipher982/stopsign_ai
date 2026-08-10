@@ -15,6 +15,7 @@ from redis import exceptions as redis_exceptions
 from stopsign.frame_codec import unpack_frame
 from stopsign.hls_health import parse_hls_playlist
 from stopsign.service_status import FFmpegServiceStatusMixin
+from stopsign.settings import FFMPEG_HEALTH_KEY
 from stopsign.settings import GRACE_STARTUP_SEC
 from stopsign.settings import PROCESSED_FRAME_SHAPE_KEY
 from stopsign.telemetry import get_tracer
@@ -640,6 +641,31 @@ def main():
                     snap_count,
                     stale_drop_count,
                 )
+                # Pipeline-health signal: persist the new-vs-dup snapshot so the web
+                # /api/pipeline-health endpoint and Sauron can alert without scraping
+                # logs. A high dup percentage means ffmpeg is repeating the last frame
+                # because the analyzer stopped producing new ones (frozen frame).
+                if REDIS_CLIENT is not None:
+                    try:
+                        REDIS_CLIENT.set(
+                            FFMPEG_HEALTH_KEY,
+                            json.dumps(
+                                {
+                                    "fps": round(actual_fps, 2),
+                                    "new_fps": round(new_fps, 2),
+                                    "dup_pct": round(dup_pct, 1),
+                                    "dup_count": dup_frame_count,
+                                    "new_count": new_frame_count,
+                                    "snaps": snap_count,
+                                    "dropped_stale": stale_drop_count,
+                                    "last_frame_age_sec": round(max(0.0, time.monotonic() - LAST_FRAME_TS), 1),
+                                    "ts": time.time(),
+                                }
+                            ),
+                            ex=300,
+                        )
+                    except Exception as e:
+                        logger.debug("Failed to persist ffmpeg health snapshot: %s", e)
                 fps_frame_count = 0
                 new_frame_count = 0
                 dup_frame_count = 0

@@ -496,6 +496,16 @@ class Database:
 
     @log_execution_time
     def get_recent_vehicle_passes(self, limit=10):
+        # The image_path filter is deliberate: it separates CAPTURED passes from
+        # no-capture passes. Passes recorded without an image (local save failed, or
+        # the car never crossed the capture line) have an empty/NULL image_path and
+        # are excluded so the live dashboard only counts passes that have visual
+        # evidence. Since August 2026, a successful LOCAL save counts as captured:
+        # the path is recorded immediately as local://<filename> when the image is
+        # written to disk, and the async archive worker later flips it to
+        # bremen://<filename> once the object is on Bremen MinIO. Both prefixes (plus
+        # the pre-August-2026 minio:// legacy prefix) therefore mean "captured";
+        # only NULL/"" means the pass has no image.
         with self.Session() as session:
             result = (
                 session.query(VehiclePass)

@@ -1,5 +1,6 @@
 import logging
 import math
+import time
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -24,6 +25,9 @@ Line = Tuple[Point, Point]
 
 # Raw sample schema (processed coordinate space)
 RAW_SAMPLE_SCHEMA = ["t", "x", "y", "x1", "y1", "x2", "y2", "raw_speed", "speed"]
+
+# Bounded retries for the pass insert on transient DB errors (1s, 2s backoff).
+VEHICLE_PASS_INSERT_ATTEMPTS = 3
 
 # Set logging
 logging.basicConfig(level=logging.INFO)
@@ -815,34 +819,67 @@ class StopDetector:
                 except Exception as e:
                     logger.error("Failed to build raw payload for car_id=%s: %s", car.id, e)
 
-                pass_id = self.db.add_vehicle_pass(
-                    vehicle_id=car.id,
-                    time_in_zone=car.state.zone.time_in_zone,
-                    stop_duration=car.state.zone.stop_duration,
-                    min_speed=car.state.zone.min_speed,
-                    image_path=car.state.capture.image_path,
-                    entry_time=car.state.zone.entry_time,
-                    exit_time=car.state.zone.exit_time,
-                    entry_speed=entry_speed,
-                    decel_score=decel_score,
-                    track_quality=track_quality,
-                    stop_pos_x=stop_pos_x,
-                    stop_pos_y=stop_pos_y,
-                    stream_queue_depth_exit=stream_queue_depth_exit,
-                    stream_lag_est_sec=stream_lag_est_sec,
-                    raw_payload=raw_payload,
-                    sample_count=sample_count,
-                    raw_complete=raw_payload.get("raw_complete", False) if raw_payload else False,
-                )
+                # Persist the pass. A transient DB error (e.g. a connection dropout to
+                # clifford) must not silently drop the pass: retry briefly with backoff,
+                # then surface loudly via an error log + analyzer exception metric.
+                pass_id = None
+                insert_attempt = 0
+                while True:
+                    try:
+                        pass_id = self.db.add_vehicle_pass(
+                            vehicle_id=car.id,
+                            time_in_zone=car.state.zone.time_in_zone,
+                            stop_duration=car.state.zone.stop_duration,
+                            min_speed=car.state.zone.min_speed,
+                            image_path=car.state.capture.image_path,
+                            entry_time=car.state.zone.entry_time,
+                            exit_time=car.state.zone.exit_time,
+                            entry_speed=entry_speed,
+                            decel_score=decel_score,
+                            track_quality=track_quality,
+                            stop_pos_x=stop_pos_x,
+                            stop_pos_y=stop_pos_y,
+                            stream_queue_depth_exit=stream_queue_depth_exit,
+                            stream_lag_est_sec=stream_lag_est_sec,
+                            raw_payload=raw_payload,
+                            sample_count=sample_count,
+                            raw_complete=raw_payload.get("raw_complete", False) if raw_payload else False,
+                        )
+                        break
+                    except Exception as e:
+                        insert_attempt += 1
+                        logger.error(
+                            "Failed to persist vehicle pass for car_id=%s (attempt %d/%d): %s",
+                            car.id,
+                            insert_attempt,
+                            VEHICLE_PASS_INSERT_ATTEMPTS,
+                            e,
+                        )
+                        if insert_attempt >= VEHICLE_PASS_INSERT_ATTEMPTS:
+                            break
+                        time.sleep(insert_attempt)  # 1s, 2s backoff
                 if pass_id is None:
-                    logger.warning("Failed to persist vehicle pass for car_id=%s", car.id)
-                logger.info(
-                    f"Vehicle pass recorded: ID={car.id}, "
-                    f"Time in zone={car.state.zone.time_in_zone:.2f}s, "
-                    f"Stop duration={car.state.zone.stop_duration:.2f}s, "
-                    f"Min speed={car.state.zone.min_speed:.2f}px/s "
-                    f"Timestamp={datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')}"
-                )
+                    logger.error(
+                        "Vehicle pass LOST for car_id=%s after %d insert attempts - DB unreachable; "
+                        "pass data (time_in_zone=%.2fs) not recorded",
+                        car.id,
+                        insert_attempt + 1,
+                        car.state.zone.time_in_zone,
+                    )
+                    analyzer = self._video_analyzer
+                    if analyzer is not None:
+                        try:
+                            analyzer.increment_exception_counter("DatabaseError", "add_vehicle_pass")
+                        except Exception:
+                            pass
+                else:
+                    logger.info(
+                        f"Vehicle pass recorded: ID={car.id}, "
+                        f"Time in zone={car.state.zone.time_in_zone:.2f}s, "
+                        f"Stop duration={car.state.zone.stop_duration:.2f}s, "
+                        f"Min speed={car.state.zone.min_speed:.2f}px/s "
+                        f"Timestamp={datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
                 # Reset state
                 self._reset_car_state(car)
 

@@ -41,6 +41,9 @@ from stopsign.frame_codec import LEGACY_MAGIC
 from stopsign.frame_codec import pack_frame
 from stopsign.frame_codec import unpack_frame
 from stopsign.service_status import VideoAnalyzerStatusMixin
+from stopsign.settings import ANALYZER_BOOT_TS_KEY
+from stopsign.settings import ANALYZER_LAST_FRAME_AT_KEY
+from stopsign.settings import ANALYZER_STALL_KEY
 from stopsign.settings import DB_URL
 from stopsign.settings import FRAME_METADATA_KEY
 from stopsign.settings import PROCESSED_FRAME_KEY
@@ -98,6 +101,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.last_processed_time = time.time()
         self.last_fps_update = time.time()
         self.stats_update_interval = 300  # Update stats every 5 minutes
+
+        # Pipeline-health + error-handling state
+        self._redis_error_backoff = 0.0  # grows 1s -> 30s while Redis is unreachable
+        self._last_discard_log_ts = 0.0  # rate-limit undecodable-frame logs (once/60s)
 
         # YOLO timing - run every frame on GPU, can be throttled for CPU
         self.last_yolo_ts = 0.0
@@ -220,6 +227,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         # Error and performance metrics
         self.exception_counter = Counter("exceptions_total", "Total number of exceptions", ["type", "method"])
+        self.frames_discarded = Counter("frames_discarded_total", "Frames skipped because they could not be decoded")
         self.current_memory_usage = Gauge("current_memory_usage_bytes", "Current memory usage of the process")
         self.current_cpu_usage = Gauge("current_cpu_usage_percent", "Current CPU usage percentage of the process")
 
@@ -328,7 +336,13 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             return None
 
     def get_frame_with_meta(self, key: str) -> Optional[Tuple[np.ndarray, float]]:
-        """Pop a frame and return (ndarray, capture_ts)."""
+        """Pop a frame and return (ndarray, capture_ts).
+
+        An empty BRPOP (no frame in the window) is normal idle and returns None
+        without logging. Redis failures are caught and backed off exponentially
+        (1s -> 30s) instead of crashing or spinning an error loop; the stall
+        watchdog still guards end-to-end freshness if Redis stays down.
+        """
         try:
             # Use BRPOP so LPUSH/BRPOP forms a FIFO queue (oldest first)
             frame_data = self.redis_client.brpop([key], timeout=1)
@@ -336,8 +350,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 _, data = frame_data  # type: ignore
                 frame, capture_ts = self._parse_raw_frame(data)
                 if frame is None or capture_ts is None:
-                    logger.error("Discarding frame without valid capture timestamp metadata")
+                    # Undecodable frame: skip it with a counter, never raise. Log at most
+                    # once per minute so a garbage pipeline cannot spam the log.
+                    self.frames_discarded.inc()
+                    if time.time() - self._last_discard_log_ts > 60:
+                        logger.error("Discarding frame without valid capture timestamp metadata")
+                        self._last_discard_log_ts = time.time()
                     return None
+                self._redis_error_backoff = 0.0
 
                 # With decoupled YOLO, we output every frame for smooth video.
                 # Only log high lag for monitoring, but don't skip frames.
@@ -355,6 +375,16 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                     except Exception as e:
                         logger.debug(f"Lag check failed: {e}")
                 return frame, capture_ts
+            self._redis_error_backoff = 0.0
+            return None
+        except redis_exceptions.RedisError as e:
+            # Redis unreachable: back off instead of tight-looping. The watchdog
+            # terminates the container if freshness is not restored within its window.
+            self._redis_error_backoff = min(30.0, (self._redis_error_backoff or 1.0) * 2)
+            logger.warning(
+                "Redis error retrieving frame from Redis: %s (backing off %.0fs)", e, self._redis_error_backoff
+            )
+            time.sleep(self._redis_error_backoff)
             return None
         except Exception as e:
             logger.error(f"Error retrieving frame+meta from Redis: {str(e)}")
@@ -373,6 +403,12 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         try:
             self.redis_client.ping()
             logger.info("Successfully connected to Redis")
+            # Pipeline-health signal: process start time so restarts are observable
+            # (a restart loop shows up as a boot_ts that keeps advancing).
+            try:
+                self.redis_client.set(ANALYZER_BOOT_TS_KEY, time.time())
+            except Exception as boot_err:
+                logger.warning(f"Failed to record analyzer boot_ts: {boot_err}")
         except redis_exceptions.ConnectionError as e:
             logger.error(f"Failed to connect to Redis: {str(e)}")
             return
@@ -404,6 +440,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 now_ts = time.time()
                 self.last_processed_time = now_ts
                 self.update_status_metric("last_frame_ts", now_ts)
+
+                # Pipeline-health signal: wall-clock time of the newest analyzer-processed
+                # frame. No TTL by design - a growing age after the analyzer dies is exactly
+                # the stall the pipeline-health job alerts on.
+                try:
+                    self.redis_client.set(ANALYZER_LAST_FRAME_AT_KEY, now_ts)
+                except Exception:
+                    pass
 
                 raw_queue_depth = self.redis_client.llen(RAW_FRAME_KEY)  # type: ignore
                 processed_queue_depth = self.redis_client.llen(PROCESSED_FRAME_KEY)  # type: ignore
@@ -458,12 +502,22 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 elif self.path == "/ready":
                     lag = time.time() - analyzer.last_processed_time
                     ready = lag <= ANALYZER_STALL_SEC
+                    # Reflect any recorded stall reason (written by the watchdog before
+                    # exiting) so readiness shows WHY the analyzer is not ready.
+                    stall_reason = None
+                    try:
+                        raw_stall = analyzer.redis_client.get(ANALYZER_STALL_KEY)
+                        if raw_stall:
+                            stall_reason = json.loads(raw_stall)
+                    except Exception:
+                        stall_reason = None
                     status_code = 200 if ready else 503
                     payload = json.dumps(
                         {
                             "ready": ready,
                             "frame_lag_seconds": lag,
                             "stall_threshold_seconds": ANALYZER_STALL_SEC,
+                            "stall_reason": stall_reason,
                         }
                     ).encode()
                     self.send_response(status_code)
@@ -507,6 +561,24 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                         lag,
                         ANALYZER_STALL_SEC,
                     )
+                    # Record the stall reason observably BEFORE exiting so the
+                    # pipeline-health endpoint/job can surface why the analyzer died.
+                    try:
+                        self.redis_client.set(
+                            ANALYZER_STALL_KEY,
+                            json.dumps(
+                                {
+                                    "triggered_at": time.time(),
+                                    "lag_seconds": lag,
+                                    "threshold_seconds": ANALYZER_STALL_SEC,
+                                    "reason": f"no frames processed for {lag:.1f}s "
+                                    f"(threshold {ANALYZER_STALL_SEC:.1f}s)",
+                                }
+                            ),
+                            ex=900,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to record analyzer stall reason: {e}")
                     os._exit(1)
 
         thread = threading.Thread(target=watchdog_loop, daemon=True)
