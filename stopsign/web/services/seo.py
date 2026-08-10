@@ -7,27 +7,27 @@ PAGE_METADATA = {
     "home": {
         "description": "Real-time AI traffic monitoring system using YOLO computer vision for stop sign compliance detection. Watch live vehicle detection and tracking at the Crestwood intersection with advanced traffic camera AI.",
         "url": f"{BASE_URL}/",
-        "image": f"{BASE_URL}/static/screenshot_afternoon.png",
+        "image": f"{BASE_URL}/static/screenshot_afternoon.jpg",
     },
     "about": {
         "description": "Learn about Stop Sign Nanny's real-time computer vision pipeline for AI traffic monitoring. Built with YOLO detection, FastAPI, and advanced stop sign compliance tracking technology.",
         "url": f"{BASE_URL}/about",
-        "image": f"{BASE_URL}/static/screenshot_afternoon.png",
+        "image": f"{BASE_URL}/static/screenshot_afternoon.jpg",
     },
     "records": {
         "description": "View vehicle records and stop sign compliance statistics from our AI traffic monitoring system. Browse historical data from real-time vehicle detection and YOLO computer vision analysis.",
         "url": f"{BASE_URL}/records",
-        "image": f"{BASE_URL}/static/screenshot_afternoon.png",
+        "image": f"{BASE_URL}/static/screenshot_afternoon.jpg",
     },
     "vehicles": {
         "description": "Explore vehicle classification data from AI traffic monitoring. See breakdowns by type, color, and make/model from real-time YOLO detection and vision analysis.",
         "url": f"{BASE_URL}/vehicles",
-        "image": f"{BASE_URL}/static/screenshot_afternoon.png",
+        "image": f"{BASE_URL}/static/screenshot_afternoon.jpg",
     },
     "debug": {
         "description": "Debug interface for Stop Sign Nanny AI traffic monitoring system configuration and zone adjustment.",
         "url": f"{BASE_URL}/debug",
-        "image": f"{BASE_URL}/static/screenshot_afternoon.png",
+        "image": f"{BASE_URL}/static/screenshot_afternoon.jpg",
     },
 }
 
@@ -79,7 +79,7 @@ def build_json_ld(base_url, metadata, page_type):
             "@type": "VideoObject",
             "name": "Live Stop Sign Traffic Monitoring",
             "description": "Real-time video stream showing AI-powered vehicle detection and stop sign compliance monitoring",
-            "thumbnailUrl": f"{base_url}/static/screenshot_afternoon.png",
+            "thumbnailUrl": f"{base_url}/static/screenshot_afternoon.jpg",
             "uploadDate": "2024-01-01T00:00:00Z",
             "contentUrl": f"{base_url}/stream/stream.m3u8",
             "embedUrl": f"{base_url}/",

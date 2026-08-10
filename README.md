@@ -5,7 +5,7 @@ Runs end-to-end from an RTSP camera to a web dashboard with nothing more than Do
 
 🌐 **Live demo:** <https://crestwoodstopsign.com>   [![Status](https://img.shields.io/uptimerobot/status/m797914657-f517a98377b6b7a2e883d57a)](https://stats.uptimerobot.com/m797914657-f517a98377b6b7a2e883d57a)
 
-![Afternoon screenshot](static/screenshot_afternoon.png)
+![Afternoon screenshot](static/screenshot_afternoon.jpg)
 
 ---
 
