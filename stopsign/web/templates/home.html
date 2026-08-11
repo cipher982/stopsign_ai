@@ -132,6 +132,7 @@
         grid-template-rows: auto;
         gap: 2px;
         margin: 2px;
+        align-items: start;
     }
 
     .home-left {
@@ -219,7 +220,7 @@
     }
 
     .home-recents {
-        max-height: calc(100vh - 130px);
+        max-height: 420px;
     }
 
     .home-recents .home-panel-body {
@@ -360,16 +361,12 @@
         margin: 14px 2px 22px;
     }
     .scroll-reveal {
-        opacity: 0;
-        transform: translateY(12px);
-        transition: opacity 0.5s ease, transform 0.5s ease;
-    }
-    .scroll-reveal.inview {
+        /* Content stays visible; no hide-on-load so it renders for viewers,
+           bots and full-page captures. The nudge to scroll should be seeable. */
         opacity: 1;
         transform: none;
     }
     @media (prefers-reduced-motion: reduce) {
-        .scroll-reveal { opacity: 1; transform: none; transition: none; }
         .fold-chevron { animation: none; }
     }
     </style>
