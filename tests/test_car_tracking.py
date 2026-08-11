@@ -361,36 +361,26 @@ class TestBboxXYXYFormat:
         ), f"Polygon height {actual_height} should match bbox height {expected_height}"
 
     def test_save_vehicle_image_crop_bounds(self, sample_frame):
-        """Test that save_vehicle_image calculates correct crop bounds from XYXY bbox."""
-        # We can't easily test the full function (needs Minio), so test the crop logic directly
+        """Test that compute_crop_rect pads the XYXY bbox and clamps to the frame."""
+        from stopsign.image_storage import CROP_PADDING_FACTOR
+        from stopsign.image_storage import compute_crop_rect
 
-        # Simulate the crop calculation from save_vehicle_image
         bbox = (100.0, 150.0, 200.0, 250.0)  # XYXY: 100x100 box
-        bx1, by1, bx2, by2 = bbox
-        w = bx2 - bx1  # Should be 100
-        h = by2 - by1  # Should be 100
+        pad = int(100 * CROP_PADDING_FACTOR)
 
-        padding_factor = 0.1
-        padding_x = int(w * padding_factor)  # 10
-        padding_y = int(h * padding_factor)  # 10
-
-        x1 = int(bx1 - padding_x)  # 90
-        y1 = int(by1 - padding_y)  # 140
-        x2 = int(bx2 + padding_x)  # 210
-        y2 = int(by2 + padding_y)  # 260
-
-        # Verify dimensions are reasonable (not whole frame)
-        crop_width = x2 - x1  # 120
-        crop_height = y2 - y1  # 120
-
-        assert crop_width == 120, f"Crop width should be 120, got {crop_width}"
-        assert crop_height == 120, f"Crop height should be 120, got {crop_height}"
+        x1, y1, x2, y2 = compute_crop_rect(bbox, frame_width=1000, frame_height=1000)
+        assert (x1, y1, x2, y2) == (100 - pad, 150 - pad, 200 + pad, 250 + pad)
 
         # Verify this is NOT the old buggy calculation
         # Old buggy code would do: x - w/2 where w=200 (actually x2), giving x1=0
         # which would result in a much larger crop
         assert x1 > 50, f"x1={x1} suggests correct XYXY handling (buggy code gives ~0)"
         assert y1 > 100, f"y1={y1} suggests correct XYXY handling (buggy code gives ~0)"
+
+        # Frame edges clamp the padded rect
+        x1, y1, x2, y2 = compute_crop_rect((10.0, 10.0, 110.0, 110.0), frame_width=120, frame_height=115)
+        assert (x1, y1) == (0, 0)
+        assert (x2, y2) == (120, 115)
 
     def test_bbox_format_consistency_through_update(self, mock_config):
         """Test that bbox maintains XYXY format through Car.update()."""

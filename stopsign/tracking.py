@@ -14,6 +14,8 @@ import numpy as np
 
 from stopsign.config import Config
 from stopsign.database import Database
+from stopsign.image_storage import CROP_PADDING_FACTOR
+from stopsign.image_storage import compute_crop_rect
 from stopsign.image_storage import save_vehicle_image
 from stopsign.kalman_filter import KalmanFilterWrapper
 from stopsign.settings import PROCESSED_FRAME_KEY
@@ -64,6 +66,10 @@ class ZoneState:
 class CaptureState:
     image_captured: bool = False
     image_path: str = ""
+    # Geometry at capture (processed coordinate space): the detection bbox and the
+    # padded/clamped rect actually saved, so offline passes can re-crop tighter.
+    bbox: Optional[Tuple[float, float, float, float]] = None
+    crop_rect: Optional[Tuple[int, int, int, int]] = None
 
 
 @dataclass
@@ -436,6 +442,12 @@ class StopDetector:
             "clip_path": None,
         }
 
+        capture = {
+            "bbox": list(car.state.capture.bbox) if car.state.capture.bbox else None,
+            "crop_rect": list(car.state.capture.crop_rect) if car.state.capture.crop_rect else None,
+            "padding_factor": CROP_PADDING_FACTOR,
+        }
+
         config_snapshot = self.config.get_snapshot()
 
         model_snapshot = {}
@@ -453,6 +465,7 @@ class StopDetector:
             "sample_schema": RAW_SAMPLE_SCHEMA,
             "samples": samples,
             "summary": summary,
+            "capture": capture,
             "dimensions": dimensions,
             "config_snapshot": config_snapshot,
             "model_snapshot": model_snapshot,
@@ -922,6 +935,8 @@ class StopDetector:
             # real local path so the pass is honest and visible in live stats.
             car.state.capture.image_captured = True
             car.state.capture.image_path = image_path
+            car.state.capture.bbox = tuple(float(v) for v in car.state.bbox)
+            car.state.capture.crop_rect = compute_crop_rect(car.state.bbox, frame.shape[1], frame.shape[0])
         else:
             # Local save failed. Do NOT masquerade as a successful capture: leave the
             # path empty (the pass is recorded without an image) and surface the

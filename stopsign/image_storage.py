@@ -334,6 +334,33 @@ def _maybe_prune_old_images(now: Optional[float] = None) -> None:
     _start_prune_worker()
 
 
+# Broad capture margin around the detection bbox. The saved crop is the archival
+# artifact: recall over precision, since tight display crops can be re-derived
+# later but missing pixels are gone forever. YOLO boxes on moving cars regularly
+# trail or under-cover the vehicle by more than the old 10%.
+CROP_PADDING_FACTOR = 0.4
+
+
+def compute_crop_rect(
+    bbox: Tuple[float, float, float, float],
+    frame_width: int,
+    frame_height: int,
+    padding_factor: float = CROP_PADDING_FACTOR,
+) -> Tuple[int, int, int, int]:
+    """Padded, frame-clamped crop rect (XYXY ints) for a detection bbox."""
+    bx1, by1, bx2, by2 = bbox
+    w = bx2 - bx1
+    h = by2 - by1
+    padding_x = int(w * padding_factor)
+    padding_y = int(h * padding_factor)
+    x1, y1 = int(bx1 - padding_x), int(by1 - padding_y)
+    x2, y2 = int(bx2 + padding_x), int(by2 + padding_y)
+
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(frame_width, x2), min(frame_height, y2)
+    return x1, y1, x2, y2
+
+
 def save_vehicle_image(
     frame: np.ndarray,
     timestamp: float,
@@ -351,17 +378,7 @@ def save_vehicle_image(
     filename = f"vehicle_{file_id}_{int(timestamp)}.jpg"
 
     # Crop the image - bbox is XYXY format (x1, y1, x2, y2)
-    bx1, by1, bx2, by2 = bbox
-    w = bx2 - bx1
-    h = by2 - by1
-    padding_factor = 0.1
-    padding_x = int(w * padding_factor)
-    padding_y = int(h * padding_factor)
-    x1, y1 = int(bx1 - padding_x), int(by1 - padding_y)
-    x2, y2 = int(bx2 + padding_x), int(by2 + padding_y)
-
-    x1, y1 = max(0, x1), max(0, y1)
-    x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+    x1, y1, x2, y2 = compute_crop_rect(bbox, frame.shape[1], frame.shape[0])
 
     cropped_image = frame[y1:y2, x1:x2]
 
