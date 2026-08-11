@@ -34,8 +34,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-THUMBNAIL_SIZE = (112, 80)
+THUMBNAIL_SIZE = (192, 120)
 THUMBNAIL_QUALITY = 82
+THUMBNAIL_VARIANT = "contain-v2"  # bump to invalidate disk + browser caches when the fit changes
 THUMBNAIL_CACHE_DIR = Path(LOCAL_IMAGE_DIR) / ".thumb-cache"
 
 
@@ -61,7 +62,7 @@ def _normalize_object_name(object_name: str) -> str:
 
 
 def _thumbnail_cache_path(object_name: str) -> Path:
-    cache_key = hashlib.sha256(f"{THUMBNAIL_SIZE}:{object_name}".encode("utf-8")).hexdigest()[:24]
+    cache_key = hashlib.sha256(f"{THUMBNAIL_VARIANT}:{THUMBNAIL_SIZE}:{object_name}".encode("utf-8")).hexdigest()[:24]
     stem = Path(object_name).stem[:32] or "thumb"
     return THUMBNAIL_CACHE_DIR / f"{stem}-{cache_key}.jpg"
 
@@ -81,7 +82,9 @@ def _read_source_image_bytes(object_name: str) -> bytes:
 
 def _build_thumbnail_bytes(source_bytes: bytes) -> bytes:
     with Image.open(BytesIO(source_bytes)) as image:
-        fitted = ImageOps.fit(
+        # contain, not fit: fit center-crops to force the aspect ratio, chopping
+        # vehicle fronts/backs off the already-tight capture crops
+        fitted = ImageOps.contain(
             image.convert("RGB"),
             THUMBNAIL_SIZE,
             method=Image.Resampling.LANCZOS,
@@ -92,7 +95,7 @@ def _build_thumbnail_bytes(source_bytes: bytes) -> bytes:
 
 
 def _thumbnail_response_headers(object_name: str) -> dict[str, str]:
-    digest = hashlib.sha256(f"{THUMBNAIL_SIZE}:{object_name}".encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(f"{THUMBNAIL_VARIANT}:{THUMBNAIL_SIZE}:{object_name}".encode("utf-8")).hexdigest()[:24]
     return {
         "Cache-Control": "public, max-age=31536000, immutable",
         "ETag": f'"thumb-{digest}"',
