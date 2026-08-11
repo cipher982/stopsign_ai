@@ -33,19 +33,34 @@
             <span class="title-bar-text">Compliance by Hour</span>
         </div>
         <div class="window-body">
-            <table class="data-table" style="font-size: 12px;">
-                {% for item in hour_items %}
-                <tr>
-                    <td style="width: 50px; white-space: nowrap; font-size: 11px;">{{ item.label }}</td>
-                    <td style="width: 100%;">
-                        <div style="background: #e0e0e0; height: 11px; width: 100%; position: relative;">
-                            <div style="height: 11px; width: {{ item.pct }}%; background-color: {{ item.color }};" class="bar-chart-bar"></div>
-                        </div>
-                    </td>
-                    <td class="mono" style="white-space: nowrap; text-align: right; font-size: 10px;">{{ item.value }}%</td>
-                </tr>
-                {% endfor %}
-            </table>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px;">
+                <table class="data-table" style="font-size: 12px;">
+                    {% for item in hour_items[:12] %}
+                    <tr>
+                        <td style="width: 50px; white-space: nowrap; font-size: 11px;">{{ item.label }}</td>
+                        <td style="width: 100%;">
+                            <div style="background: #e0e0e0; height: 11px; width: 100%; position: relative;">
+                                <div style="height: 11px; width: {{ item.pct }}%; background-color: {{ item.color }};" class="bar-chart-bar"></div>
+                            </div>
+                        </td>
+                        <td class="mono" style="white-space: nowrap; text-align: right; font-size: 10px;">{{ item.value }}%</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+                <table class="data-table" style="font-size: 12px;">
+                    {% for item in hour_items[12:] %}
+                    <tr>
+                        <td style="width: 50px; white-space: nowrap; font-size: 11px;">{{ item.label }}</td>
+                        <td style="width: 100%;">
+                            <div style="background: #e0e0e0; height: 11px; width: 100%; position: relative;">
+                                <div style="height: 11px; width: {{ item.pct }}%; background-color: {{ item.color }};" class="bar-chart-bar"></div>
+                            </div>
+                        </td>
+                        <td class="mono" style="white-space: nowrap; text-align: right; font-size: 10px;">{{ item.value }}%</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
         </div>
     </div>
 
