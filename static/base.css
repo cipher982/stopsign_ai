@@ -307,9 +307,10 @@ h1, h2, h3 {
 }
 
 .data-table .thumb {
-    width: 56px;
+    width: 64px;
     height: 42px;
-    object-fit: cover;
+    object-fit: contain;
+    background: #0e0f13;
     border-radius: 3px;
     display: block;
 }

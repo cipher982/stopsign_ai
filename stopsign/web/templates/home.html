@@ -13,58 +13,33 @@
 {% endblock %}
 
 {% block content %}
-{# ── Hero: latest verdict + snapshot stats ── #}
-<div class="page-wide hero-row">
-    <div class="hero-latest">
-        <div class="section-label">Latest Pass</div>
-        {% if passes %}
-        {% set item = passes[0] %}
-        <a href="{% if item.pass_id %}/passes/{{ item.pass_id }}{% else %}{{ item.image_url }}{% endif %}" class="hero-latest-card" title="{{ item.time_absolute }}">
-            <img src="{{ item.thumbnail_url or item.image_url }}" alt="Latest vehicle pass" class="hero-latest-img" loading="eager" decoding="async">
-            <div class="hero-latest-info">
-                {% if item.verdict == 'Full Stop' %}
-                <span class="stamp stamp-ok">FULL STOP</span>
-                {% elif item.verdict == 'No Stop' %}
-                <span class="stamp stamp-bad">NO STOP</span>
-                {% else %}
-                <span class="stamp stamp-warn">ROLLING STOP</span>
-                {% endif %}
-                <div class="hero-latest-data mono">{{ "%.1f"|format(item.time_in_zone) }}s in zone &middot; {{ item.time_str }}</div>
-                {% if item.badge_text %}<div class="hero-latest-badge mono">{{ item.badge_text }}</div>{% endif %}
-            </div>
-        </a>
-        {% else %}
-        <div class="hero-latest-empty mono">No passes recorded yet.</div>
-        {% endif %}
-    </div>
-
-    <div class="hero-stats">
-        <div class="hero-desc">
-            <strong>AI-powered stop sign monitoring in Crestwood, Birmingham.</strong>
-            Live vehicle detection with a public data feed for neighborhood safety.
-            <a href="/about">How it works &rarr;</a>
-        </div>
-        <div class="stat-grid" aria-live="polite">
-            <div class="stat-cell stat-cell-primary">
-                <div class="stat-label">Compliance</div>
-                <div class="stat-value mono" id="complianceRate">{{ stats.compliance_rate }}</div>
-            </div>
-            <div class="stat-cell">
-                <div class="stat-label">Violations (24h)</div>
-                <div class="stat-value mono stat-bad" id="violationCount">{{ stats.violation_count }}</div>
-            </div>
-            <div class="stat-cell">
-                <div class="stat-label">Vehicles (24h)</div>
-                <div class="stat-value mono" id="vehicleCount">{{ stats.vehicle_count }}</div>
-            </div>
-            <div class="stat-cell">
-                <div class="stat-label">Last Seen</div>
-                <div class="stat-value mono stat-ok" id="lastDetection">{{ stats.last_detection }}</div>
-            </div>
-        </div>
+{# ── Snapshot strip: what this is + the numbers, kept slim so the video stays above the fold ── #}
+<div class="page-wide hero-strip">
+    <div class="hero-desc">
+        <strong>AI-powered stop sign monitoring in Crestwood, Birmingham.</strong>
+        Live vehicle detection with a public data feed for neighborhood safety.
+        <a href="/about">How it works &rarr;</a>
         <div class="hero-insight mono">
             <span id="trendArrow">&rarr;</span>
             <span id="rotatingInsight">Loading&hellip;</span>
+        </div>
+    </div>
+    <div class="stat-strip" aria-live="polite">
+        <div class="stat-cell stat-cell-primary">
+            <span class="stat-label">Compliance</span>
+            <span class="stat-value mono" id="complianceRate">{{ stats.compliance_rate }}</span>
+        </div>
+        <div class="stat-cell">
+            <span class="stat-label">Violations (24h)</span>
+            <span class="stat-value mono stat-bad" id="violationCount">{{ stats.violation_count }}</span>
+        </div>
+        <div class="stat-cell">
+            <span class="stat-label">Vehicles (24h)</span>
+            <span class="stat-value mono" id="vehicleCount">{{ stats.vehicle_count }}</span>
+        </div>
+        <div class="stat-cell">
+            <span class="stat-label">Last Seen</span>
+            <span class="stat-value mono stat-ok" id="lastDetection">{{ stats.last_detection }}</span>
         </div>
     </div>
 </div>
@@ -123,12 +98,13 @@
 
 {% block scripts %}
 <style>
-    /* ── Hero ── */
-    .hero-row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        gap: 16px;
-        margin-top: 20px;
+    /* ── Snapshot strip ── */
+    .hero-strip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        margin-top: 16px;
     }
 
     .section-label {
@@ -141,104 +117,52 @@
         margin-bottom: 10px;
     }
 
-    .hero-latest-card {
-        display: flex;
-        gap: 14px;
-        align-items: stretch;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 14px;
-        text-decoration: none;
-        color: inherit;
-    }
-
-    .hero-latest-img {
-        width: 44%;
-        max-width: 260px;
-        min-height: 160px;
-        object-fit: cover;
-        border-radius: 4px;
-        background: var(--panel-2);
-        flex-shrink: 0;
-    }
-
-    .hero-latest-info {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        justify-content: center;
-        min-width: 0;
-    }
-
-    .hero-latest-data {
-        font-size: 15px;
-        color: var(--text);
-    }
-
-    .hero-latest-badge {
-        font-size: 12px;
-        color: var(--text-dim);
-    }
-
-    .hero-latest-empty {
-        padding: 40px 14px;
-        text-align: center;
-        color: var(--text-dim);
-        font-size: 13px;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-    }
-
-    .hero-stats {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-        justify-content: center;
-    }
-
     .hero-desc {
         font-size: 14px;
         color: var(--text-dim);
         line-height: 1.5;
+        max-width: 520px;
     }
 
     .hero-desc strong { color: var(--text); }
 
-    .stat-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+    .stat-strip {
+        display: flex;
         gap: 10px;
+        align-items: stretch;
+        flex-shrink: 0;
     }
 
     .stat-cell {
         background: var(--panel);
         border: 1px solid var(--line);
         border-radius: 6px;
-        padding: 10px 12px;
+        padding: 8px 14px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
     }
 
     .stat-cell-primary {
-        grid-column: 1 / -1;
-        display: flex;
+        flex-direction: row;
         align-items: baseline;
         gap: 10px;
     }
 
-    .stat-cell-primary .stat-value { font-size: 40px; }
-    .stat-cell-primary .stat-label { font-size: 13px; }
+    .stat-cell-primary .stat-value { font-size: 30px; margin-top: 0; }
+    .stat-cell-primary .stat-label { font-size: 12px; }
 
     .stat-label {
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: .06em;
         color: var(--text-dim);
+        white-space: nowrap;
     }
 
     .stat-value {
         display: block;
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 600;
         color: var(--text);
         font-variant-numeric: tabular-nums;
@@ -254,6 +178,7 @@
         display: flex;
         gap: 6px;
         align-items: center;
+        margin-top: 6px;
     }
 
     /* ── Live + filmstrip ── */
@@ -261,7 +186,7 @@
         display: grid;
         grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
         gap: 16px;
-        margin-top: 40px;
+        margin-top: 20px;
         align-items: start;
     }
 
@@ -317,9 +242,9 @@
 
     .pass-card {
         display: flex;
-        gap: 10px;
+        gap: 12px;
         align-items: center;
-        padding: 6px;
+        padding: 8px 12px 8px 8px;
         border: 1px solid var(--line);
         border-radius: 6px;
         text-decoration: none;
@@ -329,12 +254,14 @@
 
     .pass-card:hover { background: var(--panel-2); }
 
+    /* contain, not cover: the crops are tight around the vehicle, so cropping
+       again chops off fronts/backs */
     .pass-card-img {
-        width: 64px;
-        height: 46px;
-        object-fit: cover;
+        width: 96px;
+        height: 58px;
+        object-fit: contain;
         border-radius: 3px;
-        background: var(--panel-2);
+        background: #0e0f13;
         flex-shrink: 0;
     }
 
@@ -342,15 +269,26 @@
         min-width: 0;
         display: flex;
         flex-direction: column;
+        align-items: flex-start;
         gap: 3px;
+        flex: 1;
     }
 
-    .pass-card-meta {
-        font-size: 11px;
+    .pass-card-side {
+        text-align: right;
+        flex-shrink: 0;
+        font-size: 12px;
         color: var(--text-dim);
+    }
+
+    .pass-card-zone {
+        font-size: 14px;
+        color: var(--text);
+    }
+
+    .pass-card-when {
+        font-size: 11px;
         white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
     }
 
     .pass-card-badge {
@@ -362,11 +300,15 @@
     }
 
     @media (max-width: 900px) {
-        .hero-row, .live-row {
+        .hero-strip {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 12px;
+        }
+        .stat-strip { flex-wrap: wrap; }
+        .live-row {
             grid-template-columns: 1fr;
         }
-        .hero-latest-card { flex-direction: column; }
-        .hero-latest-img { width: 100%; max-width: none; }
         .pass-rail {
             flex-direction: row;
             overflow-x: auto;
@@ -375,16 +317,17 @@
             padding-bottom: 6px;
         }
         .pass-card {
-            flex: 0 0 200px;
+            flex: 0 0 220px;
             flex-direction: column;
             align-items: stretch;
         }
-        .pass-card-img { width: 100%; height: 110px; }
-        .stat-cell-primary .stat-value { font-size: 32px; }
-    }
-
-    @media (max-width: 480px) {
-        .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .pass-card-img { width: 100%; height: 90px; }
+        .pass-card-side {
+            display: flex;
+            justify-content: space-between;
+            text-align: left;
+        }
+        .stat-cell-primary .stat-value { font-size: 26px; }
     }
 
     /* ── Below the fold ── */
