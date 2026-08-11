@@ -29,6 +29,7 @@ from stopsign.settings import MINIO_BUCKET
 from stopsign.settings import MINIO_ENDPOINT
 from stopsign.settings import MINIO_SECRET_KEY
 from stopsign.settings import REDIS_URL
+from stopsign.web.services.images import THUMBNAIL_VARIANT
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,6 @@ router = APIRouter()
 
 THUMBNAIL_SIZE = (192, 120)
 THUMBNAIL_QUALITY = 82
-THUMBNAIL_VARIANT = "contain-v2"  # bump to invalidate disk + browser caches when the fit changes
 THUMBNAIL_CACHE_DIR = Path(LOCAL_IMAGE_DIR) / ".thumb-cache"
 
 

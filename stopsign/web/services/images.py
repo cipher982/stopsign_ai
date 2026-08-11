@@ -35,9 +35,14 @@ def resolve_image_url(image_path: str | None) -> str:
     return f"/vehicle-image/{quote(object_name, safe='/')}"
 
 
+# Bump when thumbnail rendering changes: busts Cloudflare/browser caches (immutable)
+# via the URL and the server's disk cache via the cache key.
+THUMBNAIL_VARIANT = "contain-v2"
+
+
 def resolve_card_thumbnail_url(image_path: str | None) -> str:
     """Return the optimized thumbnail URL for compact list cards."""
     object_name = extract_image_object_name(image_path)
     if not object_name:
         return resolve_image_url(image_path)
-    return f"/vehicle-thumb/{quote(object_name, safe='/')}"
+    return f"/vehicle-thumb/{quote(object_name, safe='/')}?v={THUMBNAIL_VARIANT}"
