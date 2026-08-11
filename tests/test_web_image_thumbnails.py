@@ -26,10 +26,11 @@ def test_resolve_image_and_thumbnail_urls_use_expected_public_paths(tmp_path, mo
     (tmp_path / local_name).write_bytes(b"jpg-bytes")
 
     assert images.resolve_image_url(f"local://{local_name}") == f"/vehicle-images/{local_name}"
-    assert images.resolve_card_thumbnail_url(f"local://{local_name}") == f"/vehicle-thumb/{local_name}"
+    variant = images.THUMBNAIL_VARIANT
+    assert images.resolve_card_thumbnail_url(f"local://{local_name}") == f"/vehicle-thumb/{local_name}?v={variant}"
     assert (
         images.resolve_card_thumbnail_url("minio://vehicle-images/archive/car 1.jpg")
-        == "/vehicle-thumb/archive/car%201.jpg"
+        == f"/vehicle-thumb/archive/car%201.jpg?v={variant}"
     )
 
 
