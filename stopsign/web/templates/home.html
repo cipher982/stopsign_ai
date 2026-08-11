@@ -123,23 +123,20 @@
 {% block scripts %}
 <style>
     .home-window {
-        min-height: calc(100vh - 62px);
         height: auto;
     }
 
     .home-grid {
         display: grid;
         grid-template-columns: 220px minmax(0, 1fr) 420px;
-        grid-template-rows: 1fr auto;
+        grid-template-rows: auto;
         gap: 2px;
-        height: calc(100% - 4px);
         margin: 2px;
-        min-height: 0;
     }
 
     .home-left {
         display: grid;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: auto auto;
         gap: 2px;
         min-height: 0;
     }
@@ -219,6 +216,10 @@
     .home-recents-body {
         padding: 0;
         overflow: auto;
+    }
+
+    .home-recents {
+        max-height: calc(100vh - 130px);
     }
 
     .home-recents .home-panel-body {
