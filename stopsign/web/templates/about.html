@@ -6,143 +6,278 @@
 <script type="application/ld+json">{{ json_ld | tojson }}</script>
 {% endblock %}
 
+{% block head_extra %}
+<style>
+    .about-col { max-width: 720px; margin: 0 auto; }
+
+    .about-eyebrow {
+        font-family: 'Overpass Mono', monospace;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        color: var(--text-dim);
+        margin-bottom: 8px;
+    }
+
+    .about-headline {
+        font-size: 32px;
+        margin: 0 0 32px;
+    }
+    @media (max-width: 600px) {
+        .about-headline { font-size: 28px; }
+    }
+
+    .about-section-head {
+        font-size: 20px;
+        margin: 0 0 6px;
+    }
+
+    .about-lede {
+        font-size: 14px;
+        color: var(--text-dim);
+        margin: 0 0 16px;
+        line-height: 1.6;
+    }
+
+    /* Definition list */
+    .about-dl { margin: 0; }
+    .about-dl dt {
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--text);
+        margin-top: 14px;
+    }
+    .about-dl dt:first-child { margin-top: 0; }
+    .about-dl dd {
+        margin: 4px 0 0;
+        font-size: 13px;
+        color: var(--text-dim);
+        line-height: 1.6;
+    }
+
+    /* Stat trio */
+    .about-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin: 24px 0 0;
+    }
+    @media (max-width: 600px) {
+        .about-stats { grid-template-columns: 1fr; }
+    }
+    .about-stat-value {
+        font-size: 22px;
+        font-weight: 600;
+    }
+    .about-stat-label {
+        font-size: 12px;
+        color: var(--text-dim);
+        margin-top: 6px;
+        line-height: 1.5;
+    }
+
+    /* Pipeline / service card grids */
+    .about-card-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+    }
+    .about-card-grid.support { grid-template-columns: repeat(3, 1fr); }
+    .about-card-grid.services { grid-template-columns: repeat(2, 1fr); }
+    @media (max-width: 700px) {
+        .about-card-grid { grid-template-columns: repeat(2, 1fr); }
+        .about-card-grid.support { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 480px) {
+        .about-card-grid, .about-card-grid.support, .about-card-grid.services {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .about-card { padding: 12px; }
+    .about-card-badge {
+        display: block;
+        font-family: 'Overpass Mono', monospace;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--text-dim);
+        margin-bottom: 6px;
+    }
+    .about-card-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+    }
+    .about-card-detail {
+        font-size: 12px;
+        color: var(--text-dim);
+        margin-top: 4px;
+        line-height: 1.5;
+    }
+    .about-card-list {
+        margin: 6px 0 0;
+        padding-left: 16px;
+        font-size: 12px;
+        color: var(--text-dim);
+        line-height: 1.6;
+    }
+
+    .about-two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+    }
+    @media (max-width: 600px) {
+        .about-two-col { grid-template-columns: 1fr; }
+    }
+
+    .about-list {
+        margin: 0;
+        padding-left: 16px;
+        font-size: 13px;
+        color: var(--text-dim);
+        line-height: 1.7;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="window" style="max-width: 800px; margin: 0 auto;">
-    <div class="title-bar">
-        <span class="title-bar-text">About - Stop Sign Nanny</span>
-        <div class="title-bar-controls">
-            <button aria-hidden="true" tabindex="-1">&#9472;</button>
-            <button aria-hidden="true" tabindex="-1">&#9723;</button>
-            <button aria-hidden="true" tabindex="-1">&#10005;</button>
-        </div>
-    </div>
-    <div class="window-body" style="max-height: calc(100vh - 120px); overflow-y: auto; font-size: 13px; line-height: 1.6;">
-        {# Community Story #}
-        <div style="margin-bottom: 16px;">
-            <div class="mono" style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Stop Sign Nanny</div>
-            <h1 style="font-size: 20px; font-weight: 800; margin: 0 0 8px;">Making our neighborhood safer, one stop at a time</h1>
-        </div>
+<article class="about-col">
 
-        {# What the stats mean #}
-        <div class="raised" style="padding: 10px 12px; margin-bottom: 16px;">
-            <div style="font-size: 14px; font-weight: 700; margin-bottom: 6px;">Understanding the data</div>
-            <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
-                <li style="margin-bottom: 2px;"><strong>Compliance rate</strong> &mdash; percentage of vehicles that stop for at least 2 seconds in the stop zone (based on the last 100 passes).</li>
-                <li style="margin-bottom: 2px;"><strong>Speed value</strong> &mdash; relative motion score from the AI tracker. Lower numbers mean the vehicle slowed down more. Not miles per hour.</li>
-                <li style="margin-bottom: 2px;"><strong>Time in zone</strong> &mdash; how many seconds the vehicle spent inside the stop zone. Longer is better.</li>
-                <li style="margin-bottom: 2px;"><strong>"Best" passes</strong> &mdash; vehicles that stopped the longest or moved the slowest.</li>
-                <li style="margin-bottom: 2px;"><strong>"Worst" passes</strong> &mdash; vehicles that blew through fastest or spent the least time stopped.</li>
-            </ul>
-        </div>
+    <div class="about-eyebrow">Stop Sign Nanny</div>
+    <h1 class="about-headline">Making our neighborhood safer, one stop at a time</h1>
 
-        {# Hero metrics #}
+    {# Understanding the data #}
+    <section>
+        <h2 class="about-section-head">Understanding the data</h2>
+        <dl class="about-dl">
+            <dt>Compliance rate</dt>
+            <dd>Percentage of vehicles that stop for at least 2 seconds in the stop zone (based on the last 100 passes).</dd>
+            <dt>Speed value</dt>
+            <dd>Relative motion score from the AI tracker. Lower numbers mean the vehicle slowed down more. Not miles per hour.</dd>
+            <dt>Time in zone</dt>
+            <dd>How many seconds the vehicle spent inside the stop zone. Longer is better.</dd>
+            <dt>"Best" passes</dt>
+            <dd>Vehicles that stopped the longest or moved the slowest.</dd>
+            <dt>"Worst" passes</dt>
+            <dd>Vehicles that blew through fastest or spent the least time stopped.</dd>
+        </dl>
+
         {% if hero_metrics %}
-        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <div class="about-stats">
             {% for m in hero_metrics %}
-            <div class="raised" style="padding: 6px 10px; flex: 1;">
-                <div class="mono" style="font-size: 16px; font-weight: 700;">{{ m.value }}</div>
-                <div style="font-size: 11px; color: var(--text-muted);">{{ m.label }}</div>
+            <div class="raised about-card">
+                <div class="mono about-stat-value">{{ m.value }}</div>
+                <div class="about-stat-label">{{ m.label }}</div>
             </div>
             {% endfor %}
         </div>
         {% endif %}
+    </section>
 
-        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 12px 0;">
+    <hr class="rule-dash">
 
-        {# Pipeline #}
-        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 4px;">Pipeline</h2>
-        <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 8px;">
+    {# Pipeline #}
+    <section>
+        <h2 class="about-section-head">Pipeline</h2>
+        <p class="about-lede">
             Frames take a deterministic path from curb to browser. Each boundary is backed
             by Redis queues, health checks, and Prometheus metrics.
         </p>
 
-        <div style="margin-bottom: 12px;">
-            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="mono">Main Pipeline</div>
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;">
-                {% for node in pipeline_nodes %}
-                <div class="raised" style="padding: 6px;">
-                    <span class="mono" style="font-size: 9px; background: rgba(31,58,147,0.15); color: #1F3A93; padding: 1px 4px;">{{ node.badge }}</span>
-                    <div style="font-size: 12px; font-weight: 600; margin-top: 3px;">{{ node.name }}</div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">{{ node.detail }}</div>
-                </div>
-                {% endfor %}
+        <div class="about-eyebrow" style="margin-bottom: 8px;">Main pipeline</div>
+        <div class="about-card-grid">
+            {% for node in pipeline_nodes %}
+            <div class="raised about-card">
+                <span class="about-card-badge">{{ node.badge }}</span>
+                <div class="about-card-name">{{ node.name }}</div>
+                <div class="about-card-detail">{{ node.detail }}</div>
             </div>
+            {% endfor %}
         </div>
 
-        <div style="margin-bottom: 12px;">
-            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="mono">Support Services</div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;">
-                {% for node in support_nodes %}
-                <div class="raised" style="padding: 6px;">
-                    <span class="mono" style="font-size: 9px; background: #e0e0e0; color: var(--text-secondary); padding: 1px 4px;">{{ node.badge }}</span>
-                    <div style="font-size: 12px; font-weight: 600; margin-top: 3px;">{{ node.name }}</div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">{{ node.detail }}</div>
-                </div>
-                {% endfor %}
+        <div class="about-eyebrow" style="margin: 20px 0 8px;">Support services</div>
+        <div class="about-card-grid support">
+            {% for node in support_nodes %}
+            <div class="raised about-card">
+                <span class="about-card-badge">{{ node.badge }}</span>
+                <div class="about-card-name">{{ node.name }}</div>
+                <div class="about-card-detail">{{ node.detail }}</div>
             </div>
+            {% endfor %}
         </div>
+    </section>
 
-        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 12px 0;">
+    <hr class="rule-dash">
 
-        {# Services #}
-        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 8px;">Services</h2>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px;">
+    {# Services #}
+    <section>
+        <h2 class="about-section-head">Services</h2>
+        <div class="about-card-grid services">
             {% for card in service_cards %}
-            <div class="raised" style="padding: 8px;">
-                <div class="mono" style="font-size: 12px; font-weight: 600; color: #1F3A93;">{{ card.title }}</div>
-                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">{{ card.subtitle }}</div>
-                <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
+            <div class="raised about-card">
+                <div class="mono about-card-name">{{ card.title }}</div>
+                <div class="about-card-detail" style="margin-bottom: 4px;">{{ card.subtitle }}</div>
+                <ul class="about-card-list">
                     {% for item in card["items"] %}
-                    <li style="margin-bottom: 2px;">{{ item }}</li>
+                    <li>{{ item }}</li>
                     {% endfor %}
                 </ul>
             </div>
             {% endfor %}
         </div>
+    </section>
 
-        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 12px 0;">
+    <hr class="rule-dash">
 
-        {# Operations #}
-        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 8px;">Operational Guardrails</h2>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+    {# Operations #}
+    <section>
+        <h2 class="about-section-head">Operational guardrails</h2>
+        <div class="about-two-col">
             <div>
-                <div class="mono" style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Observability</div>
-                <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
+                <div class="about-eyebrow">Observability</div>
+                <ul class="about-list">
                     {% for item in observability_items %}
-                    <li style="margin-bottom: 2px;">{{ item }}</li>
+                    <li>{{ item }}</li>
                     {% endfor %}
                 </ul>
             </div>
             <div>
-                <div class="mono" style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Resilience</div>
-                <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
+                <div class="about-eyebrow">Resilience</div>
+                <ul class="about-list">
                     {% for item in resilience_items %}
-                    <li style="margin-bottom: 2px;">{{ item }}</li>
+                    <li>{{ item }}</li>
                     {% endfor %}
                 </ul>
             </div>
         </div>
+    </section>
 
-        <hr style="border: none; border-top: 1px solid var(--shadow); margin: 12px 0;">
+    <hr class="rule-dash">
 
-        {# Developer #}
-        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 4px;">Build & Extend</h2>
-        <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 6px;">
+    {# Developer #}
+    <section>
+        <h2 class="about-section-head">Build &amp; extend</h2>
+        <p class="about-lede">
             The repository doubles as a reference implementation for real-time computer vision pipelines.
         </p>
-        <ul style="margin: 0; padding-left: 14px; font-size: 12px; color: var(--text-secondary);">
+        <ul class="about-list">
             {% for item in developer_items %}
-            <li style="margin-bottom: 2px;">{{ item }}</li>
+            <li>{{ item }}</li>
             {% endfor %}
         </ul>
+    </section>
 
-        {# CTA #}
-        <div style="text-align: center; margin-top: 16px; padding: 8px 0;">
-            <a href="https://github.com/cipher982/stopsign_ai" target="_blank" class="btn98 btn98-primary" style="font-size: 13px; padding: 4px 16px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-                View on GitHub
-            </a>
-        </div>
+    {# CTA #}
+    <div style="text-align: center; margin: 32px 0 8px;">
+        <a href="https://github.com/cipher982/stopsign_ai" target="_blank" class="btn98 btn98-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+            View on GitHub
+        </a>
     </div>
-</div>
+
+</article>
 {% endblock %}

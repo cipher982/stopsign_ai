@@ -2,110 +2,192 @@
 
 {% block title %}Pass #{{ pass_id }} - Stop Sign Nanny{% endblock %}
 
+{% block head_extra %}
+<style>
+    .pd-col { max-width: 720px; margin: 0 auto; }
+    .pd-back {
+        display: inline-block;
+        font-family: 'Overpass Mono', monospace;
+        font-size: 12px;
+        color: var(--text-dim);
+        text-decoration: none;
+        margin-bottom: 16px;
+    }
+    .pd-back:hover { color: var(--text); }
+
+    .pd-media-row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
+    .pd-media-col { flex: 1; min-width: 240px; }
+    .pd-media-label {
+        font-family: 'Overpass Mono', monospace;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        margin-bottom: 6px;
+    }
+    .pd-image, .pd-clip {
+        width: 100%;
+        max-height: 420px;
+        object-fit: contain;
+        background: #000;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        display: block;
+    }
+
+    .pd-verdict-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+    .pd-stamp-large {
+        font-size: 16px;
+        padding: 6px 16px;
+        border-width: 2px;
+    }
+    .pd-pass-id {
+        font-family: 'Overpass Mono', monospace;
+        font-size: 13px;
+        color: var(--text-dim);
+    }
+
+    .pd-section-label {
+        font-family: 'Overpass Mono', monospace;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        margin: 20px 0 8px;
+    }
+    .pd-section-label:first-of-type { margin-top: 0; }
+
+    .pd-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+    @media (max-width: 480px) {
+        .pd-grid { grid-template-columns: 1fr; }
+    }
+    .pd-cell {
+        padding: 10px 12px;
+    }
+    .pd-cell-label {
+        font-size: 11px;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        margin-bottom: 4px;
+    }
+    .pd-cell-value {
+        font-family: 'Overpass Mono', monospace;
+        font-size: 18px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+    }
+    .pd-cell-value.plain { color: var(--text); }
+</style>
+{% endblock %}
+
 {% block content %}
-<div style="max-width: 720px; margin: 0 auto;">
+<div class="pd-col">
 
-    {# Header #}
-    <div style="margin-bottom: 8px;">
-        <a href="/" style="font-size: 12px; color: #555; text-decoration: none;">&larr; Back to Live</a>
+    <a href="/" class="pd-back">&larr; Back to Live</a>
+
+    {% set verdict_stamp = {
+        "Full Stop": ("stamp-ok", "FULL STOP"),
+        "Rolling Stop": ("stamp-warn", "ROLLING STOP"),
+        "No Stop": ("stamp-bad", "NO STOP"),
+    }.get(verdict, ("stamp-warn", verdict|upper if verdict else "UNKNOWN")) %}
+
+    <div class="pd-verdict-row">
+        <span class="stamp {{ verdict_stamp[0] }} pd-stamp-large">{{ verdict_stamp[1] }}</span>
+        <span class="pd-pass-id">Pass #{{ pass_id }}{% if badge_text %} &middot; {{ badge_text }}{% endif %}</span>
     </div>
 
-    <div class="window">
-        <div class="title-bar">
-            <span class="title-bar-text">Pass #{{ pass_id }}{% if badge_text %} &mdash; {{ badge_text }}{% endif %}</span>
-            <div class="title-bar-controls">
-                <button aria-hidden="true" tabindex="-1">&#9472;</button>
-                <button aria-hidden="true" tabindex="-1">&#9723;</button>
-            </div>
+    {# Image + Clip #}
+    <div class="pd-media-row">
+        <div class="pd-media-col">
+            <div class="pd-media-label">Capture</div>
+            <a href="{{ image_url }}" target="_blank">
+                <img src="{{ image_url }}" alt="Vehicle pass #{{ pass_id }}" class="pd-image">
+            </a>
         </div>
-        <div class="window-body" style="padding: 8px;">
+        {% if clip_url %}
+        <div class="pd-media-col">
+            <div class="pd-media-label">Clip</div>
+            <video controls preload="metadata" class="pd-clip">
+                <source src="{{ clip_url }}" type="video/mp4">
+            </video>
+        </div>
+        {% endif %}
+    </div>
 
-            {# Image + Clip row #}
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
-                <div style="flex: 1; min-width: 200px;">
-                    <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Capture</div>
-                    <a href="{{ image_url }}" target="_blank">
-                        <img src="{{ image_url }}" alt="Vehicle pass #{{ pass_id }}"
-                             style="width: 100%; max-height: 300px; object-fit: contain; border: 1px solid #bbb; background: #f0f0f0; display: block;">
-                    </a>
-                </div>
-                {% if clip_url %}
-                <div style="flex: 1; min-width: 200px;">
-                    <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Clip</div>
-                    <video controls preload="metadata"
-                           style="width: 100%; max-height: 300px; border: 1px solid #bbb; background: #000; display: block;">
-                        <source src="{{ clip_url }}" type="video/mp4">
-                    </video>
-                </div>
-                {% endif %}
-            </div>
+    {# Facts grid #}
+    <div class="pd-section-label">Facts</div>
+    <div class="pd-grid">
+        <div class="raised pd-cell">
+            <div class="pd-cell-label">When</div>
+            <div class="pd-cell-value plain" style="font-size: 14px;">{{ time_display }}</div>
+        </div>
+        <div class="raised pd-cell">
+            <div class="pd-cell-label">Min speed (px/s)</div>
+            <div class="pd-cell-value" style="color: {{ speed_color }};">{{ "%.1f"|format(min_speed) }}</div>
+        </div>
+        <div class="raised pd-cell">
+            <div class="pd-cell-label">Time in zone</div>
+            <div class="pd-cell-value" style="color: {{ time_color }};">{{ "%.1f"|format(time_in_zone) }}s</div>
+        </div>
+        <div class="raised pd-cell">
+            <div class="pd-cell-label">Stop duration</div>
+            <div class="pd-cell-value plain">{{ "%.1f"|format(stop_duration) }}s</div>
+        </div>
+    </div>
 
-            {# Facts grid #}
-            <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Facts</div>
-            <table class="data-table" style="margin-bottom: 8px;">
-                <tbody>
-                    <tr>
-                        <td style="font-weight: 600; width: 140px;">When</td>
-                        <td>{{ time_display }}</td>
-                    </tr>
-                    <tr>
-                        <td style="font-weight: 600;">Min Speed (px/s)</td>
-                        <td class="mono"><span style="color: {{ speed_color }};">{{ "%.1f"|format(min_speed) }}</span></td>
-                    </tr>
-                    <tr>
-                        <td style="font-weight: 600;">Time in Zone</td>
-                        <td class="mono"><span style="color: {{ time_color }};">{{ "%.1f"|format(time_in_zone) }}s</span></td>
-                    </tr>
-                    <tr>
-                        <td style="font-weight: 600;">Stop Duration</td>
-                        <td class="mono">{{ "%.1f"|format(stop_duration) }}s</td>
-                    </tr>
-                    {% if badge_text %}
-                    <tr>
-                        <td style="font-weight: 600;">Vehicle</td>
-                        <td>{{ badge_text }}</td>
-                    </tr>
-                    {% endif %}
-                </tbody>
-            </table>
-
-            {# Raw payload summary #}
-            {% if raw_summary %}
-            <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Raw Data</div>
-            <table class="data-table">
-                <tbody>
-                    <tr>
-                        <td style="font-weight: 600; width: 140px;">Samples</td>
-                        <td class="mono">{{ raw_summary.sample_count }}</td>
-                    </tr>
-                    <tr>
-                        <td style="font-weight: 600;">Coordinate Space</td>
-                        <td class="mono">{{ raw_summary.coordinate_space }}</td>
-                    </tr>
-                    {% if raw_summary.dimensions %}
-                    <tr>
-                        <td style="font-weight: 600;">Resolution</td>
-                        <td class="mono">
-                            {% if raw_summary.dimensions.raw %}{{ raw_summary.dimensions.raw.width }}&times;{{ raw_summary.dimensions.raw.height }}{% endif %}
-                            {% if raw_summary.dimensions.processed %}&rarr; {{ raw_summary.dimensions.processed.width }}&times;{{ raw_summary.dimensions.processed.height }}{% endif %}
-                        </td>
-                    </tr>
-                    {% endif %}
-                    {% if raw_summary.model_name %}
-                    <tr>
-                        <td style="font-weight: 600;">Model</td>
-                        <td class="mono">{{ raw_summary.model_name }}</td>
-                    </tr>
-                    {% endif %}
-                    <tr>
-                        <td style="font-weight: 600;">Payload Version</td>
-                        <td class="mono">v{{ raw_summary.version }}</td>
-                    </tr>
-                </tbody>
-            </table>
+    {# Raw payload summary #}
+    {% if raw_summary %}
+    <div class="pd-section-label">Raw data</div>
+    <table class="data-table">
+        <tbody>
+            <tr>
+                <td style="font-weight: 600; width: 160px;">Samples</td>
+                <td class="mono">{{ raw_summary.sample_count }}</td>
+            </tr>
+            <tr>
+                <td style="font-weight: 600;">Coordinate space</td>
+                <td class="mono">{{ raw_summary.coordinate_space }}</td>
+            </tr>
+            {% if raw_summary.dimensions %}
+            <tr>
+                <td style="font-weight: 600;">Resolution</td>
+                <td class="mono">
+                    {% if raw_summary.dimensions.raw %}{{ raw_summary.dimensions.raw.width }}&times;{{ raw_summary.dimensions.raw.height }}{% endif %}
+                    {% if raw_summary.dimensions.processed %}&rarr; {{ raw_summary.dimensions.processed.width }}&times;{{ raw_summary.dimensions.processed.height }}{% endif %}
+                </td>
+            </tr>
             {% endif %}
+            {% if raw_summary.model_name %}
+            <tr>
+                <td style="font-weight: 600;">Model</td>
+                <td class="mono">{{ raw_summary.model_name }}</td>
+            </tr>
+            {% endif %}
+            <tr>
+                <td style="font-weight: 600;">Payload version</td>
+                <td class="mono">v{{ raw_summary.version }}</td>
+            </tr>
+        </tbody>
+    </table>
+    {% endif %}
 
-        </div>
-    </div>
 </div>
 {% endblock %}

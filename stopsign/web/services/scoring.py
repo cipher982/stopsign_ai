@@ -61,3 +61,14 @@ COLOR_MAP = {
     "maroon": "#660000",
     "tan": "#c4a882",
 }
+
+
+def get_color_hex(name: str) -> str:
+    """Map a free-form color label to a swatch hex, handling compounds like "dark gray"."""
+    n = name.lower().strip()
+    if n in COLOR_MAP:
+        return COLOR_MAP[n]
+    mapped = [w for w in n.split() if w in COLOR_MAP]
+    if mapped:
+        return COLOR_MAP[mapped[-1]]
+    return "#55585f"

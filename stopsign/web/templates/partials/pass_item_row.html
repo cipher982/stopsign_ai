@@ -2,14 +2,22 @@
 <tr title="{{ item.time_absolute }}" {% if item.pass_id %}onclick="window.location='/passes/{{ item.pass_id }}'" style="cursor: pointer;"{% endif %}>
     <td>
         <img src="{{ item.image_url }}" alt="Vehicle pass {{ item.time_str }}{% if item.badge_text %} — {{ item.badge_text }}{% endif %}"
-             class="thumb" loading="lazy" decoding="async">
+             class="thumb thumb-72" loading="lazy" decoding="async">
     </td>
-    <td style="font-weight: 600;">{{ item.time_str }}</td>
-    <td class="mono"><span class="dot" style="background-color: {{ item.verdict_color }};"></span>{{ item.verdict }}</td>
-    <td class="mono"><span class="dot" style="background-color: {{ item.time_color }};"></span>{{ "%.1f"|format(item.time_in_zone) }}s</td>
+    <td class="mono">{{ item.time_str }}</td>
+    <td>
+        {% if item.verdict == 'Full Stop' %}
+        <span class="stamp stamp-ok">FULL STOP</span>
+        {% elif item.verdict == 'No Stop' %}
+        <span class="stamp stamp-bad">NO STOP</span>
+        {% else %}
+        <span class="stamp stamp-warn">ROLLING STOP</span>
+        {% endif %}
+    </td>
+    <td class="mono">{{ "%.1f"|format(item.time_in_zone) }}s</td>
     <td>
         {% if item.pass_id %}
-        <a href="/passes/{{ item.pass_id }}" class="btn98" style="font-size: 11px; padding: 1px 6px;" onclick="event.stopPropagation();">Detail</a>
+        <a href="/passes/{{ item.pass_id }}" class="btn98" style="font-size: 11px; padding: 3px 10px;" onclick="event.stopPropagation();">Detail</a>
         {% endif %}
     </td>
 </tr>

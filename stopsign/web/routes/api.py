@@ -14,7 +14,7 @@ from stopsign.web.services.images import resolve_image_url
 from stopsign.web.services.insights import get_real_insights
 from stopsign.web.services.passes import build_recent_pass_items
 from stopsign.web.services.passes import format_pass_item
-from stopsign.web.services.scoring import COLOR_MAP
+from stopsign.web.services.scoring import get_color_hex
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +356,7 @@ async def api_vehicles_colors(request: Request):
                 "label": item["color"],
                 "value": item["count"],
                 "pct": round(item["count"] / max_val * 100, 1),
-                "color": COLOR_MAP.get(item["color"].lower(), "#000080"),
+                "color": get_color_hex(item["color"]),
             }
             for item in items
         ]

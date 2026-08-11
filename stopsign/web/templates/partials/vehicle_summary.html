@@ -3,24 +3,20 @@
     <div class="window">
         <div class="title-bar">
             <span class="title-bar-text">Vehicle Classification Summary</span>
-            <div class="title-bar-controls">
-                <button aria-hidden="true" tabindex="-1">&#9472;</button>
-                <button aria-hidden="true" tabindex="-1">&#9723;</button>
-            </div>
         </div>
         <div class="window-body">
-            <div style="display: flex; gap: 24px;">
-                <div class="stat-readout">
-                    <span class="stat-label">Classified</span>
-                    <span class="stat-value">{{ "{:,}".format(summary.total_classified) }}</span>
+            <div class="stat-tiles">
+                <div class="stat-tile">
+                    <div class="stat-tile-label">Classified</div>
+                    <div class="stat-tile-value">{{ "{:,}".format(summary.total_classified) }}</div>
                 </div>
-                <div class="stat-readout">
-                    <span class="stat-label">Clusters</span>
-                    <span class="stat-value">{{ "{:,}".format(summary.cluster_count) }}</span>
+                <div class="stat-tile">
+                    <div class="stat-tile-label">Clusters</div>
+                    <div class="stat-tile-value">{{ "{:,}".format(summary.cluster_count) }}</div>
                 </div>
-                <div class="stat-readout">
-                    <span class="stat-label">Coverage</span>
-                    <span class="stat-value" style="color: var(--ok);">{{ summary.coverage_pct }}%</span>
+                <div class="stat-tile">
+                    <div class="stat-tile-label">Coverage</div>
+                    <div class="stat-tile-value">{{ summary.coverage_pct }}%</div>
                 </div>
             </div>
         </div>
@@ -30,7 +26,7 @@
         <div class="title-bar title-bar-inactive">
             <span class="title-bar-text">Vehicle Classification Summary</span>
         </div>
-        <div class="window-body" style="font-size: 12px; color: var(--text-muted);">
+        <div class="window-body" style="font-size: 12px; color: var(--text-dim);">
             Vehicle classification data not yet available.
         </div>
     </div>

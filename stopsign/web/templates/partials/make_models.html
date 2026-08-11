@@ -1,28 +1,24 @@
 <div id="vehicleMakeModels" class="window">
     <div class="title-bar">
         <span class="title-bar-text">Top Make / Models</span>
-        <div class="title-bar-controls">
-            <button aria-hidden="true" tabindex="-1">&#9472;</button>
-            <button aria-hidden="true" tabindex="-1">&#9723;</button>
-        </div>
     </div>
     <div class="window-body">
         {% if items %}
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px;">
+        <div class="vcard-grid">
             {% for item in items %}
-            <div style="border: 1px solid #e0e0e0; background: #fff;">
-                <img src="{{ item.image_url }}" alt="{{ item.make_model }}"
-                     style="width: 100%; object-fit: contain; display: block; background: #f0f0f0;"
-                     loading="lazy">
-                <div style="padding: 3px 4px;">
-                    <div style="font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ item.make_model }}</div>
-                    <div class="mono" style="font-size: 10px; color: var(--text-muted);">{{ "{:,}".format(item.count) }}</div>
+            <div class="vcard">
+                <div class="vcard-img-wrap">
+                    <img src="{{ item.image_url }}" alt="{{ item.make_model }}" loading="lazy">
+                </div>
+                <div class="vcard-body">
+                    <div class="vcard-name">{{ item.make_model }}</div>
+                    <div class="vcard-count">{{ "{:,}".format(item.count) }}</div>
                 </div>
             </div>
             {% endfor %}
         </div>
         {% else %}
-        <div style="font-size: 12px; color: var(--text-muted);">No make/model data.</div>
+        <div style="font-size: 12px; color: var(--text-dim);">No make/model data.</div>
         {% endif %}
     </div>
 </div>

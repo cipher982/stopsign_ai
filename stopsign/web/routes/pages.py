@@ -16,6 +16,7 @@ from stopsign.web.services.images import resolve_image_url
 from stopsign.web.services.passes import build_recent_pass_items
 from stopsign.web.services.scoring import get_speed_color
 from stopsign.web.services.scoring import get_time_color
+from stopsign.web.services.scoring import get_verdict_color
 from stopsign.web.services.seo import PAGE_METADATA
 from stopsign.web.services.seo import build_json_ld
 
@@ -137,6 +138,21 @@ async def pass_detail(request: Request, pass_id: int):
             badge_parts.append(attrs["make_model"])
         badge_text = " | ".join(badge_parts)
 
+        # Verdict (same triple-gate scoring used for recent-pass cards)
+        score = db.get_pass_stop_scores(
+            [
+                {
+                    "time_in_zone": vehicle_pass.time_in_zone,
+                    "min_speed": vehicle_pass.min_speed,
+                    "stop_duration": vehicle_pass.stop_duration,
+                    "decel_score": getattr(vehicle_pass, "decel_score", None),
+                    "track_quality": getattr(vehicle_pass, "track_quality", None),
+                    "entry_speed": getattr(vehicle_pass, "entry_speed", None),
+                }
+            ]
+        )[0]
+        verdict = score["verdict"]
+
         # Raw payload summary
         raw_summary = None
         if raw and raw.raw_payload:
@@ -166,6 +182,8 @@ async def pass_detail(request: Request, pass_id: int):
                 "stop_duration": vehicle_pass.stop_duration,
                 "speed_color": get_speed_color(vehicle_pass.min_speed),
                 "time_color": get_time_color(vehicle_pass.time_in_zone),
+                "verdict": verdict,
+                "verdict_color": get_verdict_color(verdict),
                 "badge_text": badge_text,
                 "entry_time": vehicle_pass.entry_time,
                 "exit_time": vehicle_pass.exit_time,

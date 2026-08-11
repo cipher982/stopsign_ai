@@ -7,13 +7,13 @@
 {% endblock %}
 
 {% block content %}
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+<div class="records-grid">
     <div id="worstPasses" hx-get="/api/worst-passes" hx-trigger="load">
         <div class="window">
             <div class="title-bar">
                 <span class="title-bar-text">Loading...</span>
             </div>
-            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px;">
+            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-dim); font-size: 12px;">
                 Loading worst passes...
             </div>
         </div>
@@ -23,7 +23,7 @@
             <div class="title-bar title-bar-inactive">
                 <span class="title-bar-text">Loading...</span>
             </div>
-            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px;">
+            <div class="window-body" style="text-align: center; padding: 24px; color: var(--text-dim); font-size: 12px;">
                 Loading best passes...
             </div>
         </div>
@@ -33,9 +33,37 @@
 
 {% block scripts %}
 <style>
+    .records-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        align-items: start;
+    }
+
+    .records-grid .window { height: 100%; }
+
+    .records-section-label {
+        font-family: 'Overpass Mono', monospace;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        margin: 4px 0 6px;
+    }
+
+    .records-section-label:first-child { margin-top: 0; }
+
+    .thumb-72 {
+        width: 72px;
+        height: 54px;
+        object-fit: cover;
+        border-radius: 3px;
+    }
+
     @media (max-width: 768px) {
-        div[style*="grid-template-columns: 1fr 1fr"] {
-            grid-template-columns: 1fr !important;
+        .records-grid {
+            grid-template-columns: 1fr;
         }
     }
 </style>

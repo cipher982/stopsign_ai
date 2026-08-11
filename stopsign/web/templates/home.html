@@ -13,107 +13,108 @@
 {% endblock %}
 
 {% block content %}
-{# Single window that fills the viewport #}
-<div class="window home-window">
-    <div class="title-bar">
-        <span class="title-bar-text">Stop Sign Nanny &mdash; Crestwood Intersection</span>
-        <div id="streamStatus" style="display: flex; align-items: center; gap: 3px;">
-            <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--ok);" class="live-pulse stream-status-dot"></span>
-            <span style="font-size: 11px;" class="stream-status-label">Connecting...</span>
-        </div>
-        <div class="title-bar-controls">
-            <button aria-hidden="true" tabindex="-1">&#9472;</button>
-            <button aria-hidden="true" tabindex="-1">&#9723;</button>
-        </div>
+{# ── Hero: latest verdict + snapshot stats ── #}
+<div class="page-wide hero-row">
+    <div class="hero-latest">
+        <div class="section-label">Latest Pass</div>
+        {% if passes %}
+        {% set item = passes[0] %}
+        <a href="{% if item.pass_id %}/passes/{{ item.pass_id }}{% else %}{{ item.image_url }}{% endif %}" class="hero-latest-card" title="{{ item.time_absolute }}">
+            <img src="{{ item.thumbnail_url or item.image_url }}" alt="Latest vehicle pass" class="hero-latest-img" loading="eager" decoding="async">
+            <div class="hero-latest-info">
+                {% if item.verdict == 'Full Stop' %}
+                <span class="stamp stamp-ok">FULL STOP</span>
+                {% elif item.verdict == 'No Stop' %}
+                <span class="stamp stamp-bad">NO STOP</span>
+                {% else %}
+                <span class="stamp stamp-warn">ROLLING STOP</span>
+                {% endif %}
+                <div class="hero-latest-data mono">{{ "%.1f"|format(item.time_in_zone) }}s in zone &middot; {{ item.time_str }}</div>
+                {% if item.badge_text %}<div class="hero-latest-badge mono">{{ item.badge_text }}</div>{% endif %}
+            </div>
+        </a>
+        {% else %}
+        <div class="hero-latest-empty mono">No passes recorded yet.</div>
+        {% endif %}
     </div>
 
-    {# Main content area — control-room grid #}
-    <div class="home-grid">
-        <div class="home-left">
-            <div class="home-panel raised">
-                <div class="home-panel-title">Project</div>
-                <div class="home-panel-body home-about">
-                    <div class="home-tagline">
-                        <strong>AI-powered stop sign monitoring in Crestwood, Birmingham.</strong>
-                        Live vehicle detection with a public data feed for neighborhood safety.
-                    </div>
-                    <div class="home-about-link">
-                        <a href="/about">How it works &rarr;</a>
-                    </div>
-                </div>
+    <div class="hero-stats">
+        <div class="hero-desc">
+            <strong>AI-powered stop sign monitoring in Crestwood, Birmingham.</strong>
+            Live vehicle detection with a public data feed for neighborhood safety.
+            <a href="/about">How it works &rarr;</a>
+        </div>
+        <div class="stat-grid" aria-live="polite">
+            <div class="stat-cell stat-cell-primary">
+                <div class="stat-label">Compliance</div>
+                <div class="stat-value mono" id="complianceRate">{{ stats.compliance_rate }}</div>
             </div>
-            <div class="home-panel raised">
-                <div class="home-panel-title">Snapshot</div>
-                <div class="home-panel-body">
-                    <div class="stat-grid" aria-live="polite">
-                        <div class="stat-cell">
-                            <div class="stat-label">Compliance</div>
-                            <div class="stat-value mono" id="complianceRate">{{ stats.compliance_rate }}</div>
-                        </div>
-                        <div class="stat-cell">
-                            <div class="stat-label">Violations (24h)</div>
-                            <div class="stat-value mono stat-bad" id="violationCount">{{ stats.violation_count }}</div>
-                        </div>
-                        <div class="stat-cell">
-                            <div class="stat-label">Vehicles (24h)</div>
-                            <div class="stat-value mono" id="vehicleCount">{{ stats.vehicle_count }}</div>
-                        </div>
-                        <div class="stat-cell">
-                            <div class="stat-label">Last Seen</div>
-                            <div class="stat-value mono stat-ok" id="lastDetection">{{ stats.last_detection }}</div>
-                        </div>
-                    </div>
-                </div>
+            <div class="stat-cell">
+                <div class="stat-label">Violations (24h)</div>
+                <div class="stat-value mono stat-bad" id="violationCount">{{ stats.violation_count }}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-label">Vehicles (24h)</div>
+                <div class="stat-value mono" id="vehicleCount">{{ stats.vehicle_count }}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-label">Last Seen</div>
+                <div class="stat-value mono stat-ok" id="lastDetection">{{ stats.last_detection }}</div>
             </div>
         </div>
-
-        <div class="home-panel home-video raised">
-            <div class="home-panel-title" style="display: flex; justify-content: space-between; align-items: center;">
-                <span>Live Feed</span>
-                <button class="video-toggle" onclick="this.closest('.home-video').classList.toggle('collapsed'); this.textContent = this.closest('.home-video').classList.contains('collapsed') ? '▼ show' : '▲ hide';">▲ hide</button>
-            </div>
-            <div id="videoContainer" class="sunken-dark home-video-frame">
-                {% include "partials/video.html" %}
-            </div>
-        </div>
-
-        <div class="home-panel home-recents raised">
-            <div class="home-panel-title">Recent Passes</div>
-            <div class="home-panel-body home-recents-body sunken">
-                <div id="recentPasses" aria-live="polite">
-                    {% include "partials/recent_passes.html" %}
-                </div>
-            </div>
-        </div>
-
-        <div class="home-panel home-ticker raised">
-            <span class="ticker-label">Trend</span>
-            <span class="mono" id="trendArrow">&rarr;</span>
-            <span id="rotatingInsight">Loading...</span>
+        <div class="hero-insight mono">
+            <span id="trendArrow">&rarr;</span>
+            <span id="rotatingInsight">Loading&hellip;</span>
         </div>
     </div>
-
-    {# Hidden stats updater #}
-    <div id="statsUpdater"
-         hx-get="/api/live-stats"
-         hx-trigger="every 15s"
-         hx-swap="none"
-         hx-vals='{"update": "stats"}'
-         style="display: none;"></div>
 </div>
+
+{# ── Live instrument + recent passes ── #}
+<div class="page-wide live-row">
+    <div class="live-panel">
+        <div class="live-panel-head">
+            <span class="section-label">Live</span>
+            <div id="streamStatus" class="stream-status">
+                <span class="stream-status-dot live-pulse"></span>
+                <span class="stream-status-label mono">Connecting&hellip;</span>
+            </div>
+        </div>
+        <div id="videoContainer" class="sunken-dark live-video-frame">
+            {% include "partials/video.html" %}
+        </div>
+        <div class="live-caption mono">Crestwood &middot; Birmingham AL</div>
+    </div>
+
+    <div class="pass-rail-wrap">
+        <div class="section-label">Recent Passes</div>
+        <div id="recentPasses" class="pass-rail" aria-live="polite">
+            {% include "partials/recent_passes.html" %}
+        </div>
+    </div>
+</div>
+
+{# Hidden stats updater #}
+<div id="statsUpdater"
+     hx-get="/api/live-stats"
+     hx-trigger="every 15s"
+     hx-swap="none"
+     hx-vals='{"update": "stats"}'
+     style="display: none;"></div>
 
 {# Below the fold: surface the interesting data so visitors keep scrolling. #}
-<div class="fold-peek scroll-reveal" id="foldPeek">
-    <span class="fold-chevron">&#9660;</span>
-    <span>Keep scrolling. The interesting part is below the fold.</span>
+<div class="fold-peek mono scroll-reveal" id="foldPeek">
+    <span class="fold-chevron">&#8595;</span>
+    <span>Keep scrolling &mdash; the interesting part is below the fold.</span>
 </div>
 
-<section class="home-fold scroll-reveal" id="behaviorFold"
+<hr class="rule-dash page">
+
+<section class="page scroll-reveal" id="behaviorFold"
          hx-get="/api/behavior" hx-trigger="load" hx-swap="innerHTML">
-    <div class="sunken" style="padding: 10px; font-size: 12px; color: var(--text-muted);">Loading behavior&hellip;</div>
+    <div class="mono" style="padding: 10px; font-size: 12px; color: var(--text-dim);">Loading behavior&hellip;</div>
 </section>
 
-<div class="home-nav-strip scroll-reveal">
+<div class="page home-nav-strip scroll-reveal">
     <a class="btn98" href="/records">Every vehicle pass &rarr; Records</a>
     <a class="btn98" href="/vehicles">Classification explorer &rarr; Vehicles</a>
     <a class="btn98" href="/about">How it works &rarr;</a>
@@ -122,214 +123,339 @@
 
 {% block scripts %}
 <style>
-    .home-window {
-        height: auto;
-    }
-
-    .home-grid {
+    /* ── Hero ── */
+    .hero-row {
         display: grid;
-        grid-template-columns: 220px minmax(0, 1fr) 420px;
-        grid-template-rows: auto;
-        gap: 2px;
-        margin: 2px;
-        align-items: start;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 16px;
+        margin-top: 20px;
     }
 
-    .home-left {
-        display: grid;
-        grid-template-rows: auto auto;
-        gap: 2px;
-        min-height: 0;
+    .section-label {
+        font-family: 'Overpass Mono', monospace;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        color: var(--text-dim);
+        margin-bottom: 10px;
     }
 
-    .home-panel {
+    .hero-latest-card {
+        display: flex;
+        gap: 14px;
+        align-items: stretch;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 14px;
+        text-decoration: none;
+        color: inherit;
+    }
+
+    .hero-latest-img {
+        width: 44%;
+        max-width: 260px;
+        min-height: 160px;
+        object-fit: cover;
+        border-radius: 4px;
+        background: var(--panel-2);
+        flex-shrink: 0;
+    }
+
+    .hero-latest-info {
         display: flex;
         flex-direction: column;
-        min-height: 0;
+        gap: 8px;
+        justify-content: center;
+        min-width: 0;
     }
 
-    .home-panel-title {
-        padding: 2px 6px;
-        font-size: 10px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.4px;
-        border-bottom: 1px solid var(--shadow);
-        background: var(--face);
-    }
-
-    .home-panel-body {
-        padding: 6px;
-        flex: 1;
-        min-height: 0;
-        overflow: auto;
-    }
-
-    .home-about {
-        font-size: 12px;
-        color: var(--text-secondary);
-    }
-
-    .home-tagline strong {
+    .hero-latest-data {
+        font-size: 15px;
         color: var(--text);
     }
 
-    .home-about-link {
-        margin-top: 4px;
+    .hero-latest-badge {
+        font-size: 12px;
+        color: var(--text-dim);
     }
+
+    .hero-latest-empty {
+        padding: 40px 14px;
+        text-align: center;
+        color: var(--text-dim);
+        font-size: 13px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+    }
+
+    .hero-stats {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        justify-content: center;
+    }
+
+    .hero-desc {
+        font-size: 14px;
+        color: var(--text-dim);
+        line-height: 1.5;
+    }
+
+    .hero-desc strong { color: var(--text); }
 
     .stat-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 6px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
     }
 
     .stat-cell {
-        background: var(--face);
-        border: 1px solid var(--shadow);
-        box-shadow: inset 1px 1px 0 var(--hi), inset -1px -1px 0 var(--shadow);
-        padding: 4px 6px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px 12px;
     }
 
+    .stat-cell-primary {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+    }
+
+    .stat-cell-primary .stat-value { font-size: 40px; }
+    .stat-cell-primary .stat-label { font-size: 13px; }
+
     .stat-label {
-        font-size: 10px;
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.3px;
-        color: var(--text-secondary);
+        letter-spacing: .06em;
+        color: var(--text-dim);
     }
 
     .stat-value {
-        font-size: 16px;
-        font-weight: 700;
+        display: block;
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+        margin-top: 2px;
     }
 
     .stat-bad { color: var(--bad); }
     .stat-ok { color: var(--ok); }
 
-    .home-video-frame {
-        flex: 1;
-        min-height: 0;
+    .hero-insight {
+        font-size: 12px;
+        color: var(--text-dim);
+        display: flex;
+        gap: 6px;
+        align-items: center;
+    }
+
+    /* ── Live + filmstrip ── */
+    .live-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+        gap: 16px;
+        margin-top: 40px;
+        align-items: start;
+    }
+
+    .live-panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 10px;
+    }
+
+    .stream-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .stream-status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ok);
+    }
+
+    .stream-status-label {
+        font-size: 12px;
+        color: var(--text-dim);
+    }
+
+    .live-video-frame {
+        position: relative;   /* stream-error overlay (video-player.js) anchors here */
         display: flex;
         align-items: center;
         justify-content: center;
+        min-height: 220px;
     }
 
-    .home-recents-body {
-        padding: 0;
-        overflow: auto;
+    .live-video-frame video { display: block; }
+
+    .live-caption {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--text-dim);
     }
 
-    .home-recents {
-        max-height: 420px;
-    }
-
-    .home-recents .home-panel-body {
-        padding: 0;
-    }
-
-    .home-ticker {
-        grid-column: 1 / -1;
+    .pass-rail {
         display: flex;
-        align-items: center;
+        flex-direction: column;
         gap: 8px;
-        padding: 4px 8px;
-        font-size: 11px;
+        max-height: 480px;
+        overflow-y: auto;
+        padding-right: 2px;
     }
 
-    .home-ticker .ticker-label {
+    .pass-card {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 6px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        text-decoration: none;
+        color: inherit;
+        background: var(--panel);
+    }
+
+    .pass-card:hover { background: var(--panel-2); }
+
+    .pass-card-img {
+        width: 64px;
+        height: 46px;
+        object-fit: cover;
+        border-radius: 3px;
+        background: var(--panel-2);
+        flex-shrink: 0;
+    }
+
+    .pass-card-body {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .pass-card-meta {
+        font-size: 11px;
+        color: var(--text-dim);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .pass-card-badge {
         font-size: 10px;
-        text-transform: uppercase;
-        color: var(--text-secondary);
-        letter-spacing: 0.3px;
+        color: var(--text-dim);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
-    /* Video collapse toggle — mobile only */
-    .video-toggle {
-        display: none;
-        background: none;
-        border: none;
-        font-size: 11px;
-        cursor: pointer;
-        color: var(--text-secondary);
-        padding: 0;
-    }
-    .home-video.collapsed .home-video-frame { display: none; }
-    .home-video.collapsed { min-height: 0; flex: none; }
-
-    @media (max-width: 1200px) {
-        .home-grid {
-            grid-template-columns: 200px minmax(0, 1fr);
-            grid-template-rows: auto 1fr auto;
-        }
-        .home-recents {
-            grid-column: 1 / -1;
-            min-height: 240px;
-            max-height: 320px;
-        }
-    }
-
-    @media (max-width: 800px) {
-        .home-grid {
+    @media (max-width: 900px) {
+        .hero-row, .live-row {
             grid-template-columns: 1fr;
-            grid-template-rows: auto auto auto auto auto;
-            height: auto;
         }
-        .home-window { height: auto; min-height: calc(100vh - 62px); }
-        .home-left { grid-template-rows: auto auto; }
-        .home-video { order: 2; }
-        .home-left  { order: 1; }
-        .home-recents {
-            order: 3;
-            min-height: 280px;
+        .hero-latest-card { flex-direction: column; }
+        .hero-latest-img { width: 100%; max-width: none; }
+        .pass-rail {
+            flex-direction: row;
+            overflow-x: auto;
+            overflow-y: hidden;
             max-height: none;
+            padding-bottom: 6px;
         }
-        .home-ticker { order: 4; }
-        .home-video-frame { min-height: 180px; }
-        .video-toggle { display: inline; }
-        .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+        .pass-card {
+            flex: 0 0 200px;
+            flex-direction: column;
+            align-items: stretch;
+        }
+        .pass-card-img { width: 100%; height: 110px; }
+        .stat-cell-primary .stat-value { font-size: 32px; }
     }
 
     @media (max-width: 480px) {
         .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
-/* Below-the-fold sections: nudge to scroll + reveal as they enter view */
+
+    /* ── Below the fold ── */
     .fold-peek {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        padding: 14px;
-        font-size: 13px;
-        color: var(--text-muted);
-        border-top: 1px solid var(--dark);
-        margin: 8px 2px 0;
+        text-align: center;
+        padding: 22px 14px 4px;
+        font-size: 12px;
+        color: var(--text-dim);
     }
+
     .fold-chevron {
         display: inline-block;
         animation: fold-bob 1.6s ease-in-out infinite;
     }
+
     @keyframes fold-bob {
         0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(4px); }
+        50% { transform: translateY(3px); }
     }
-    .home-fold {
-        margin: 2px;
-    }
-    .home-fold-grid {
+
+    .behavior-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 2px;
+        gap: 16px;
         align-items: start;
     }
-    .home-fold-grid .window-body {
+
+    .chart-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .chart-card-head {
+        padding: 14px 14px 0;
+    }
+
+    .chart-card-title {
+        display: block;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text);
+    }
+
+    .chart-card-sub {
+        display: block;
+        font-size: 11px;
+        color: var(--text-dim);
+        margin-top: 2px;
+    }
+
+    .chart-card-body {
+        padding: 10px 14px 14px;
         max-height: 320px;
         overflow: auto;
     }
-    .behavior-note {
-        margin-top: 6px;
-        font-size: 11px;
-        color: var(--text-secondary);
+
+    .hour-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px 12px;
     }
+
+    .behavior-note {
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--text-dim);
+    }
+
     .week-bars {
         display: flex;
         align-items: flex-end;
@@ -337,38 +463,37 @@
         height: 90px;
         padding: 6px 2px 0;
     }
+
     .week-bar-wrap {
         flex: 1;
         display: flex;
         align-items: flex-end;
         height: 100%;
     }
+
     .week-bar {
         width: 100%;
-        background: #1F3A93;
         min-height: 2px;
+        border-radius: 1px 1px 0 0;
     }
+
     .week-caption {
         font-size: 11px;
-        color: var(--text-muted);
+        color: var(--text-dim);
         text-align: center;
-        margin-top: 2px;
+        margin-top: 6px;
     }
+
     .home-nav-strip {
         display: flex;
         gap: 8px;
         justify-content: center;
         flex-wrap: wrap;
-        margin: 14px 2px 22px;
+        margin: 16px auto 24px;
     }
-    .scroll-reveal {
-        /* Content stays visible; no hide-on-load so it renders for viewers,
-           bots and full-page captures. The nudge to scroll should be seeable. */
-        opacity: 1;
-        transform: none;
-    }
+
     @media (prefers-reduced-motion: reduce) {
         .fold-chevron { animation: none; }
     }
-    </style>
+</style>
 {% endblock %}

@@ -1,28 +1,25 @@
 <div id="{{ div_id }}" class="window">
     <div class="title-bar">
         <span class="title-bar-text">{{ title }}</span>
-        <div class="title-bar-controls">
-            <button aria-hidden="true" tabindex="-1">&#9472;</button>
-            <button aria-hidden="true" tabindex="-1">&#9723;</button>
-        </div>
     </div>
     <div class="window-body">
         {% if items %}
-        <table class="data-table" style="font-size: 12px;">
-            {% for item in items %}
-            <tr>
-                <td style="width: 100px; white-space: nowrap; font-size: 12px;">{{ item.label | title }}</td>
-                <td style="width: 100%;">
-                    <div style="background: #e0e0e0; height: 14px; width: 100%; position: relative;">
-                        <div style="height: 14px; width: {{ item.pct }}%; background-color: {{ item.color | default('#1F3A93') }};" class="bar-chart-bar"></div>
-                    </div>
-                </td>
-                <td class="mono" style="white-space: nowrap; text-align: right; font-size: 11px;">{{ "{:,}".format(item.value) }}</td>
-            </tr>
-            {% endfor %}
-        </table>
+        {% for item in items %}
+        <div class="bar-row">
+            <div class="bar-row-label">
+                {% if item.color is defined %}
+                <span class="color-chip" style="background-color: {{ item.color }};"></span>
+                {% endif %}
+                {{ item.label | title }}
+            </div>
+            <div class="bar-row-track bar-track">
+                <div class="bar" style="width: {{ item.pct }}%; background: var(--text-dim);"></div>
+            </div>
+            <div class="bar-row-value">{{ "{:,}".format(item.value) }}</div>
+        </div>
+        {% endfor %}
         {% else %}
-        <div style="font-size: 12px; color: var(--text-muted);">No data available.</div>
+        <div style="font-size: 12px; color: var(--text-dim);">No data available.</div>
         {% endif %}
     </div>
 </div>
