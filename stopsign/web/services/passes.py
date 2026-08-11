@@ -10,7 +10,6 @@ from stopsign.web.services.images import resolve_card_thumbnail_url
 from stopsign.web.services.images import resolve_image_url
 from stopsign.web.services.scoring import get_speed_color
 from stopsign.web.services.scoring import get_time_color
-from stopsign.web.services.scoring import get_verdict_color
 
 
 def format_pass_item(pass_data, vehicle_attrs=None, score=None):
@@ -71,7 +70,6 @@ def format_pass_item(pass_data, vehicle_attrs=None, score=None):
         "speed_color": get_speed_color(pass_data.min_speed),
         "time_color": get_time_color(pass_data.time_in_zone),
         "verdict": verdict,
-        "verdict_color": get_verdict_color(verdict),
         "stop_score": stop_score,
         "badge_text": badge_text,
         "clip_url": clip_url,

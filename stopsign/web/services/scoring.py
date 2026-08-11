@@ -4,36 +4,31 @@ COMPLIANCE_THRESHOLD_SECONDS = 2.0
 
 
 def get_speed_color(speed):
-    """Return CSS color (design-system token) for speed value."""
-    if speed > 1.5:
-        return "var(--bad)"
-    elif speed > 1.0:
+    """Return CSS color (design-system token) for min_speed (px/s).
+
+    Thresholds match the triple-gate verdict scorer (database.py): a full stop
+    requires min_speed < 12; 20 px/s is the configured stationary threshold.
+    """
+    if speed < 12.0:
+        return "var(--ok)"
+    elif speed < 20.0:
         return "var(--warn)"
     else:
-        return "var(--ok)"
+        return "var(--bad)"
 
 
 def get_time_color(time_val):
     """Return CSS color (design-system token) for time-in-zone value.
 
-    Longer time = car stopped properly = green (good).
-    Short time = blew through the stop sign = red (bad).
+    Longer time = car stopped properly = green (good). Thresholds match the
+    verdict scorer: >= 2.0s can be a full stop, >= 1.5s is a rolling stop.
     """
-    if time_val > COMPLIANCE_THRESHOLD_SECONDS:
+    if time_val >= COMPLIANCE_THRESHOLD_SECONDS:
         return "var(--ok)"
-    elif time_val > 1.0:
+    elif time_val >= 1.5:
         return "var(--warn)"
     else:
         return "var(--bad)"
-
-
-def get_verdict_color(verdict: str) -> str:
-    """Return CSS color (design-system token) for stop verdict label."""
-    return {
-        "Full Stop": "var(--ok)",
-        "Rolling Stop": "var(--warn)",
-        "No Stop": "var(--bad)",
-    }.get(verdict, "var(--text-dim)")
 
 
 COLOR_MAP = {
@@ -57,6 +52,8 @@ COLOR_MAP = {
 
 def get_color_hex(name: str) -> str:
     """Map a free-form color label to a swatch hex, handling compounds like "dark gray"."""
+    if not isinstance(name, str):
+        return "#55585f"
     n = name.lower().strip()
     if n in COLOR_MAP:
         return COLOR_MAP[n]

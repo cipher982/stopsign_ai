@@ -27,6 +27,7 @@
     --warn-dim: rgba(232,161,60,.18);
     --bad-dim:  rgba(224,82,82,.18);
     --track:    #262a33;    /* empty bar track */
+    --well:     #0e0f13;    /* dark well behind letterboxed evidence images */
 
     /* Legacy aliases — templates still reference these */
     --text-secondary: var(--text-dim);
@@ -310,7 +311,7 @@ h1, h2, h3 {
     width: 64px;
     height: 42px;
     object-fit: contain;
-    background: #0e0f13;
+    background: var(--well);
     border-radius: 3px;
     display: block;
 }

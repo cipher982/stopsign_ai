@@ -10,7 +10,7 @@ from fastapi import Request
 from stopsign.database import Database
 from stopsign.settings import DB_URL
 from stopsign.web.app import templates
-from stopsign.web.services.images import resolve_image_url
+from stopsign.web.services.images import resolve_card_thumbnail_url
 from stopsign.web.services.insights import get_real_insights
 from stopsign.web.services.passes import build_recent_pass_items
 from stopsign.web.services.passes import format_pass_item
@@ -390,7 +390,7 @@ async def api_vehicles_make_models(request: Request):
             {
                 "make_model": item["make_model"],
                 "count": item["count"],
-                "image_url": resolve_image_url(item.get("image_path")),
+                "image_url": resolve_card_thumbnail_url(item.get("image_path")),
             }
             for item in items
         ]
@@ -424,7 +424,7 @@ async def api_vehicles_gallery(request: Request):
             label = " ".join(label_parts).title() if label_parts else "Unknown"
             template_items.append(
                 {
-                    "image_url": resolve_image_url(item.get("image_path")),
+                    "image_url": resolve_card_thumbnail_url(item.get("image_path")),
                     "label": label,
                     "make_model": item.get("make_model") or "",
                     "size": item.get("cluster_size") or 0,

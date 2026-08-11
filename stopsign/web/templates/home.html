@@ -101,9 +101,10 @@
     /* ── Snapshot strip ── */
     .hero-strip {
         display: flex;
+        flex-wrap: wrap;   /* stat chips drop below the blurb in the 900-1100px band */
         align-items: center;
         justify-content: space-between;
-        gap: 24px;
+        gap: 16px 24px;
         margin-top: 16px;
     }
 
@@ -261,7 +262,7 @@
         height: 58px;
         object-fit: contain;
         border-radius: 3px;
-        background: #0e0f13;
+        background: var(--well);
         flex-shrink: 0;
     }
 
@@ -341,6 +342,18 @@
     .fold-chevron {
         display: inline-block;
         animation: fold-bob 1.6s ease-in-out infinite;
+    }
+
+    /* Revealed by home.js IntersectionObserver (which also has a no-IO fallback) */
+    .scroll-reveal {
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity .4s ease, transform .4s ease;
+    }
+
+    .scroll-reveal.inview {
+        opacity: 1;
+        transform: none;
     }
 
     @keyframes fold-bob {
