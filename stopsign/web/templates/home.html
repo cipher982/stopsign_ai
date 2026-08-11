@@ -96,7 +96,7 @@
 {# Hidden stats updater #}
 <div id="statsUpdater"
      hx-get="/api/live-stats"
-     hx-trigger="every 15s"
+     hx-trigger="load, every 15s"
      hx-swap="none"
      hx-vals='{"update": "stats"}'
      style="display: none;"></div>
