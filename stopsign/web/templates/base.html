@@ -109,12 +109,12 @@
     </div>
 
     {# Desktop area — full bleed, pages control their own max-width #}
-    <main style="padding: 4px 6px 42px;">
+    <main style="padding: 4px 6px 8px;">
         {% block content %}{% endblock %}
     </main>
 
-    {# Status bar footer #}
-    <footer class="status-bar" style="position: fixed; bottom: 0; left: 0; right: 0;">
+    {# Status bar footer — scrolls with page so it never occludes content #}
+    <footer class="status-bar">
         <div class="status-bar-field">David Rose</div>
         <div class="status-bar-field" style="flex: 0; white-space: nowrap;">Crestwood &middot; BHM</div>
     </footer>
