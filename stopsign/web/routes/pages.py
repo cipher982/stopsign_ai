@@ -16,7 +16,6 @@ from stopsign.web.services.images import resolve_image_url
 from stopsign.web.services.passes import build_recent_pass_items
 from stopsign.web.services.scoring import get_speed_color
 from stopsign.web.services.scoring import get_time_color
-from stopsign.web.services.scoring import get_verdict_color
 from stopsign.web.services.seo import PAGE_METADATA
 from stopsign.web.services.seo import build_json_ld
 
@@ -183,7 +182,6 @@ async def pass_detail(request: Request, pass_id: int):
                 "speed_color": get_speed_color(vehicle_pass.min_speed),
                 "time_color": get_time_color(vehicle_pass.time_in_zone),
                 "verdict": verdict,
-                "verdict_color": get_verdict_color(verdict),
                 "badge_text": badge_text,
                 "entry_time": vehicle_pass.entry_time,
                 "exit_time": vehicle_pass.exit_time,

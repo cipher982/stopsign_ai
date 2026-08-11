@@ -4,44 +4,36 @@ COMPLIANCE_THRESHOLD_SECONDS = 2.0
 
 
 def get_speed_color(speed):
-    """Return CSS color for speed value."""
-    if speed > 2.0:
-        return "#ef4444"  # red-500
-    elif speed > 1.5:
-        return "#f97316"  # orange-500
+    """Return CSS color (design-system token) for speed value."""
+    if speed > 1.5:
+        return "var(--bad)"
     elif speed > 1.0:
-        return "#eab308"  # yellow-500
-    elif speed > 0.5:
-        return "#84cc16"  # lime-500
+        return "var(--warn)"
     else:
-        return "#22c55e"  # green-500
+        return "var(--ok)"
 
 
 def get_time_color(time_val):
-    """Return CSS color for time-in-zone value.
+    """Return CSS color (design-system token) for time-in-zone value.
 
     Longer time = car stopped properly = green (good).
     Short time = blew through the stop sign = red (bad).
     """
-    if time_val > 3.0:
-        return "#22c55e"  # green-500 — good stop
-    elif time_val > COMPLIANCE_THRESHOLD_SECONDS:
-        return "#84cc16"  # lime-500 — adequate stop
-    elif time_val > 1.5:
-        return "#eab308"  # yellow-500 — insufficient stop
+    if time_val > COMPLIANCE_THRESHOLD_SECONDS:
+        return "var(--ok)"
     elif time_val > 1.0:
-        return "#f97316"  # orange-500 — barely slowed
+        return "var(--warn)"
     else:
-        return "#ef4444"  # red-500 — ran the sign
+        return "var(--bad)"
 
 
 def get_verdict_color(verdict: str) -> str:
-    """Return CSS color for stop verdict label."""
+    """Return CSS color (design-system token) for stop verdict label."""
     return {
-        "Full Stop": "#22c55e",  # green-500
-        "Rolling Stop": "#f59e0b",  # amber-500
-        "No Stop": "#ef4444",  # red-500
-    }.get(verdict, "#888888")
+        "Full Stop": "var(--ok)",
+        "Rolling Stop": "var(--warn)",
+        "No Stop": "var(--bad)",
+    }.get(verdict, "var(--text-dim)")
 
 
 COLOR_MAP = {

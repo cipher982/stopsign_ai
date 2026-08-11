@@ -141,6 +141,22 @@ def main():
         elif not model.get("model_name"):
             failures.append(f"{prefix}: model_snapshot missing model_name")
 
+        # Check capture geometry (additive v1 field since 2026-08-11; absent on older
+        # payloads, required on new ones when an image was captured)
+        capture = payload.get("capture")
+        if capture is not None:
+            if not isinstance(capture, dict):
+                failures.append(f"{prefix}: capture is not a dict")
+            else:
+                if summary.get("image_path") and not capture.get("bbox"):
+                    failures.append(f"{prefix}: capture.bbox missing despite image_path")
+                for key in ("bbox", "crop_rect"):
+                    val = capture.get(key)
+                    if val is not None and (not isinstance(val, list) or len(val) != 4):
+                        failures.append(f"{prefix}: capture.{key} is not a 4-element list: {val}")
+                if capture.get("padding_factor") is None:
+                    failures.append(f"{prefix}: capture.padding_factor missing")
+
         # Check raw_complete
         if not raw_complete:
             failures.append(f"{prefix}: raw_complete is False")
