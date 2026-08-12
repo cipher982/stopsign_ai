@@ -114,7 +114,7 @@ async def get_worst_passes(request: Request):
 
         all_passes = worst_speed_passes + worst_time_passes
         pass_ids = [p.id for p in all_passes]
-        vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
+        vehicle_attrs = db.get_vehicle_labels_for_passes(pass_ids)
         scores = db.get_pass_stop_scores(
             [
                 {
@@ -161,7 +161,7 @@ async def get_best_passes(request: Request):
 
         all_passes = best_speed_passes + best_time_passes
         pass_ids = [p.id for p in all_passes]
-        vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
+        vehicle_attrs = db.get_vehicle_labels_for_passes(pass_ids)
         scores = db.get_pass_stop_scores(
             [
                 {
@@ -291,8 +291,8 @@ async def api_vehicles_summary(request: Request):
 
         class SummaryObj:
             def __init__(self, d):
-                self.total_classified = d["total_classified"]
-                self.cluster_count = d["cluster_count"]
+                self.total_labeled = d["total_labeled"]
+                self.make_count = d["make_count"]
                 self.coverage_pct = d["coverage_pct"]
 
         return templates.TemplateResponse(

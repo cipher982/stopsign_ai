@@ -78,7 +78,7 @@ def format_pass_item(pass_data, vehicle_attrs=None, score=None):
 
 def build_recent_pass_items(db, recent_passes: Sequence) -> list[dict]:
     pass_ids = [p.id for p in recent_passes]
-    vehicle_attrs = db.get_vehicle_attributes_for_passes(pass_ids)
+    vehicle_attrs = db.get_vehicle_labels_for_passes(pass_ids)
     scores = db.get_pass_stop_scores(
         [
             {

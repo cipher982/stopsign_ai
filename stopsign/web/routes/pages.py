@@ -110,7 +110,7 @@ async def pass_detail(request: Request, pass_id: int):
         vehicle_pass = detail["pass"]
         raw = detail["raw"]
 
-        vehicle_attrs = db.get_vehicle_attributes_for_passes([pass_id])
+        vehicle_attrs = db.get_vehicle_labels_for_passes([pass_id])
         attrs = vehicle_attrs.get(pass_id, {})
 
         image_url = resolve_image_url(vehicle_pass.image_path)

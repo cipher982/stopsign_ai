@@ -29,6 +29,25 @@ from stopsign.telemetry import get_tracer
 # Set logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+MAKE_MODEL_CONFIDENCE_MIN = 0.7
+_MAKE_TITLE = {"bmw": "BMW", "gmc": "GMC"}
+
+
+def _format_make_model(make, model, confidence=None):
+    """Compose a display make/model string from vehicle_labels columns.
+
+    Returns None for the no-op buckets and for below-threshold confidence
+    (honest gating: never surface a guess as a fact).
+    """
+    if not make or make in ("unknown", "other"):
+        return None
+    if confidence is not None and confidence < MAKE_MODEL_CONFIDENCE_MIN:
+        return None
+    make_title = _MAKE_TITLE.get(make, make.replace("_", " ").title())
+    if model:
+        return f"{make_title} {model}"
+    return make_title
+
 
 Base = declarative_base()
 
@@ -614,25 +633,25 @@ class Database:
 
     @log_execution_time
     def get_vehicle_stats_summary(self) -> dict | None:
-        """Get summary stats: total classified, distinct clusters, coverage %."""
+        """Get summary stats: total labeled, distinct makes, coverage %."""
         with self.Session() as session:
             result = session.execute(
                 text("""
                 SELECT
-                    COUNT(*) AS total_classified,
-                    COUNT(DISTINCT cluster_id) AS cluster_count,
+                    (SELECT COUNT(*) FROM vehicle_labels) AS total_labeled,
+                    (SELECT COUNT(DISTINCT make) FROM vehicle_labels
+                     WHERE make NOT IN ('unknown', 'other')) AS make_count,
                     ROUND(
-                        COUNT(*)::numeric * 100.0
+                        (SELECT COUNT(*) FROM vehicle_labels)::numeric * 100.0
                         / GREATEST((SELECT COUNT(*) FROM vehicle_passes), 1),
                         1
                     ) AS coverage_pct
-                FROM vehicle_attributes
                 """)
             ).first()
-            if result and result.total_classified > 0:
+            if result and result.total_labeled > 0:
                 return {
-                    "total_classified": result.total_classified,
-                    "cluster_count": result.cluster_count,
+                    "total_labeled": result.total_labeled,
+                    "make_count": result.make_count,
                     "coverage_pct": float(result.coverage_pct),
                 }
             return None
@@ -644,8 +663,8 @@ class Database:
             rows = session.execute(
                 text("""
                 SELECT vehicle_type, COUNT(*) AS cnt
-                FROM vehicle_attributes
-                WHERE vehicle_type IS NOT NULL
+                FROM vehicle_labels
+                WHERE vehicle_type NOT IN ('unknown', 'other')
                 GROUP BY vehicle_type
                 ORDER BY cnt DESC
                 """)
@@ -659,8 +678,8 @@ class Database:
             rows = session.execute(
                 text("""
                 SELECT color, COUNT(*) AS cnt
-                FROM vehicle_attributes
-                WHERE color IS NOT NULL
+                FROM vehicle_labels
+                WHERE color NOT IN ('unknown')
                 GROUP BY color
                 ORDER BY cnt DESC
                 """)
@@ -669,32 +688,39 @@ class Database:
 
     @log_execution_time
     def get_top_make_models(self, limit: int = 15) -> list[dict]:
-        """Get top make/models with a representative image path."""
+        """Top make/model pairs from vehicle_labels, confidence-gated, with a representative image."""
         with self.Session() as session:
             rows = session.execute(
                 text("""
                 SELECT
-                    va.make_model,
+                    vl.make,
+                    vl.model,
                     COUNT(*) AS cnt,
                     (
                         SELECT vp.image_path
-                        FROM vehicle_attributes va2
-                        JOIN vehicle_passes vp ON vp.id = va2.vehicle_pass_id
-                        WHERE va2.make_model = va.make_model
+                        FROM vehicle_labels vl2
+                        JOIN vehicle_passes vp ON vp.id = vl2.vehicle_pass_id
+                        WHERE vl2.make = vl.make
+                          AND vl2.model = vl.model
                           AND vp.image_path IS NOT NULL
                           AND vp.image_path != ''
-                        ORDER BY va2.confidence DESC NULLS LAST
+                        ORDER BY vl2.make_model_confidence DESC NULLS LAST
                         LIMIT 1
                     ) AS image_path
-                FROM vehicle_attributes va
-                WHERE va.make_model IS NOT NULL
-                GROUP BY va.make_model
+                FROM vehicle_labels vl
+                WHERE vl.model IS NOT NULL
+                  AND vl.make NOT IN ('unknown', 'other')
+                  AND vl.make_model_confidence >= :min_conf
+                GROUP BY vl.make, vl.model
                 ORDER BY cnt DESC
                 LIMIT :limit
                 """),
-                {"limit": limit},
+                {"limit": limit, "min_conf": MAKE_MODEL_CONFIDENCE_MIN},
             ).fetchall()
-            return [{"make_model": r.make_model, "count": r.cnt, "image_path": r.image_path} for r in rows]
+            return [
+                {"make_model": _format_make_model(r.make, r.model), "count": r.cnt, "image_path": r.image_path}
+                for r in rows
+            ]
 
     @log_execution_time
     def get_cluster_gallery(self, limit: int = 30) -> list[dict]:
@@ -739,19 +765,19 @@ class Database:
 
     @log_execution_time
     def get_compliance_by_type(self) -> list[dict]:
-        """Compliance + stop stats grouped by vehicle_type (classified subset, all-time)."""
+        """Compliance + stop stats grouped by vehicle_type (labeled subset, all-time)."""
         with self.Session() as session:
             rows = session.execute(
                 text("""
-                SELECT va.vehicle_type AS label,
+                SELECT vl.vehicle_type AS label,
                        COUNT(*) AS n,
                        ROUND(SUM((vp.time_in_zone >= 2)::int)::numeric * 100 / COUNT(*), 1) AS compliance_pct,
                        ROUND(AVG(vp.time_in_zone)::numeric, 2) AS avg_stop_s,
                        ROUND(AVG(vp.min_speed)::numeric, 1) AS avg_min_speed
                 FROM vehicle_passes vp
-                JOIN vehicle_attributes va ON va.vehicle_pass_id = vp.id
-                WHERE va.vehicle_type IS NOT NULL
-                GROUP BY va.vehicle_type
+                JOIN vehicle_labels vl ON vl.vehicle_pass_id = vp.id
+                WHERE vl.vehicle_type NOT IN ('unknown', 'other')
+                GROUP BY vl.vehicle_type
                 ORDER BY n DESC
                 """)
             ).fetchall()
@@ -810,15 +836,19 @@ class Database:
             ]
 
     @log_execution_time
-    def get_vehicle_attributes_for_passes(self, pass_ids: list[int]) -> Dict[int, dict]:
-        """Bulk lookup vehicle attributes keyed by vehicle_pass_id."""
+    def get_vehicle_labels_for_passes(self, pass_ids: list[int]) -> Dict[int, dict]:
+        """Bulk lookup vehicle labels keyed by vehicle_pass_id.
+
+        make_model is composed from make+model and confidence-gated so a
+        below-threshold guess never surfaces as a fact.
+        """
         if not pass_ids:
             return {}
         with self.Session() as session:
             rows = session.execute(
                 text("""
-                SELECT vehicle_pass_id, vehicle_type, color, make_model
-                FROM vehicle_attributes
+                SELECT vehicle_pass_id, vehicle_type, color, make, model, make_model_confidence
+                FROM vehicle_labels
                 WHERE vehicle_pass_id = ANY(:ids)
                 """),
                 {"ids": pass_ids},
@@ -827,7 +857,7 @@ class Database:
                 r.vehicle_pass_id: {
                     "vehicle_type": r.vehicle_type,
                     "color": r.color,
-                    "make_model": r.make_model,
+                    "make_model": _format_make_model(r.make, r.model, r.make_model_confidence),
                 }
                 for r in rows
             }
