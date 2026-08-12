@@ -185,6 +185,7 @@
     });
     hls.on(Hls.Events.MANIFEST_PARSED, function (e, data) {
       push('hlsEvent', { event: 'MANIFEST_PARSED', data: { levels: data.levels.length } });
+      v.play().catch(function (err) { push('videoEvent', { event: 'play_rejected', error: String(err) }); });
       v.requestVideoFrameCallback(onFrame);
       setTimeout(snap, 400);
     });
