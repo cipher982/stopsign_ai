@@ -51,6 +51,8 @@
   var SKIP_THRESH = 1.5; // seconds of mediaTime jump between rendered frames
   var seenResources = {};
   var lastSave = 0;
+  var clockOffsetMs = null;
+  var snapRing = []; // rolling pre-jump canvas snapshots: {wall, mediaTime, dataUrl}
   var runId = 'run_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
   function $(id) { return document.getElementById(id); }
@@ -73,12 +75,29 @@
     timeOrigin: performance.timeOrigin,
     hlsVersion: (window.Hls && Hls.version) || null,
     rvfcSupported: rvfcSupported,
-    playerConfig: { liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 10 },
+    playerConfig: { liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 10, maxLiveSyncPlaybackRate: 1.5, liveDurationInfinity: true },
     streamUrl: '/stream/stream.m3u8',
     startedAt: new Date().toISOString()
   });
   $('logmeta').textContent = 'runId=' + runId + ' | origin=' + location.origin + ' | hls=' + (window.Hls ? Hls.version : 'n/a') +
     ' | rvfc=' + (rvfcSupported ? 'yes' : 'no') + ' | stream=/stream/stream.m3u8';
+
+  // Measure browser-vs-server clock offset via the HTTP Date header (RTT/2 corrected)
+  function measureClockOffset() {
+    var t0 = performance.now();
+    return fetch('/stream/stream.m3u8', { method: 'GET', cache: 'no-store' }).then(function (r) {
+      var t1 = performance.now();
+      var dateHdr = r.headers.get('date');
+      if (!dateHdr) return null;
+      var serverMs = Date.parse(dateHdr);
+      var clientMid = Date.now() - (t1 - t0) / 2;
+      return serverMs - clientMid; // positive = server clock ahead of browser
+    }).catch(function () { return null; });
+  }
+  measureClockOffset().then(function (off) {
+    push('meta', { clockOffsetMs: off });
+    clockOffsetMs = off;
+  });
 
   // ---------- rendered-frame capture (the core signal) ----------
   function onFrame(now, meta) {
@@ -88,8 +107,10 @@
       if (gap > SKIP_THRESH) {
         skipCount++;
         lastSkipGap = gap;
-        push('skip', { from: +lastMT.toFixed(4), to: +mt.toFixed(4), gapSec: +gap.toFixed(3) });
-        snap();
+        var postUrl = snapDataUrl();
+        var pre = (skipCount <= 10) ? snapRing.slice() : null;
+        snapRing.length = 0;
+        push('skip', { from: +lastMT.toFixed(4), to: +mt.toFixed(4), gapSec: +gap.toFixed(3), preSnaps: pre, postSnap: postUrl });
       }
     }
     push('rvfc', { mediaTime: +mt.toFixed(4), presentationTime: meta.presentationTime ? +meta.presentationTime.toFixed(2) : null });
@@ -99,16 +120,27 @@
 
   // ---------- frame snapshot for post-hoc OCR of the burned-in timestamp ----------
   var canvas = document.createElement('canvas');
-  function snap() {
-    if (snapCount >= MAX_SNAPS) return;
-    snapCount++;
+  function snapDataUrl() {
     canvas.width = 640; canvas.height = 360;
     var ctx = canvas.getContext('2d');
-    try { ctx.drawImage(v, 0, 0, 640, 360); } catch (e) { return; }
-    push('frameSnap', { mediaTime: +v.currentTime.toFixed(4), dataUrl: canvas.toDataURL('image/jpeg', 0.7) });
+    try { ctx.drawImage(v, 0, 0, 640, 360); } catch (e) { return null; }
+    return canvas.toDataURL('image/jpeg', 0.7);
   }
+  function snap() {
+    if (snapCount >= MAX_SNAPS) return;
+    var url = snapDataUrl();
+    if (url === null) return;
+    snapCount++;
+    push('frameSnap', { mediaTime: +v.currentTime.toFixed(4), dataUrl: url, pre: null });
+  }
+  // Rolling pre-jump snapshots every 2s (kept off-log; attached to a skip on demand)
+  setInterval(function () {
+    var url = snapDataUrl();
+    if (url !== null) snapRing.push({ wall: Date.now(), mediaTime: +v.currentTime.toFixed(4), dataUrl: url });
+    if (snapRing.length > 3) snapRing.shift();
+  }, 2000);
 
-  // ---------- 1s state snapshot ----------
+  // ---------- 500ms state snapshot ----------
   setInterval(function () {
     var buf = [];
     for (var i = 0; i < v.buffered.length; i++) buf.push({ s: +v.buffered.start(i).toFixed(2), e: +v.buffered.end(i).toFixed(2) });
@@ -123,7 +155,7 @@
       totalFrames: q ? q.totalVideoFrames : null,
       skipCount: skipCount
     });
-  }, 1000);
+  }, 500);
 
   // ---------- video element events ----------
   ['playing', 'pause', 'waiting', 'stalled', 'seeking', 'seeked', 'ratechange', 'ended', 'error', 'emptied', 'canplay'].forEach(function (ev) {
@@ -133,12 +165,17 @@
   // ---------- hls.js (same config as production video-player.js) ----------
   var hls = null;
   if (window.Hls && Hls.isSupported()) {
-    hls = new Hls({ debug: false, liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 10 });
+    hls = new Hls({ debug: false, liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 10, maxLiveSyncPlaybackRate: 1.5, liveDurationInfinity: true });
     hls.on(Hls.Events.ERROR, function (e, data) {
       var d = { type: data.type, details: data.details, fatal: data.fatal };
       if (data.frag) d.frag = { sn: data.frag.sn, start: data.frag.start, duration: data.frag.duration };
       if (data.response) d.response = { code: data.response.code, text: String(data.response.text || '').slice(0, 200) };
       push('hlsEvent', { event: 'ERROR', data: d });
+    });
+    ['FRAG_LOADING', 'FRAG_PARSED', 'FRAG_BUFFERED'].forEach(function (ev) {
+      hls.on(Hls.Events[ev], function (e, data) {
+        push('hlsEvent', { event: ev, data: { sn: data.frag ? data.frag.sn : null } });
+      });
     });
     hls.on(Hls.Events.FRAG_LOADED, function (e, data) {
       push('hlsEvent', { event: 'FRAG_LOADED', data: {
@@ -228,12 +265,16 @@
     var bufEnd = null;
     for (var i = 0; i < v.buffered.length; i++) bufEnd = v.buffered.end(i);
     var estLat = null;
-    var p = null;
-    for (i = LOG.length - 1; i >= 0 && !p; i--) if (LOG[i].type === 'playlist') p = LOG[i];
-    if (p && p.last) {
-      // newest segment N covers [2N+e, 2N+2+e); assume it was just produced at fetch wall time
-      var epoch = p.wall / 1000 - (p.last + 1) * 2;
-      estLat = Date.now() / 1000 - (epoch + v.currentTime);
+    var firstP = null;
+    for (i = 0; i < LOG.length && !firstP; i++) if (LOG[i].type === 'playlist') firstP = LOG[i];
+    if (firstP && firstP.first != null && firstP.last != null) {
+      // capture_ts(mediaTime m) = epochM0 + m, where mediaTime 0 is the first
+      // fragment of the loaded playlist (window: last-first+1 segments).
+      // Newest segment was just produced at fetch wall time:
+      //   e0 + 2*last = W0  =>  epochM0 = e0 + 2*first = W0 - 2*(last-first+1)
+      var epochM0 = firstP.wall / 1000 - 2 * (firstP.last - firstP.first + 1);
+      var offset = (clockOffsetMs === null ? 0 : clockOffsetMs / 1000);
+      estLat = Date.now() / 1000 - offset - (epochM0 + v.currentTime);
     }
     $('readout').innerHTML =
       '<div class="ro">time: <b>' + fmtWall(Date.now()) + '</b></div>' +

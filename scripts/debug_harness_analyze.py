@@ -69,8 +69,11 @@ def nearest_server(recs: list[dict], wall_sec: float) -> Optional[dict]:
     return best
 
 
-def classify(skip: dict, srv: Optional[dict], resources: list[dict]) -> str:
-    """Classify one skip against nearest server state and the fetch record."""
+def classify(skip: dict, srv: Optional[dict], fetches: list[dict], seg_of) -> str:
+    """Classify one skip against nearest server state and fetch activity.
+
+    fetches: [{sn, wall_ms, duration_ms}] covering segment loads near the skip.
+    """
     if srv is None:
         return "unknown"
     dup = None
@@ -85,22 +88,16 @@ def classify(skip: dict, srv: Optional[dict], resources: list[dict]) -> str:
     if (dup is not None and dup > 10) or (analyzer_age is not None and analyzer_age > 3):
         return "pipeline_gap"
 
-    # Fetch coverage for the skipped media range
+    # Fetch activity within +/-15s of the skip
     lo, hi = skip["from"], skip["to"]
-    need_sn = list(range(int(lo // 2), int(hi // 2) + 1))
-    fetched = set()
-    slow = 0
-    for r in resources:
-        if r["name"].startswith("stream") and r["name"].endswith(".ts"):
-            try:
-                sn = int(r["name"][len("stream") : -len(".ts")])
-            except ValueError:
-                continue
-            fetched.add(sn)
-            if r.get("duration", 0) > 2:
-                slow += 1
-    missing = [sn for sn in need_sn if sn not in fetched]
-    if missing or slow:
+    need_sn = set(range(seg_of(lo), seg_of(hi) + 1))
+    near = [f for f in fetches if abs(f["wall_ms"] - skip["wall"]) < 15000]
+    fetched = {f["sn"] for f in near}
+    slow = [f for f in near if f["duration_ms"] > 2000]
+    missing = [sn for sn in sorted(need_sn) if sn not in fetched]
+    if missing:
+        return "fetch_gap"
+    if slow:
         return "fetch_gap"
     return "render_skip"
 
@@ -118,11 +115,45 @@ def main() -> None:
     srv = load_server(args.server_log)
     log = b.get("log", [])
     epoch = parse_epoch(args.epoch) if args.epoch else None
+
+    # Media timeline -> segment number mapping. The player's mediaTime is
+    # relative to the playlist window start (hls.js sets mediaTime 0 at the
+    # first fragment of the playlist it loaded), so segment(m) = startSN +
+    # floor(m / 2), where startSN is the playlist's FIRST entry at load.
+    playlists = [e for e in log if e["type"] == "playlist"]
+    start_sn = None
+    if playlists and playlists[0].get("first") is not None:
+        start_sn = playlists[0]["first"]
     print(f"browser log: {len(log)} entries | server log: {len(srv)} records | epoch: {args.epoch or 'relative'}")
+    print(f"playlist snapshots: {len(playlists)} | startSN at load: {start_sn}")
+
+    def seg_of(m: float) -> int:
+        if start_sn is None:
+            return int(m // 2)
+        return start_sn + int(m // 2)
 
     resources = [e for e in log if e["type"] == "resource"]
-
-    # Re-derive skips from rvfc (independent of the harness's own detector)
+    meta = next((e for e in log if e["type"] == "meta"), {})
+    timeorigin = meta.get("timeOrigin", 0)
+    # Segment fetch timeline: resource timing (wall = timeOrigin + startTime) +
+    # hls.js FRAG_LOADED stats (authoritative load duration)
+    fetches = []
+    for e in resources:
+        if e.get("name", "").startswith("stream") and e["name"].endswith(".ts"):
+            try:
+                sn = int(e["name"][len("stream") : -len(".ts")])
+            except ValueError:
+                continue
+            fetches.append(
+                {"sn": sn, "wall_ms": timeorigin + e.get("startTime", 0), "duration_ms": e.get("duration", 0) * 1000}
+            )
+    for e in log:
+        if e["type"] == "hlsEvent" and e.get("event") == "FRAG_LOADED":
+            d = e.get("data") or {}
+            if d.get("sn") is not None:
+                dur = ((d.get("tload") or 0) - (d.get("trequest") or 0)) * 1000
+                fetches.append({"sn": d["sn"], "wall_ms": e["wall"], "duration_ms": dur})
+    print(f"segment fetches recorded: {len(fetches)}")
     rvfc = [e for e in log if e["type"] == "rvfc"]
     derived_skips = []
     prev = None
@@ -137,7 +168,10 @@ def main() -> None:
     if len(harness_skips) != len(derived_skips):
         print("WARNING: harness skip count differs from rvfc-derived count; using derived")
 
-    # Latency curve (wall - capture time), requires --epoch
+    # Latency curve (wall - capture time). capture_ts(m) = epoch_m0 + m where
+    # epoch_m0 is the capture time of mediaTime 0. When --epoch is given it is
+    # interpreted as the capture time of mediaTime 0 (derive by OCR'ing a
+    # frameSnap: epoch_m0 = ocr_ts - mediaTime_of_that_frame).
     if epoch is not None:
         lats = [e["wall"] / 1000 - (epoch + e["mediaTime"]) for e in rvfc]
         if lats:
@@ -153,7 +187,7 @@ def main() -> None:
     for sk in derived_skips:
         wall_sec = sk["wall"] / 1000
         srv_near = nearest_server(srv, wall_sec)
-        cls = classify(sk, srv_near, resources)
+        cls = classify(sk, srv_near, fetches, seg_of)
         rows.append((sk, srv_near, cls))
     print("\n" + f"{'gap(s)':>7} {'from':>9} {'to':>9} {'wall':>12}  classification")
     for sk, srv_near, cls in rows:
