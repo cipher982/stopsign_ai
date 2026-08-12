@@ -10,9 +10,9 @@ stopsign.settings or stopsign.telemetry, raw SQL for the new table, its own
 copies of the Bremen MinIO / image-path-resolution helpers.
 
 Usage:
-    uv run --extra db --extra storage python scripts/label_passes.py
-    uv run --extra db --extra storage python scripts/label_passes.py --limit 200 --dry-run
-    uv run --extra db --extra storage python scripts/label_passes.py --pass-ids 123,456,789
+    uv run --extra db --extra storage --extra labeling python scripts/label_passes.py
+    uv run --extra db --extra storage --extra labeling python scripts/label_passes.py --limit 200 --dry-run
+    uv run --extra db --extra storage --extra labeling python scripts/label_passes.py --pass-ids 123,456,789
 """
 
 import asyncio

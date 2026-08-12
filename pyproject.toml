@@ -63,6 +63,12 @@ clustering = [
     "scikit-learn>=1.4.0",
     "umap-learn>=0.5.5",
 ]
+
+# Per-pass vision labeling (scripts/label_passes.py) — LLM SDK only, no ML stack
+labeling = [
+    "openai>=1.30.0",
+    "click>=8.1.0",
+]
 # Development tools
 dev = [
     "ipykernel>=6.29.5",
