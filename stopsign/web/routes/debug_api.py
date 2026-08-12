@@ -3,6 +3,9 @@
 
 import json
 import logging
+import secrets
+import time
+from pathlib import Path
 
 import redis
 from fastapi import APIRouter
@@ -15,6 +18,28 @@ from stopsign.settings import REDIS_URL
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Debug harness captures land here (shared storage volume, readable from the host)
+HARNESS_LOG_DIR = Path("/app/data/debug-logs")
+
+
+@router.post("/debug/harness/log")
+async def harness_log(request: Request):
+    """Persist a browser-side debug harness capture for post-mortem analysis."""
+    try:
+        payload = await request.json()
+    except Exception as e:
+        return {"error": f"invalid json: {e}"}
+    if not isinstance(payload, dict) or "log" not in payload:
+        return {"error": 'expected {"runId": ..., "log": [...]}'}
+    try:
+        HARNESS_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = HARNESS_LOG_DIR / f"harness_{int(time.time())}_{secrets.token_hex(3)}.json"
+        path.write_text(json.dumps(payload))
+    except Exception as e:
+        logger.error(f"Harness log save failed: {e}")
+        return {"error": str(e)}
+    return {"saved": path.name}
 
 
 @router.get("/api/coordinate-info")

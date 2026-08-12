@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StopSign Stream Debug Harness</title>
+<style>
+  :root { --bg:#111; --fg:#ddd; --accent:#0f8; --bad:#f66; }
+  * { box-sizing: border-box; }
+  body { background:var(--bg); color:var(--fg); font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; margin:16px; }
+  h1 { font-size:16px; margin:0 0 8px; color:#fff; }
+  #controls { margin-bottom:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button { background:#222; color:var(--fg); border:1px solid #444; padding:6px 12px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  #status { color:#999; }
+  video { width:100%; max-width:960px; background:#000; display:block; margin-bottom:10px; }
+  #readout { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:4px 14px; margin-bottom:12px; }
+  .ro b { color:#fff; }
+  #logmeta { color:#777; font-size:11px; margin-bottom:12px; }
+  details { margin-top:8px; }
+  summary { cursor:pointer; color:var(--accent); }
+  #recent { max-height:260px; overflow:auto; font-size:11px; color:#aaa; white-space:pre-wrap; }
+  .err { color:var(--bad); }
+</style>
+</head>
+<body>
+<h1>StopSign Stream Debug Harness</h1>
+<div id="logmeta"></div>
+<div id="controls">
+  <button id="download">Download log</button>
+  <button id="reset">Reset</button>
+  <label><input type="checkbox" id="autoSave" checked> auto-save to server (60s)</label>
+  <span id="status">starting…</span>
+</div>
+<video id="v" controls autoplay muted playsinline style="aspect-ratio:16/9"></video>
+<div id="readout"></div>
+<details>
+  <summary>recent log entries</summary>
+  <div id="recent"></div>
+</details>
+<script src="/static/vendor/hls-1.6.16.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var LOG = [];
+  var skipCount = 0;
+  var lastSkipGap = null;
+  var lastMT = null;
+  var snapCount = 0;
+  var MAX_SNAPS = 40;
+  var SKIP_THRESH = 1.5; // seconds of mediaTime jump between rendered frames
+  var seenResources = {};
+  var lastSave = 0;
+  var runId = 'run_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+
+  function $(id) { return document.getElementById(id); }
+  function push(type, obj) {
+    var entry = { type: type, t: Math.round(performance.now() * 100) / 100, wall: Date.now() };
+    for (var k in obj) entry[k] = obj[k];
+    LOG.push(entry);
+    if (LOG.length > 20000) LOG.splice(0, LOG.length - 20000); // bound memory
+  }
+  function fmtWall(ms) { return new Date(ms).toISOString().slice(11, 23); }
+
+  var v = $('v');
+  var rvfcSupported = typeof HTMLVideoElement !== 'undefined' && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+  push('meta', {
+    runId: runId,
+    ua: navigator.userAgent,
+    origin: location.origin,
+    href: location.href,
+    timeOrigin: performance.timeOrigin,
+    hlsVersion: (window.Hls && Hls.version) || null,
+    rvfcSupported: rvfcSupported,
+    playerConfig: { liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 10 },
+    streamUrl: '/stream/stream.m3u8',
+    startedAt: new Date().toISOString()
+  });
+  $('logmeta').textContent = 'runId=' + runId + ' | origin=' + location.origin + ' | hls=' + (window.Hls ? Hls.version : 'n/a') +
+    ' | rvfc=' + (rvfcSupported ? 'yes' : 'no') + ' | stream=/stream/stream.m3u8';
+
+  // ---------- rendered-frame capture (the core signal) ----------
+  function onFrame(now, meta) {
+    var mt = meta.mediaTime;
+    if (lastMT !== null) {
+      var gap = mt - lastMT;
+      if (gap > SKIP_THRESH) {
+        skipCount++;
+        lastSkipGap = gap;
+        push('skip', { from: +lastMT.toFixed(4), to: +mt.toFixed(4), gapSec: +gap.toFixed(3) });
+        snap();
+      }
+    }
+    push('rvfc', { mediaTime: +mt.toFixed(4), presentationTime: meta.presentationTime ? +meta.presentationTime.toFixed(2) : null });
+    lastMT = mt;
+    v.requestVideoFrameCallback(onFrame);
+  }
+
+  // ---------- frame snapshot for post-hoc OCR of the burned-in timestamp ----------
+  var canvas = document.createElement('canvas');
+  function snap() {
+    if (snapCount >= MAX_SNAPS) return;
+    snapCount++;
+    canvas.width = 640; canvas.height = 360;
+    var ctx = canvas.getContext('2d');
+    try { ctx.drawImage(v, 0, 0, 640, 360); } catch (e) { return; }
+    push('frameSnap', { mediaTime: +v.currentTime.toFixed(4), dataUrl: canvas.toDataURL('image/jpeg', 0.7) });
+  }
+
+  // ---------- 1s state snapshot ----------
+  setInterval(function () {
+    var buf = [];
+    for (var i = 0; i < v.buffered.length; i++) buf.push({ s: +v.buffered.start(i).toFixed(2), e: +v.buffered.end(i).toFixed(2) });
+    var q = null;
+    try { q = v.getVideoPlaybackQuality(); } catch (e) {}
+    push('state', {
+      currentTime: +v.currentTime.toFixed(3),
+      readyState: v.readyState, networkState: v.networkState,
+      playbackRate: v.playbackRate, paused: v.paused, ended: v.ended,
+      buffered: buf,
+      droppedFrames: q ? q.droppedVideoFrames : null,
+      totalFrames: q ? q.totalVideoFrames : null,
+      skipCount: skipCount
+    });
+  }, 1000);
+
+  // ---------- video element events ----------
+  ['playing', 'pause', 'waiting', 'stalled', 'seeking', 'seeked', 'ratechange', 'ended', 'error', 'emptied', 'canplay'].forEach(function (ev) {
+    v.addEventListener(ev, function () { push('videoEvent', { event: ev, currentTime: +v.currentTime.toFixed(3) }); });
+  });
+
+  // ---------- hls.js (same config as production video-player.js) ----------
+  var hls = null;
+  if (window.Hls && Hls.isSupported()) {
+    hls = new Hls({ debug: false, liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 10 });
+    hls.on(Hls.Events.ERROR, function (e, data) {
+      var d = { type: data.type, details: data.details, fatal: data.fatal };
+      if (data.frag) d.frag = { sn: data.frag.sn, start: data.frag.start, duration: data.frag.duration };
+      if (data.response) d.response = { code: data.response.code, text: String(data.response.text || '').slice(0, 200) };
+      push('hlsEvent', { event: 'ERROR', data: d });
+    });
+    hls.on(Hls.Events.FRAG_LOADED, function (e, data) {
+      push('hlsEvent', { event: 'FRAG_LOADED', data: {
+        sn: data.frag.sn, start: +data.frag.start.toFixed(3), duration: data.frag.duration,
+        trequest: data.stats ? data.stats.trequest : null, tload: data.stats ? data.stats.tload : null
+      }});
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED, function (e, data) {
+      push('hlsEvent', { event: 'MANIFEST_PARSED', data: { levels: data.levels.length } });
+      v.requestVideoFrameCallback(onFrame);
+      setTimeout(snap, 400);
+    });
+    hls.on(Hls.Events.LEVEL_LOADED, function (e, data) {
+      var det = data.details || null;
+      push('hlsEvent', { event: 'LEVEL_LOADED', data: det ? {
+        live: det.live, targetduration: det.targetduration, startSN: det.startSN, endSN: det.endSN,
+        totalduration: +det.totalduration.toFixed(2), fragCount: det.fragments ? det.fragments.length : null
+      } : null });
+    });
+    hls.loadSource('/stream/stream.m3u8');
+    hls.attachMedia(v);
+    $('status').textContent = 'loading manifest…';
+  } else {
+    push('meta', { error: 'hls.js unsupported on this browser' });
+    v.src = '/stream/stream.m3u8';
+  }
+
+  // ---------- resource timing scan (segment fetches, every 5s) ----------
+  setInterval(function () {
+    var ents = performance.getEntriesByType('resource').filter(function (e) {
+      return /\/stream\/(stream\.m3u8|stream\d+\.ts)/.test(e.name) && !seenResources[e.name];
+    });
+    ents.forEach(function (e) {
+      seenResources[e.name] = true;
+      push('resource', {
+        name: e.name.split('/').pop(),
+        startTime: +e.startTime.toFixed(1),
+        duration: +e.duration.toFixed(1),
+        transferSize: e.transferSize,
+        decodedBodySize: e.decodedBodySize
+      });
+    });
+  }, 5000);
+
+  // ---------- playlist snapshot (what the player sees, every 5s) ----------
+  setInterval(function () {
+    fetch('/stream/stream.m3u8', { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (txt) {
+      var seqs = [];
+      var m;
+      var re = /stream(\d+)\.ts/g;
+      while ((m = re.exec(txt))) seqs.push(+m[1]);
+      push('playlist', { count: seqs.length, first: seqs[0], last: seqs[seqs.length - 1], textLen: txt.length });
+    }).catch(function (err) { push('playlist', { error: String(err) }); });
+  }, 5000);
+
+  // ---------- persistence ----------
+  function saveToServer() {
+    if (!LOG.length) return;
+    fetch('/debug/harness/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId: runId, log: LOG }),
+      keepalive: true
+    }).then(function (r) { return r.json(); })
+      .then(function (j) { push('saved', { path: j.saved || j.error }); })
+      .catch(function (err) { push('saved', { error: String(err) }); });
+  }
+  setInterval(function () {
+    if ($('autoSave').checked && Date.now() - lastSave > 60000) { lastSave = Date.now(); saveToServer(); }
+  }, 15000);
+  window.addEventListener('pagehide', function () { if (LOG.length) saveToServer(); });
+
+  function download() {
+    var blob = new Blob([JSON.stringify({ runId: runId, log: LOG })], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'harness_' + runId + '.json';
+    a.click();
+  }
+  $('download').onclick = download;
+  $('reset').onclick = function () { location.reload(); };
+
+  // ---------- live readout ----------
+  var lastPlaylist = null;
+  setInterval(function () {
+    var last = LOG[LOG.length - 1];
+    var bufEnd = null;
+    for (var i = 0; i < v.buffered.length; i++) bufEnd = v.buffered.end(i);
+    var estLat = null;
+    var p = null;
+    for (i = LOG.length - 1; i >= 0 && !p; i--) if (LOG[i].type === 'playlist') p = LOG[i];
+    if (p && p.last) {
+      // newest segment N covers [2N+e, 2N+2+e); assume it was just produced at fetch wall time
+      var epoch = p.wall / 1000 - (p.last + 1) * 2;
+      estLat = Date.now() / 1000 - (epoch + v.currentTime);
+    }
+    $('readout').innerHTML =
+      '<div class="ro">time: <b>' + fmtWall(Date.now()) + '</b></div>' +
+      '<div class="ro">currentTime: <b>' + v.currentTime.toFixed(2) + '</b></div>' +
+      '<div class="ro">buffered end: <b>' + (bufEnd === null ? '-' : bufEnd.toFixed(2)) + '</b></div>' +
+      '<div class="ro">est latency: <b>' + (estLat === null ? '-' : estLat.toFixed(1) + 's') + '</b></div>' +
+      '<div class="ro">skips: <b>' + skipCount + '</b>' + (lastSkipGap !== null ? ' (last ' + lastSkipGap.toFixed(1) + 's)' : '') + '</div>' +
+      '<div class="ro">log entries: <b>' + LOG.length + '</b></div>' +
+      '<div class="ro">readyState: <b>' + v.readyState + '</b> paused: <b>' + v.paused + '</b> rate: <b>' + v.playbackRate + '</b></div>';
+    if (last && last.type === 'hlsEvent' && last.event === 'ERROR') $('status').className = 'err';
+    if (last && last.type === 'hlsEvent' && last.event === 'ERROR') {
+      $('status').textContent = 'HLS ERROR: ' + last.data.details + (last.data.fatal ? ' FATAL' : '');
+    } else if (skipCount) {
+      $('status').textContent = 'running (skips: ' + skipCount + ')';
+    } else {
+      $('status').textContent = 'running';
+    }
+  }, 500);
+
+  // ---------- recent entries panel ----------
+  setInterval(function () {
+    var tail = LOG.slice(-30).map(function (e) {
+      return fmtWall(e.wall) + ' ' + e.type + ' ' + JSON.stringify(Object.keys(e).filter(function (k) {
+        return k !== 'type' && k !== 't' && k !== 'wall';
+      }).reduce(function (o, k) { o[k] = e[k]; return o; }, {}));
+    }).join('\n');
+    $('recent').textContent = tail;
+  }, 1000);
+
+  push('meta', { note: 'harness started; waiting for manifest' });
+})();
+</script>
+</body>
+</html>

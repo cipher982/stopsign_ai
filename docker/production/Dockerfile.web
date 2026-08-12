@@ -11,6 +11,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY stopsign /app/stopsign
 COPY static /app/static
+COPY scripts /app/scripts
 COPY config/config.example.yaml /app/config.example.yaml
 
 # Runtime stage — clean image without build artifacts
