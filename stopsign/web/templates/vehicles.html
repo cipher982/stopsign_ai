@@ -9,7 +9,7 @@
 {% block content %}
 <div class="vehicles-stack">
     {# Summary stats #}
-    <div id="vehicleSummary" hx-get="/api/vehicles/summary" hx-trigger="load">
+    <div id="vehicleSummary" hx-get="/api/vehicles/summary" hx-trigger="load" hx-swap="outerHTML">
         <div class="window">
             <div class="title-bar title-bar-inactive">
                 <span class="title-bar-text">Vehicle Classification Summary</span>
@@ -22,13 +22,13 @@
 
     {# Type and Color charts — side by side #}
     <div class="vehicles-grid-2">
-        <div id="vehicleTypes" hx-get="/api/vehicles/types" hx-trigger="load">
+        <div id="vehicleTypes" hx-get="/api/vehicles/types" hx-trigger="load" hx-swap="outerHTML">
             <div class="window">
                 <div class="title-bar title-bar-inactive"><span class="title-bar-text">Loading...</span></div>
                 <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-dim);">Loading types...</div>
             </div>
         </div>
-        <div id="vehicleColors" hx-get="/api/vehicles/colors" hx-trigger="load">
+        <div id="vehicleColors" hx-get="/api/vehicles/colors" hx-trigger="load" hx-swap="outerHTML">
             <div class="window">
                 <div class="title-bar title-bar-inactive"><span class="title-bar-text">Loading...</span></div>
                 <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-dim);">Loading colors...</div>
@@ -37,7 +37,7 @@
     </div>
 
     {# Make/Models #}
-    <div id="vehicleMakeModels" hx-get="/api/vehicles/make-models" hx-trigger="load">
+    <div id="vehicleMakeModels" hx-get="/api/vehicles/make-models" hx-trigger="load" hx-swap="outerHTML">
         <div class="window">
             <div class="title-bar title-bar-inactive"><span class="title-bar-text">Loading...</span></div>
             <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-dim);">Loading make/models...</div>
@@ -45,7 +45,7 @@
     </div>
 
     {# Gallery #}
-    <div id="vehicleGallery" hx-get="/api/vehicles/gallery" hx-trigger="load">
+    <div id="vehicleGallery" hx-get="/api/vehicles/gallery" hx-trigger="load" hx-swap="outerHTML">
         <div class="window">
             <div class="title-bar title-bar-inactive"><span class="title-bar-text">Loading...</span></div>
             <div class="window-body" style="text-align: center; padding: 16px; font-size: 12px; color: var(--text-dim);">Loading gallery...</div>
