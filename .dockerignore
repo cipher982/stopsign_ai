@@ -5,6 +5,7 @@
 !stopsign/
 !config/
 !static/
+!scripts/
 !rtsp_to_redis/
 !pyproject.toml
 !uv.lock
