@@ -29,6 +29,7 @@
 <div id="controls">
   <button id="download">Download log</button>
   <button id="reset">Reset</button>
+  <button id="mark" style="background:#a00;color:#fff;font-weight:bold;border-color:#f44">MARK JUMP</button>
   <label><input type="checkbox" id="autoSave" checked> auto-save to server (60s)</label>
   <span id="status">starting…</span>
 </div>
@@ -139,6 +140,43 @@
     if (url !== null) snapRing.push({ wall: Date.now(), mediaTime: +v.currentTime.toFixed(4), dataUrl: url });
     if (snapRing.length > 3) snapRing.shift();
   }, 2000);
+
+  // Scene-cut detector: 5s cadence, compare downsampled frames; a large pixel
+  // change with a timestamp jump = content-level jump. Logs before/after + ring.
+  var prevSmall = null;
+  function smallPixels() {
+    canvas.width = 160; canvas.height = 90;
+    var ctx = canvas.getContext('2d');
+    try { ctx.drawImage(v, 0, 0, 160, 90); return ctx.getImageData(0, 0, 160, 90).data; }
+    catch (e) { return null; }
+  }
+  setInterval(function () {
+    var cur = smallPixels();
+    if (prevSmall && cur) {
+      var diff = 0, n = 0;
+      for (var i = 0; i < cur.length; i += 16) { n++; if (Math.abs(cur[i] - prevSmall[i]) > 28) diff++; }
+      if (diff / n > 0.35) {
+        var pre = (snapRing.length ? [snapRing[snapRing.length - 1]] : null);
+        snapRing.length = 0;
+        push('sceneCut', { wall: Date.now(), currentTime: +v.currentTime.toFixed(4), diffRatio: +(diff / n).toFixed(3), preSnap: pre, postSnap: snapDataUrl() });
+      }
+    }
+    prevSmall = cur;
+  }, 5000);
+
+  // MARK button: user clicks when they see a jump -> ring + state saved now
+  function mark() {
+    var pre = (snapRing.length ? [snapRing[snapRing.length - 1]] : null);
+    snapRing.length = 0;
+    push('mark', { currentTime: +v.currentTime.toFixed(4), playbackRate: v.playbackRate, preSnap: pre, postSnap: snapDataUrl() });
+    saveToServer();
+    $('status').textContent = 'MARK captured at ' + new Date().toISOString().slice(11, 19) + ' (ct ' + v.currentTime.toFixed(1) + ')';
+  }
+  window.__harness = {
+    mark: mark,
+    log: function () { return LOG; },
+    readout: function () { return $('readout').innerText; }
+  };
 
   // ---------- 500ms state snapshot ----------
   setInterval(function () {
@@ -281,6 +319,7 @@
   }
   $('download').onclick = download;
   $('reset').onclick = function () { location.reload(); };
+  $('mark').onclick = mark;
 
   // ---------- live readout ----------
   var lastPlaylist = null;
