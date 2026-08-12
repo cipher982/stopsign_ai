@@ -3,20 +3,24 @@
 ## Deployment Overview
 Production: two Docker tracks on **cube**:
 1. **rtsp_to_redis** Compose at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis` — captures RTSP stream, pushes frames to Redis. Capture runs `restart: always` (both stacks do).
-2. **Main stack** Compose at `/home/drose/manual-apps/stopsign_ai/docker/production`, project name `is84480g/k088kc/go88s8cs8` so existing Docker volumes are reused:
+2. **Main stack** — estate manual-app `stopsign` (manifest `~/git/me/domains/mytech/infrastructure/manual-apps/stopsign/app.json`): checkout `/home/drose/manual-apps/stopsign/repo`, compose `docker/production/docker-compose.yml`, compose project `is844go80k088kcgo88s8cs8` (preserves volumes):
    - `video_analyzer` - GPU AI detection/tracking
    - `ffmpeg_service` - HLS segment generation for web
    - `web_server` - FastAPI web interface + API
 
-`make prod-help` prints the production deploy layout (compose files + targets). YOLO weights live in `models/` (gitignored); keep them on cube, don't commit.
+Deploy: commit+push, then `~/git/me/domains/mytech/bin/manual-app deploy stopsign --repo-dir ~/git/stopsign_ai` (refuses unpushed/dirty HEAD; verifies remote-local + public `/healthz`). YOLO weights live in `models/` (gitignored); keep them on cube, don't commit.
+
+## Frontend Design System
+"Field Instrument" (Aug 2026, replaced the win98 theme): dark asphalt ground, verdict semantics green/amber/red (`--ok/--warn/--bad`) as the ONLY data colors, magenta `--accent` as identity-only, Overpass + Overpass Mono type, verdict stamp chips (FULL STOP / ROLLING STOP / NO STOP) site-wide. Tokens in `static/base.css`; page CSS in each template's style block. Rules: evidence images always `object-fit: contain` on `--well` (cover re-crops the tight capture crops); thumbnails served by `/vehicle-thumb/{obj}?v=<variant>` — bump `THUMBNAIL_VARIANT` (stopsign/web/services/images.py) on any rendering change because Cloudflare caches immutably by URL.
 
 ## Data Persistence
 
 ### PostgreSQL (shared container on clifford, NOT cube)
 - **Location**: `clifford.coin-castor.ts.net:5432/stopsign` (Tailscale TCP)
 - **Container**: `kgcos0o4cw4ok0ss0g08wswo` — one retained PostgreSQL 16 daemon shared with Collector; the empty legacy `rag` DB was retired 2026-07-29
-- **Tables**: `vehicle_passes` (timestamp, speed, stop duration, time_in_zone, image_path), `vehicle_pass_raw` (per-pass raw evidence), `config_settings` (versioned config, full history)
-- **Data**: ~41k passes as of Dec 2025 (`SELECT COUNT(*) FROM vehicle_passes`)
+- **Tables**: `vehicle_passes` (timestamp, speed, stop duration, time_in_zone, image_path), `vehicle_pass_raw` (per-pass raw evidence incl `capture` bbox/crop geometry since Aug 2026), `vehicle_labels` (per-pass gpt-5.6-luna closed-vocab labels, Aug 2026, 67.7k rows ≈ 99% of imaged passes), `vehicle_attributes` (legacy cluster pipeline, frozen Feb 2026 — still feeds /vehicles), `config_settings` (versioned config, full history)
+- **Data**: ~73k passes as of Aug 2026 (`SELECT COUNT(*) FROM vehicle_passes`)
+- **Labeling**: `scripts/label_passes.py` — resumable, idempotent, 50-way concurrent; ~$0.0004/pass; rerun anytime to label new passes (needs DB_URL, OPENAI_API_KEY, BREMEN_MINIO_* env)
 - **Env**: Infisical `DB_URL` injects restricted owner/login `stopsign_app` into analyzer + web. The old shared-superuser URL is a bounded rollback artifact through 2026-08-05, not an app credential.
 
 ### MinIO S3 (clifford, NOT cube)
@@ -50,7 +54,7 @@ Hybrid: main site behind Cloudflare Tunnel (no exposed ports); stream direct (70
 Used by Sauron's `crestwood-camera` job (AI vision, every 15 min).
 
 ## Implementation Details
-- **Capture**: images at "capture line" crossing (configurable via debug UI), 10% bbox padding, synchronous MinIO upload during pass processing, 1:1 `image_path` mapping
+- **Capture**: images at "capture line" crossing (configurable via debug UI), 40% bbox padding since Aug 2026 (broad archival crop; detection bbox + crop rect recorded in `vehicle_pass_raw.capture` for later tight re-cropping), synchronous local save + async Bremen upload, 1:1 `image_path` mapping
 - **Config**: `/app/config/config.yaml` (volume-mounted); dynamic web-UI updates → `config_settings` (versioned stop zones, lines, thresholds)
 - **Redis**: ephemeral frame buffer only (no persistence); `raw_frames` (in), `processed_frames` (out); inter-container comms on cube
 
