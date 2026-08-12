@@ -40,14 +40,15 @@ Deploy: commit+push, then `~/git/me/domains/mytech/bin/manual-app deploy stopsig
 ```
 Camera (WiFi) → RTSP → rtsp_to_redis → Redis → ffmpeg_service → HLS → web_server
 ```
-- `ffmpeg_service`: 10 segments × 2s; `web_server` serves `/stream/stream.m3u8`
+- `ffmpeg_service`: 2s segments, `HLS_LIST_SIZE=450` (~15 min rolling window), libx264 medium CPU encode; `web_server` serves `/stream/stream.m3u8`
+- Player quirk (root-caused Aug 2026): ffmpeg writes `EXT-X-TARGETDURATION:4` (rounds 2s segments up), so hls.js targets `liveSyncDurationCount(5) × 4 = 20s` behind live edge with a `10 × 4 = 40s` correction ceiling. The player deliberately runs ~19s behind.
 
-External access (Jan 2026):
+External access (Jan 2026; tunnel re-measured Aug 2026):
 
 | Path | URL | Latency |
 |------|-----|---------|
 | **Direct** (recommended) | `http://stream.crestwoodstopsign.com:8443/stream/stream.m3u8` | ~70ms |
-| Cloudflare Tunnel | `https://crestwoodstopsign.com/stream/stream.m3u8` | 4-14s |
+| Cloudflare Tunnel | `https://crestwoodstopsign.com/stream/stream.m3u8` | 4-14s (Aug 2026: segment fetches 0.2-0.5s) |
 
 Direct setup: DNS `stream.crestwoodstopsign.com` → home IP (Cloudflare grey cloud, NOT proxied); AT&T router port-forwards 8443 → cube:8002 (TCP). Tunnel relay adds unacceptable video latency.
 Hybrid: main site behind Cloudflare Tunnel (no exposed ports); stream direct (70ms vs 4-14s).
@@ -113,3 +114,18 @@ Later gtag.js: follow HDRPop pattern in `~/git/hdr` (GOOGLE_ADS_ID env var + gta
 
 ## SEO
 Dec 2025: meta (description, Open Graph, Twitter Cards) + JSON-LD (WebSite, Person, WebApplication, VideoObject, Dataset) in `stopsign/components.py` (`page_head_component`); `/static/robots.txt` → `/robots.txt`; `/static/sitemap.xml` → `/sitemap.xml`; Google Search Console sitemap submitted, 3 pages. Routes in `stopsign/web_server.py` (search `robots.txt`).
+
+## Stream Debug Harness (Aug 2026)
+
+Investigated "live feed jumps multi-seconds, image never freezes". Root cause (proven by CDP fault injection): **failed HLS segment deliveries on the viewer's network path create holes in the MSE buffer; hls.js's GapController seeks over the hole instantly (`bufferSeekOverHole`), so playback jumps 7-8s in one frame with no freeze.** The server pipeline is exonerated (rtsp 15fps steady, ffmpeg dup 0%, all segment numbers present). The white overlay timestamp = capture time; both overlays are burned into the same frames, so a jump shows in the picture too.
+
+Custom tools (shipped in repo, all in `main`):
+
+| Tool | Where | Purpose |
+|---|---|---|
+| Harness page | `static/debug-harness.html` → `/static/debug-harness.html` | Production-identical hls.js player logging every rendered frame (`requestVideoFrameCallback`), 500ms state (with visibility/focus), hls events, per-segment fetch timing, playlist snapshots, canvas ring (2s cadence), skip detector (>1.5s mediaTime jump), scene-cut detector, `MARK JUMP` button, auto-POST every 60s to `/debug/harness/log`. Exposes `window.__harness.{log,mark,readout}` for live pull. Same origin as the stream (no CORS). |
+| Log endpoint | `stopsign/web/routes/debug_api.py` → `POST /debug/harness/log` | Persists captures to `/app/data/debug-logs/` (storage-dir volume). Unauthenticated (public site) — bounded exposure, JSON only. |
+| Server logger | `scripts/debug_server_logger.py` (in web image via `COPY scripts`) | Every 2s: Redis queue depths, ffmpeg health key (dup/fps), analyzer last-frame age, HLS segment production. Run: `docker exec -d <web_server> python scripts/debug_server_logger.py --seconds 900 --interval 2` (detach survives ssh exit; dies with container restart). |
+| Analyzer | `scripts/debug_harness_analyze.py` (local) | Merges browser + server logs; re-derives skips from rvfc; classifies `pipeline_gap` (server dup>10% / analyzer age>3s) vs `fetch_gap` (segments missing/slow near skip) vs `render_skip`. `--epoch` flags capture-time of mediaTime 0 (OCR a frameSnap); `--export-snaps` dumps snapshots for OCR. |
+
+Capture flow: open `<origin>/static/debug-harness.html` on the same origin you watch (direct `:8443`, tunnel, or Tailscale IP), start the server logger, let it run past what you're investigating, then pull `/app/data/debug-logs/harness_*.json` + `server_*.jsonl` (volume at `/var/lib/docker/volumes/is844go80k088kcgo88s8cs8_storage-dir/_data/debug-logs/`, root-owned — `sudo tar`) and run the analyzer. Known gotchas: browser `keepalive` fetch caps at 64KB (auto-save must not use keepalive); occluded Chrome windows pause video and resume with a ~100s live-edge seek (real-world trigger for the same symptom); `PerformanceResourceTiming.duration` is ms; hls.js 1.6 load stats live under `stats.loading.{start,end}` (legacy `trequest/tload` are dead).
