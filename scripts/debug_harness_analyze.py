@@ -145,13 +145,15 @@ def main() -> None:
             except ValueError:
                 continue
             fetches.append(
-                {"sn": sn, "wall_ms": timeorigin + e.get("startTime", 0), "duration_ms": e.get("duration", 0) * 1000}
+                {"sn": sn, "wall_ms": timeorigin + e.get("startTime", 0), "duration_ms": e.get("duration", 0)}
             )
     for e in log:
         if e["type"] == "hlsEvent" and e.get("event") == "FRAG_LOADED":
             d = e.get("data") or {}
             if d.get("sn") is not None:
-                dur = ((d.get("tload") or 0) - (d.get("trequest") or 0)) * 1000
+                # hls.js 1.6 exposes loading stats under stats.loading.{start,end}
+                loading = d.get("stats") or {}
+                dur = (loading.get("end") or 0) - (loading.get("start") or 0)
                 fetches.append({"sn": d["sn"], "wall_ms": e["wall"], "duration_ms": dur})
     print(f"segment fetches recorded: {len(fetches)}")
     rvfc = [e for e in log if e["type"] == "rvfc"]

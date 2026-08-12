@@ -217,9 +217,13 @@
       });
     });
     hls.on(Hls.Events.FRAG_LOADED, function (e, data) {
+      var stats = data.stats || {};
+      var loading = stats.loading || {};
       push('hlsEvent', { event: 'FRAG_LOADED', data: {
         sn: data.frag.sn, start: +data.frag.start.toFixed(3), duration: data.frag.duration,
-        trequest: data.stats ? data.stats.trequest : null, tload: data.stats ? data.stats.tload : null
+        loadingStart: loading.start != null ? +loading.start.toFixed(1) : null,
+        loadingEnd: loading.end != null ? +loading.end.toFixed(1) : null,
+        parsed: stats.parsing ? {start: stats.parsing.start, end: stats.parsing.end} : null
       }});
     });
     hls.on(Hls.Events.MANIFEST_PARSED, function (e, data) {
