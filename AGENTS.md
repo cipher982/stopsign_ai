@@ -18,9 +18,9 @@ Deploy: commit+push, then `~/git/me/domains/mytech/bin/manual-app deploy stopsig
 ### PostgreSQL (shared container on clifford, NOT cube)
 - **Location**: `clifford.coin-castor.ts.net:5432/stopsign` (Tailscale TCP)
 - **Container**: `kgcos0o4cw4ok0ss0g08wswo` — one retained PostgreSQL 16 daemon shared with Collector; the empty legacy `rag` DB was retired 2026-07-29
-- **Tables**: `vehicle_passes` (timestamp, speed, stop duration, time_in_zone, image_path), `vehicle_pass_raw` (per-pass raw evidence incl `capture` bbox/crop geometry since Aug 2026), `vehicle_labels` (per-pass gpt-5.6-luna closed-vocab labels, Aug 2026, 67.7k rows ≈ 99% of imaged passes), `vehicle_attributes` (legacy cluster pipeline, frozen Feb 2026 — still feeds /vehicles), `config_settings` (versioned config, full history)
+- **Tables**: `vehicle_passes` (timestamp, speed, stop duration, time_in_zone, image_path), `vehicle_pass_raw` (per-pass raw evidence incl `capture` bbox/crop geometry since Aug 2026), `vehicle_labels` (per-pass gpt-5.6-luna closed-vocab labels, Aug 2026, 67.7k rows ≈ 99% of imaged passes — feeds /vehicles + per-pass badges, make/model confidence-gated at 0.7), `vehicle_attributes` (legacy cluster pipeline, frozen Feb 2026 — only the /vehicles "Cluster Gallery" regulars view), `config_settings` (versioned config, full history)
 - **Data**: ~73k passes as of Aug 2026 (`SELECT COUNT(*) FROM vehicle_passes`)
-- **Labeling**: `scripts/label_passes.py` — resumable, idempotent, 50-way concurrent; ~$0.0004/pass; rerun anytime to label new passes (needs DB_URL, OPENAI_API_KEY, BREMEN_MINIO_* env)
+- **Labeling**: `scripts/label_passes.py` — resumable, idempotent, 50-way concurrent; ~$0.0004/pass; needs DB_URL, OPENAI_API_KEY, BREMEN_MINIO_* env and `--extra db --extra storage --extra labeling`. Incremental: `scripts/label_increment.sh` runs daily via cube cron (~210 passes/day ≈ $0.08/day); it sources the main stack `.env` for DB/MinIO and `/home/drose/manual-apps/stopsign/label-secret.env` for OPENAI_API_KEY, logs to `/home/drose/manual-apps/stopsign/logs/label_increment.log`.
 - **Env**: Infisical `DB_URL` injects restricted owner/login `stopsign_app` into analyzer + web. The old shared-superuser URL is a bounded rollback artifact through 2026-08-05, not an app credential.
 
 ### MinIO S3 (clifford, NOT cube)
