@@ -108,7 +108,7 @@
         skipCount++;
         lastSkipGap = gap;
         var postUrl = snapDataUrl();
-        var pre = (skipCount <= 10) ? snapRing.slice() : null;
+        var pre = (skipCount <= 10 && snapRing.length) ? [snapRing[snapRing.length - 1]] : null;
         snapRing.length = 0;
         push('skip', { from: +lastMT.toFixed(4), to: +mt.toFixed(4), gapSec: +gap.toFixed(3), preSnaps: pre, postSnap: postUrl });
       }
@@ -121,10 +121,10 @@
   // ---------- frame snapshot for post-hoc OCR of the burned-in timestamp ----------
   var canvas = document.createElement('canvas');
   function snapDataUrl() {
-    canvas.width = 640; canvas.height = 360;
+    canvas.width = 480; canvas.height = 270;
     var ctx = canvas.getContext('2d');
-    try { ctx.drawImage(v, 0, 0, 640, 360); } catch (e) { return null; }
-    return canvas.toDataURL('image/jpeg', 0.7);
+    try { ctx.drawImage(v, 0, 0, 480, 270); } catch (e) { return null; }
+    return canvas.toDataURL('image/jpeg', 0.55);
   }
   function snap() {
     if (snapCount >= MAX_SNAPS) return;
@@ -150,6 +150,7 @@
       currentTime: +v.currentTime.toFixed(3),
       readyState: v.readyState, networkState: v.networkState,
       playbackRate: v.playbackRate, paused: v.paused, ended: v.ended,
+      vis: document.visibilityState, focus: document.hasFocus(),
       buffered: buf,
       droppedFrames: q ? q.droppedVideoFrames : null,
       totalFrames: q ? q.totalVideoFrames : null,
@@ -233,13 +234,25 @@
   }, 5000);
 
   // ---------- persistence ----------
+  // Auto-save: plain fetch (no keepalive; keepalive bodies cap at 64KB and the
+  // log with snapshots exceeds that). pagehide uses keepalive with a trimmed
+  // payload (dataUrls stripped) so it survives the unload.
+  function trimmedCopy() {
+    return {
+      runId: runId,
+      log: LOG.map(function (e) {
+        if (e.type === 'frameSnap' && e.dataUrl) return Object.assign({}, e, { dataUrl: null });
+        if (e.type === 'skip') return Object.assign({}, e, { postSnap: null, preSnaps: null });
+        return e;
+      })
+    };
+  }
   function saveToServer() {
     if (!LOG.length) return;
     fetch('/debug/harness/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId: runId, log: LOG }),
-      keepalive: true
+      body: JSON.stringify({ runId: runId, log: LOG })
     }).then(function (r) { return r.json(); })
       .then(function (j) { push('saved', { path: j.saved || j.error }); })
       .catch(function (err) { push('saved', { error: String(err) }); });
@@ -247,7 +260,17 @@
   setInterval(function () {
     if ($('autoSave').checked && Date.now() - lastSave > 60000) { lastSave = Date.now(); saveToServer(); }
   }, 15000);
-  window.addEventListener('pagehide', function () { if (LOG.length) saveToServer(); });
+  window.addEventListener('pagehide', function () {
+    if (!LOG.length) return;
+    var body = JSON.stringify({ runId: runId, log: LOG });
+    if (body.length > 55000) body = JSON.stringify(trimmedCopy());
+    fetch('/debug/harness/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body,
+      keepalive: true
+    }).catch(function () {});
+  });
 
   function download() {
     var blob = new Blob([JSON.stringify({ runId: runId, log: LOG })], { type: 'application/json' });
