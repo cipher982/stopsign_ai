@@ -119,6 +119,37 @@ async def archive_health():
         return JSONResponse({"available": False, "error": str(e)})
 
 
+@router.get("/api/label-health")
+async def label_health(request: Request):
+    """Surface vehicle-label freshness (COUNT + MAX(updated_at) in vehicle_labels).
+
+    The daily cube cron (scripts/label_increment.sh) labels newly captured passes.
+    A silent failure there (rotated key, dead cron, broken uv env) freezes labels
+    exactly like the Feb 2026 cluster freeze, while the detection pipeline keeps
+    looking healthy. Sauron's stopsign-label-freshness job polls this endpoint.
+    """
+    try:
+        db = getattr(request.app.state, "db", None)
+        if db is None:
+            db = Database(db_url=DB_URL)
+            request.app.state.db = db
+        with db.Session() as session:
+            row = session.execute(text("SELECT COUNT(*) AS total, MAX(updated_at) AS last FROM vehicle_labels")).first()
+        if row is None or row.last is None:
+            return JSONResponse({"available": False, "detail": "No labels recorded yet"})
+        return JSONResponse(
+            {
+                "available": True,
+                "total_labeled": row.total,
+                "last_labeled_at": row.last.isoformat(),
+                "last_labeled_epoch": row.last.timestamp(),
+            }
+        )
+    except Exception as e:
+        logger.warning(f"label_health read failed: {e}")
+        return JSONResponse({"available": False, "error": str(e)})
+
+
 @router.get("/api/pipeline-health")
 async def pipeline_health():
     """Aggregated capture->analyzer->archive chain health for alerting.
