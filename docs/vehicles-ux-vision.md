@@ -2,7 +2,9 @@
 
 Status: EXECUTED 2026-08-11 — `scripts/label_passes.py` labeled 67,742 of 68,276
 image-bearing passes (99.2%, $25.16, 0 failures) into `vehicle_labels`.
-Remaining: point /vehicles at the new table; schedule incremental labeling.
+Done 2026-08-12: `/vehicles` reads `vehicle_labels` (confidence-gated make/model);
+daily incremental labeling runs on cube via `scripts/label_increment.sh` (4am
+cron, secrets via `infisical run`), watched by Sauron `stopsign-label-freshness`.
 The rest of this doc is the original decision-support text.
 All numbers below were measured live on 2026-08-10 (SQL counts and real OpenAI API usage), not guessed.
 
