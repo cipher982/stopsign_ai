@@ -64,6 +64,18 @@ _upload_state: dict[str, str] = {}
 _UPLOAD_STATE_MAX = 20000
 _upload_state_lock = threading.Lock()
 
+# Objects already archived in Bremen whose DB path flip has not landed yet. The pass
+# row is written when the vehicle leaves the zone, which can be a minute after the
+# image was captured, so the upload worker's inline retry window can expire first.
+# Without this queue the flip then never happened at all: the pass kept its local://
+# path forever and its file could never be pruned, so the local directory grew
+# without bound (8.4k files against a 500 cap by 2026-09-11) and the archive was no
+# longer what the site served from.
+_flip_pending: dict[str, float] = {}
+_FLIP_PENDING_MAX = 5000
+_FLIP_RETRY_MAX_AGE_SEC = 900.0
+_FLIP_RETRY_BATCH = 50
+
 
 def _get_redis_client():
     """Lazily build a short-timeout Redis client (best-effort; never raises)."""
@@ -161,6 +173,56 @@ def _get_upload_state(object_name: str) -> Optional[str]:
         return _upload_state.get(object_name)
 
 
+def _enqueue_flip_retry(object_name: str) -> None:
+    """Queue an archived object whose DB path flip did not land inside the worker.
+
+    Bounded: when full the oldest entry is dropped, which only means that object
+    stays local. That is the pruner's conservative direction, never a deleted file.
+    """
+    with _upload_state_lock:
+        if len(_flip_pending) >= _FLIP_PENDING_MAX:
+            _flip_pending.pop(next(iter(_flip_pending)))
+        _flip_pending.setdefault(object_name, time.time())
+
+
+def _retry_pending_flips(db: Optional[Database]) -> None:
+    """Retry DB path flips the upload worker gave up on, from the prune tick.
+
+    Runs a bounded batch per tick so a backlog cannot stall the prune thread.
+    """
+    if db is None:
+        return
+
+    now = time.time()
+    with _upload_state_lock:
+        batch = sorted(_flip_pending.items(), key=lambda kv: kv[1])[:_FLIP_RETRY_BATCH]
+
+    for object_name, enqueued_at in batch:
+        if _get_upload_state(object_name) == "uploaded":
+            with _upload_state_lock:
+                _flip_pending.pop(object_name, None)
+            continue
+        if now - enqueued_at > _FLIP_RETRY_MAX_AGE_SEC:
+            with _upload_state_lock:
+                _flip_pending.pop(object_name, None)
+            logger.warning(
+                "Delayed DB path flip for %s never landed within %.0fs; leaving it local",
+                object_name,
+                now - enqueued_at,
+            )
+            continue
+        try:
+            rows = db.update_image_path(f"local://{object_name}", f"bremen://{object_name}")
+        except Exception as db_err:
+            logger.warning("Delayed DB path flip failed for %s: %s", object_name, db_err)
+            continue
+        if rows:
+            _mark_upload_state(object_name, "uploaded")
+            with _upload_state_lock:
+                _flip_pending.pop(object_name, None)
+            logger.info("Delayed DB path flip landed for %s: local:// -> bremen://", object_name)
+
+
 def _start_upload_worker():
     """Start the background upload worker thread if not already running."""
     global _worker_started
@@ -178,7 +240,8 @@ def _flip_db_path_with_retry(db: Optional[Database], object_name: str) -> bool:
     The archive upload completes asynchronously, usually several seconds BEFORE the
     pass is recorded (the pass is persisted at zone exit). A single immediate
     update_image_path therefore finds 0 rows and silently no-ops, leaving the path
-    stuck at local:// forever. Retry briefly so we catch the pass insert.
+    stuck at local:// forever. Retry briefly so we catch the pass insert; a give-up
+    is not final - the caller queues a delayed retry that the prune tick drives.
     """
     if db is None:
         return False
@@ -236,6 +299,7 @@ def _process_upload_item(local_path: str, object_name: str, db: Optional[Databas
                 _mark_upload_state(object_name, "uploaded")
             else:
                 _mark_upload_state(object_name, "failed")
+                _enqueue_flip_retry(object_name)
             # The success write above happened before the state was final; persist
             # the accurate pending/uploaded counts.
             _write_health_to_redis()
@@ -307,19 +371,21 @@ def _prune_old_images():
         logger.error(f"Error pruning old images: {e}")
 
 
-def _run_prune_worker() -> None:
+def _run_prune_worker(db: Optional[Database] = None) -> None:
     try:
+        # Retry flips first: an object that flips now is prunable in this same tick.
+        _retry_pending_flips(db)
         _prune_old_images()
     finally:
         _prune_lock.release()
 
 
-def _start_prune_worker() -> None:
-    thread = threading.Thread(target=_run_prune_worker, daemon=True)
+def _start_prune_worker(db: Optional[Database] = None) -> None:
+    thread = threading.Thread(target=_run_prune_worker, args=(db,), daemon=True)
     thread.start()
 
 
-def _maybe_prune_old_images(now: Optional[float] = None) -> None:
+def _maybe_prune_old_images(now: Optional[float] = None, db: Optional[Database] = None) -> None:
     """Rate-limit pruning and keep directory scans out of the capture path."""
     global _last_prune_monotonic
 
@@ -331,7 +397,7 @@ def _maybe_prune_old_images(now: Optional[float] = None) -> None:
         return
 
     _last_prune_monotonic = now
-    _start_prune_worker()
+    _start_prune_worker(db)
 
 
 # Broad capture margin around the detection bbox. The saved crop is the archival
@@ -410,7 +476,7 @@ def save_vehicle_image(
         except queue.Full:
             logger.warning(f"Upload queue full, skipping archive of {filename}")
 
-        _maybe_prune_old_images()
+        _maybe_prune_old_images(db=db)
 
         return f"local://{filename}"
 

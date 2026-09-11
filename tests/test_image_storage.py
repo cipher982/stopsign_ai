@@ -15,6 +15,7 @@ def isolate_image_storage_state(monkeypatch):
     monkeypatch.setattr(image_storage, "_prune_lock", threading.Lock())
     monkeypatch.setattr(image_storage, "_last_prune_monotonic", 0.0)
     monkeypatch.setattr(image_storage, "_upload_state", {})
+    monkeypatch.setattr(image_storage, "_flip_pending", {})
     monkeypatch.setattr(image_storage, "_health", dict(image_storage._health))
     monkeypatch.setattr(image_storage, "_redis_attempted", True)
     monkeypatch.setattr(image_storage, "_redis_client", None)
@@ -27,7 +28,7 @@ def test_save_vehicle_image_writes_local_file_without_inline_prune(monkeypatch, 
     monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
     monkeypatch.setattr(image_storage, "_upload_queue", upload_queue)
     monkeypatch.setattr(image_storage, "_start_upload_worker", lambda: None)
-    monkeypatch.setattr(image_storage, "_maybe_prune_old_images", lambda: prune_calls.append(True))
+    monkeypatch.setattr(image_storage, "_maybe_prune_old_images", lambda db=None: prune_calls.append(True))
 
     frame = np.full((100, 120, 3), 127, dtype=np.uint8)
     image_path = image_storage.save_vehicle_image(
@@ -78,7 +79,7 @@ def test_save_vehicle_image_returns_empty_and_records_failure_when_local_save_fa
 def test_maybe_prune_old_images_rate_limits_background_work(monkeypatch):
     starts = []
 
-    def fake_start_prune_worker():
+    def fake_start_prune_worker(db=None):
         starts.append(True)
         image_storage._prune_lock.release()
 
@@ -180,3 +181,65 @@ def test_upload_worker_flips_db_path_with_retry(monkeypatch):
     health = image_storage.get_archive_health()
     assert health["upload_successes"] == 1
     assert health["upload_failures"] == 0
+
+
+def _archive_once(monkeypatch, db, object_name="x_123.jpg"):
+    """Run one upload-queue item against a mocked MinIO, with `db` supplying the flip."""
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    minio_client = MagicMock()
+    minio_client.fput_object = MagicMock()
+    monkeypatch.setattr(image_storage, "Minio", MagicMock(return_value=minio_client))
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_SECRET_KEY", "secret")
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_ENDPOINT", "100.98.103.56:9000")
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_ACCESS_KEY", "root")
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_BUCKET", "vehicle-images")
+
+    image_storage._process_upload_item(f"/tmp/{object_name}", object_name, db)
+
+
+def test_upload_worker_queues_a_late_flip_instead_of_leaking_the_file(monkeypatch):
+    """A pass row that lands after the inline window must not strand the local file.
+
+    Zone exit can persist the pass a minute after the capture; the inline window is
+    seconds. An abandoned flip means a local:// path the pruner can never remove.
+    """
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.update_image_path.return_value = 0  # row never appears inside the window
+
+    _archive_once(monkeypatch, db)
+
+    assert image_storage._get_upload_state("x_123.jpg") == "failed"
+    assert "x_123.jpg" in image_storage._flip_pending
+
+
+def test_delayed_flip_retry_marks_uploaded_once_the_pass_row_lands():
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.update_image_path.side_effect = [0, 1]
+    image_storage._mark_upload_state("x_123.jpg", "failed")
+    image_storage._enqueue_flip_retry("x_123.jpg")
+
+    image_storage._retry_pending_flips(db)  # pass row not written yet
+    assert image_storage._get_upload_state("x_123.jpg") == "failed"
+
+    image_storage._retry_pending_flips(db)  # row landed -> file becomes prunable
+    assert image_storage._get_upload_state("x_123.jpg") == "uploaded"
+    assert "x_123.jpg" not in image_storage._flip_pending
+
+
+def test_delayed_flip_retry_gives_up_after_max_age():
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.update_image_path.return_value = 0
+    image_storage._flip_pending["x_old.jpg"] = time.time() - 10_000
+
+    image_storage._retry_pending_flips(db)
+
+    assert "x_old.jpg" not in image_storage._flip_pending
+    assert db.update_image_path.call_count == 0
