@@ -272,6 +272,12 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
                 # Redis latency now tracked in OpenTelemetry spans
 
+            # A push that just succeeded is the only live proof that Redis is up.
+            # Without this the flag would keep its startup value forever and the
+            # ingest guard would act on a stale "connected" (see
+            # _exit_if_ingest_degraded).
+            self.update_status_metric("redis_connected", True)
+
             # Record OpenTelemetry metrics
             if self.metrics:
                 self.metrics.frames_processed.add(1, {"service": "rtsp"})
@@ -280,6 +286,8 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
         except RedisError as e:
             logger.error(f"Redis operation failed: {str(e)}")
+            self.update_status_metric("redis_connected", False)
+            self.record_redis_error()
             if self.metrics:
                 self.metrics.redis_operations.add(1, {"operation": "error", "service": "rtsp"})
             raise
@@ -456,6 +464,18 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
                         rtsp_frames_count += 1
 
+                        # Score the input-rate bucket BEFORE evaluating remediation: a
+                        # stream that has just recovered has to be able to clear the
+                        # degraded state before the guard acts on it, otherwise the
+                        # first healthy frames of a recovery can still trip the exit.
+                        if current_time - fps_update_time >= 1:
+                            elapsed_fps_time = current_time - fps_update_time
+                            calculated_fps = rtsp_frames_count / elapsed_fps_time
+                            self.update_rtsp_fps(calculated_fps)
+                            self._track_input_fps(calculated_fps, current_time)
+                            rtsp_frames_count = 0
+                            fps_update_time = current_time
+
                         # Stamp capture moment as close to cap.read() as possible
                         capture_ts = time.time()
                         self._update_freeze_state(frame, capture_ts)
@@ -480,15 +500,6 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                             self.record_frame_drop()
 
                         last_frame_time = current_time
-
-                        # Update FPS every second
-                        if current_time - fps_update_time >= 1:
-                            elapsed_fps_time = current_time - fps_update_time
-                            calculated_fps = rtsp_frames_count / elapsed_fps_time
-                            self.update_rtsp_fps(calculated_fps)
-                            self._track_input_fps(calculated_fps, current_time)
-                            rtsp_frames_count = 0
-                            fps_update_time = current_time
 
                         # Log status periodically
                         if current_time - last_log_time >= log_interval:

@@ -59,7 +59,9 @@ _redis_attempted = False
 # Per-file upload state so the pruner never deletes a file whose pass still needs it.
 #   "pending"  -> queued / waiting to upload (DB path is local://, must stay on disk)
 #   "failed"   -> upload or DB flip did not complete (DB path is local://, must stay)
-#   "uploaded" -> object archived AND DB path flipped to bremen:// (local copy redundant)
+#   "uploaded" -> object archived and the local copy is redundant, so prune-eligible:
+#                 either the DB path flipped to bremen://, or no pass references the
+#                 file at all
 _upload_state: dict[str, str] = {}
 _UPLOAD_STATE_MAX = 20000
 _upload_state_lock = threading.Lock()
@@ -75,6 +77,12 @@ _flip_pending: dict[str, float] = {}
 _FLIP_PENDING_MAX = 5000
 _FLIP_RETRY_MAX_AGE_SEC = 900.0
 _FLIP_RETRY_BATCH = 50
+
+# The sweep runs on the upload worker's idle loop, so it needs its own handle on the
+# Database (recorded on every save) plus a rate limit.
+FLIP_SWEEP_INTERVAL_SECONDS = 60.0
+_last_flip_sweep_monotonic = 0.0
+_flip_retry_db: Optional[Database] = None
 
 
 def _get_redis_client():
@@ -185,12 +193,29 @@ def _enqueue_flip_retry(object_name: str) -> None:
         _flip_pending.setdefault(object_name, time.time())
 
 
-def _retry_pending_flips(db: Optional[Database]) -> None:
-    """Retry DB path flips the upload worker gave up on, from the prune tick.
+def _maybe_retry_pending_flips(now: Optional[float] = None) -> None:
+    """Rate-limited sweep entry point, driven by the upload worker's idle loop."""
+    global _last_flip_sweep_monotonic
 
-    Runs a bounded batch per tick so a backlog cannot stall the prune thread.
+    now = time.monotonic() if now is None else now
+    if now - _last_flip_sweep_monotonic < FLIP_SWEEP_INTERVAL_SECONDS:
+        return
+    _last_flip_sweep_monotonic = now
+    _retry_pending_flips(_flip_retry_db)
+
+
+def _forget_pending_flip(object_name: str) -> None:
+    with _upload_state_lock:
+        _flip_pending.pop(object_name, None)
+
+
+def _retry_pending_flips(db: Optional[Database]) -> None:
+    """Retry DB path flips the upload worker gave up on.
+
+    Bounded batch per sweep so a backlog cannot stall the worker, and nothing here
+    runs on the capture path.
     """
-    if db is None:
+    if db is None or not _flip_pending:
         return
 
     now = time.time()
@@ -199,28 +224,36 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
 
     for object_name, enqueued_at in batch:
         if _get_upload_state(object_name) == "uploaded":
-            with _upload_state_lock:
-                _flip_pending.pop(object_name, None)
+            _forget_pending_flip(object_name)
             continue
-        if now - enqueued_at > _FLIP_RETRY_MAX_AGE_SEC:
-            with _upload_state_lock:
-                _flip_pending.pop(object_name, None)
-            logger.warning(
-                "Delayed DB path flip for %s never landed within %.0fs; leaving it local",
-                object_name,
-                now - enqueued_at,
-            )
-            continue
+
         try:
             rows = db.update_image_path(f"local://{object_name}", f"bremen://{object_name}")
         except Exception as db_err:
             logger.warning("Delayed DB path flip failed for %s: %s", object_name, db_err)
             continue
+
         if rows:
             _mark_upload_state(object_name, "uploaded")
-            with _upload_state_lock:
-                _flip_pending.pop(object_name, None)
+            _forget_pending_flip(object_name)
             logger.info("Delayed DB path flip landed for %s: local:// -> bremen://", object_name)
+            continue
+
+        if now - enqueued_at > _FLIP_RETRY_MAX_AGE_SEC:
+            # Still unreferenced at the end of the retry window. The upload succeeded
+            # (that is the only way an entry gets queued), so the object is in Bremen
+            # and this local copy serves nothing: release it for pruning. Those are
+            # the capture-line images of cars that never completed a pass, which is
+            # most of what leaked before - the row is written at zone exit, seconds
+            # after the capture, so a row still missing after 15 minutes is not late,
+            # it is never coming.
+            _mark_upload_state(object_name, "uploaded")
+            _forget_pending_flip(object_name)
+            logger.info(
+                "No pass references %s after %.0fs; releasing the local copy (object is in Bremen)",
+                object_name,
+                now - enqueued_at,
+            )
 
 
 def _start_upload_worker():
@@ -241,7 +274,7 @@ def _flip_db_path_with_retry(db: Optional[Database], object_name: str) -> bool:
     pass is recorded (the pass is persisted at zone exit). A single immediate
     update_image_path therefore finds 0 rows and silently no-ops, leaving the path
     stuck at local:// forever. Retry briefly so we catch the pass insert; a give-up
-    is not final - the caller queues a delayed retry that the prune tick drives.
+    is not final - the caller queues a delayed retry that the upload worker sweeps.
     """
     if db is None:
         return False
@@ -315,12 +348,22 @@ def _process_upload_item(local_path: str, object_name: str, db: Optional[Databas
 
 
 def _bremen_upload_worker():
-    """Background worker that uploads images to Bremen MinIO with retry logic."""
+    """Background worker: uploads queued images, and sweeps pending DB path flips.
+
+    The sweep rides this thread's idle path instead of owning a timer of its own, so
+    a flip is still retried when no further image is ever saved - a quiet evening
+    must not strand the last capture of the night.
+    """
     while True:
         try:
-            local_path, object_name, db = _upload_queue.get()
+            try:
+                local_path, object_name, db = _upload_queue.get(timeout=FLIP_SWEEP_INTERVAL_SECONDS)
+            except queue.Empty:
+                _maybe_retry_pending_flips()
+                continue
             try:
                 _process_upload_item(local_path, object_name, db)
+                _maybe_retry_pending_flips()
             finally:
                 _upload_queue.task_done()
         except Exception as e:
@@ -371,21 +414,19 @@ def _prune_old_images():
         logger.error(f"Error pruning old images: {e}")
 
 
-def _run_prune_worker(db: Optional[Database] = None) -> None:
+def _run_prune_worker() -> None:
     try:
-        # Retry flips first: an object that flips now is prunable in this same tick.
-        _retry_pending_flips(db)
         _prune_old_images()
     finally:
         _prune_lock.release()
 
 
-def _start_prune_worker(db: Optional[Database] = None) -> None:
-    thread = threading.Thread(target=_run_prune_worker, args=(db,), daemon=True)
+def _start_prune_worker() -> None:
+    thread = threading.Thread(target=_run_prune_worker, daemon=True)
     thread.start()
 
 
-def _maybe_prune_old_images(now: Optional[float] = None, db: Optional[Database] = None) -> None:
+def _maybe_prune_old_images(now: Optional[float] = None) -> None:
     """Rate-limit pruning and keep directory scans out of the capture path."""
     global _last_prune_monotonic
 
@@ -397,7 +438,7 @@ def _maybe_prune_old_images(now: Optional[float] = None, db: Optional[Database] 
         return
 
     _last_prune_monotonic = now
-    _start_prune_worker(db)
+    _start_prune_worker()
 
 
 # Broad capture margin around the detection bbox. The saved crop is the archival
@@ -470,13 +511,19 @@ def save_vehicle_image(
         # Start upload worker if not already running
         _start_upload_worker()
 
+        # Remember the handle for the background flip sweep: the upload worker has no
+        # other way to reach the database while its queue is idle.
+        global _flip_retry_db
+        if db is not None:
+            _flip_retry_db = db
+
         # Queue upload to Bremen MinIO (non-blocking)
         try:
             _upload_queue.put_nowait((str(local_path), filename, db))
         except queue.Full:
             logger.warning(f"Upload queue full, skipping archive of {filename}")
 
-        _maybe_prune_old_images(db=db)
+        _maybe_prune_old_images()
 
         return f"local://{filename}"
 

@@ -59,6 +59,12 @@ and `os._exit(1)`. `restart: always` re-creates the container, re-opening the
 RTSP session and clearing any wedged decoder state. This is the same shape as
 the video analyzer's stall watchdog and is skipped while Redis itself is down.
 
+A sustained *visual freeze* deliberately has no stage 2: it is retried with
+stage-1 reconnects and left to the chain-level alert. A frozen camera still
+delivers frames at full rate, so the rate guard cannot see it, and the reconnect
+is the remedy that has actually cleared one (2026-09-09: resolved 62 s after the
+forced reconnect).
+
 > The 2026-02-27 version of this spec defined stage 2 as an operator-supplied
 > `RTSP_FREEZE_REMEDIATION_CMD` shell hook. It shipped disabled, was never
 > enabled, and on 2026-09-11 it was the reason a 90-minute ingest collapse took

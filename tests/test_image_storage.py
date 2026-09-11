@@ -16,6 +16,8 @@ def isolate_image_storage_state(monkeypatch):
     monkeypatch.setattr(image_storage, "_last_prune_monotonic", 0.0)
     monkeypatch.setattr(image_storage, "_upload_state", {})
     monkeypatch.setattr(image_storage, "_flip_pending", {})
+    monkeypatch.setattr(image_storage, "_flip_retry_db", None)
+    monkeypatch.setattr(image_storage, "_last_flip_sweep_monotonic", 0.0)
     monkeypatch.setattr(image_storage, "_health", dict(image_storage._health))
     monkeypatch.setattr(image_storage, "_redis_attempted", True)
     monkeypatch.setattr(image_storage, "_redis_client", None)
@@ -28,7 +30,7 @@ def test_save_vehicle_image_writes_local_file_without_inline_prune(monkeypatch, 
     monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
     monkeypatch.setattr(image_storage, "_upload_queue", upload_queue)
     monkeypatch.setattr(image_storage, "_start_upload_worker", lambda: None)
-    monkeypatch.setattr(image_storage, "_maybe_prune_old_images", lambda db=None: prune_calls.append(True))
+    monkeypatch.setattr(image_storage, "_maybe_prune_old_images", lambda: prune_calls.append(True))
 
     frame = np.full((100, 120, 3), 127, dtype=np.uint8)
     image_path = image_storage.save_vehicle_image(
@@ -79,7 +81,7 @@ def test_save_vehicle_image_returns_empty_and_records_failure_when_local_save_fa
 def test_maybe_prune_old_images_rate_limits_background_work(monkeypatch):
     starts = []
 
-    def fake_start_prune_worker(db=None):
+    def fake_start_prune_worker():
         starts.append(True)
         image_storage._prune_lock.release()
 
@@ -232,14 +234,61 @@ def test_delayed_flip_retry_marks_uploaded_once_the_pass_row_lands():
     assert "x_123.jpg" not in image_storage._flip_pending
 
 
-def test_delayed_flip_retry_gives_up_after_max_age():
+def test_expired_flip_with_no_referencing_pass_releases_the_local_copy():
+    """A capture-line image no pass ever references must not be kept forever.
+
+    The row is written at zone exit, seconds after the capture, so a file still
+    unreferenced at the end of the retry window is not late - it is never coming.
+    The object is already in Bremen, so releasing the local copy loses nothing.
+    """
     from unittest.mock import MagicMock
 
     db = MagicMock()
     db.update_image_path.return_value = 0
-    image_storage._flip_pending["x_old.jpg"] = time.time() - 10_000
+    image_storage._mark_upload_state("x_orphan.jpg", "failed")
+    image_storage._flip_pending["x_orphan.jpg"] = time.time() - 10_000
 
     image_storage._retry_pending_flips(db)
 
-    assert "x_old.jpg" not in image_storage._flip_pending
-    assert db.update_image_path.call_count == 0
+    assert "x_orphan.jpg" not in image_storage._flip_pending
+    # 'uploaded' is what makes it prune-eligible; 'failed' would retain it forever.
+    assert image_storage._get_upload_state("x_orphan.jpg") == "uploaded"
+
+
+def test_save_records_db_for_the_background_flip_sweep(monkeypatch, tmp_path):
+    """Wiring: a save must leave the sweep able to reach the database while idle."""
+    calls = []
+
+    class _DB:
+        def update_image_path(self, old, new):
+            calls.append((old, new))
+            return 1
+
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(image_storage, "_upload_queue", queue.Queue())
+    monkeypatch.setattr(image_storage, "_start_upload_worker", lambda: None)
+    monkeypatch.setattr(image_storage, "_maybe_prune_old_images", lambda: None)
+    monkeypatch.setattr(image_storage, "_flip_pending", {"vehicle_orphan.jpg": time.time()})
+
+    image_storage.save_vehicle_image(
+        frame=np.full((100, 120, 3), 127, dtype=np.uint8),
+        timestamp=1234.5,
+        bbox=(20.0, 20.0, 80.0, 80.0),
+        db=_DB(),
+    )
+    image_storage._maybe_retry_pending_flips(now=10_000.0)
+
+    assert calls == [("local://vehicle_orphan.jpg", "bremen://vehicle_orphan.jpg")]
+
+
+def test_flip_sweep_is_rate_limited(monkeypatch):
+    calls = []
+    db = object()
+    monkeypatch.setattr(image_storage, "_flip_retry_db", db)
+    monkeypatch.setattr(image_storage, "_retry_pending_flips", lambda passed: calls.append(passed))
+
+    image_storage._maybe_retry_pending_flips(now=100.0)
+    image_storage._maybe_retry_pending_flips(now=110.0)
+    image_storage._maybe_retry_pending_flips(now=161.0)
+
+    assert calls == [db, db]

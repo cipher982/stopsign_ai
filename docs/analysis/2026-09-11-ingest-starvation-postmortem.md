@@ -92,11 +92,19 @@ at `analyzer.frame_age_seconds` vs the rtsp `/ready` to tell an analyzer stall f
 an ingest stall from a real freeze.
 
 **Archive path flips retry** (`stopsign/image_storage.py`) — unrelated bug found
-while reviewing the chain: `_flip_db_path_with_retry` gives up after 20 s, but the
-pass row is written at zone exit, which can be a minute later. A give-up left the
-pass on `local://` forever, so the file could never be pruned — 7109 stranded
-files, 8394 on disk against a 500 cap. Failed flips are now queued and retried by
-the prune tick (bounded to 50/tick, 15 min horizon).
+while reviewing the chain. `_flip_db_path_with_retry` gives up after 20 s and the
+give-up was final: the pass kept `local://` forever, so its file could never be
+pruned — 7109 stranded files, 8394 on disk against a 500 cap, 15750 `local://`
+pass rows in the database. The inline retry was waiting for the wrong thing.
+Querying the five give-ups from the incident window afterwards, **none has a pass
+row at all** (0/5): they are the capture-line images of cars that never completed
+a pass, so no retry could ever have succeeded. Failed flips are now swept from the
+upload worker's idle loop (50 per 60 s sweep, 15 min horizon), and at the end of
+that window a file no pass references is released for pruning — the row is written
+at zone exit, seconds after the capture, so a row still missing after 15 minutes
+is not late, it is never coming. Releasing stays safe even if that judgement is
+wrong: `resolve_image_url` falls back to `/vehicle-image/<name>`, which streams
+the object from Bremen.
 
 ## What is still open
 
@@ -107,9 +115,13 @@ the prune tick (bounded to 50/tick, 15 min horizon).
   exists to *bound* that damage rather than to remove it: TCP removes corruption,
   the rate guard converts an unbounded starvation into a reconnect or a restart,
   and the chain-level alert is the backstop for whatever still gets through.
-- **The 7109 already-stranded passes** still point at `local://`. Fixing them
-  needs a one-off DB migration (verify each object exists in Bremen, then flip),
-  which is a production data change and was left for an explicit decision.
+- **The existing `local://` backlog** — 15750 pass rows (of which ~7300 point at a
+  file that is already gone) and ~8400 files on disk — is only handled going
+  forward: the release path applies to objects this process watched fail. Clearing
+  the backlog needs a one-off sweep that stats each object in Bremen and then
+  either flips or releases it. That is a production data change and was left for
+  an explicit decision. Nothing is user-visible either way, because
+  `resolve_image_url` falls back to the archive.
 - **`dup_pct >= 90`** remains the alert threshold, so 10–49 % starvation (5.2 h of
   the 26 h studied) still has no witness. That is a product question — how choppy
   may the public stream be before it is worth an email — not a bug.
