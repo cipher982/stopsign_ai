@@ -100,9 +100,13 @@ the prune tick (bounded to 50/tick, 15 min horizon).
 
 ## What is still open
 
-- **The camera link is the root cause.** TCP removes corruption but not loss.
-  Ethernet/powerline to the camera at `192.168.1.151`, a better AP, or a lower
-  camera bitrate is the real fix; the new guard only bounds the damage.
+- **The camera link is a permanent constraint, not a defect.** The camera is on
+  WiFi through the building's exterior walls and stays there — no cable will be
+  run for this project. Packet loss, and the occasional corrupt slice or starved
+  minute that come with it, is accepted cost of the deployment. Everything above
+  exists to *bound* that damage rather than to remove it: TCP removes corruption,
+  the rate guard converts an unbounded starvation into a reconnect or a restart,
+  and the chain-level alert is the backstop for whatever still gets through.
 - **The 7109 already-stranded passes** still point at `local://`. Fixing them
   needs a one-off DB migration (verify each object exists in Bremen, then flip),
   which is a production data change and was left for an explicit decision.

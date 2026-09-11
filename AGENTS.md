@@ -56,6 +56,7 @@ Used by Sauron's `crestwood-camera` job (AI vision, every 15 min).
 
 ## Implementation Details
 - **Capture**: images at "capture line" crossing (configurable via debug UI), 40% bbox padding since Aug 2026 (broad archival crop; detection bbox + crop rect recorded in `vehicle_pass_raw.capture` for later tight re-cropping), synchronous local save + async Bremen upload, 1:1 `image_path` mapping
+- **Capture link (fixed constraint)**: the camera is on WiFi through exterior walls and stays there — loss is accepted, not fixable. RTSP runs over TCP (`OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp`) so lost packets are retransmitted instead of decoded as corrupt slices. `rtsp_to_redis` guards the *frame arrival rate* (`RTSP_MIN_INPUT_FPS`, reconnect at `RTSP_LOW_FPS_RECONNECT_SEC`, process exit at `RTSP_LOW_FPS_EXIT_SEC`) as well as picture motion, because the MAD freeze detector reports healthy through a starved-but-live camera — see `docs/analysis/2026-09-11-ingest-starvation-postmortem.md`. Its `/ready` (not `/healthz`) is what the compose healthcheck probes.
 - **Config**: `/app/config/config.yaml` (volume-mounted); dynamic web-UI updates → `config_settings` (versioned stop zones, lines, thresholds)
 - **Redis**: ephemeral frame buffer only (no persistence); `raw_frames` (in), `processed_frames` (out); inter-container comms on cube
 
