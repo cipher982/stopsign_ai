@@ -273,9 +273,11 @@ Notes
 
 - `RTSP_FREEZE_DETECT_SEC` (default 120): mark ingest as frozen if no visual motion over this window.
 - `RTSP_FREEZE_MAD_THRESHOLD` (default 0.015): frame-diff sensitivity for freeze detection.
-- `RTSP_FREEZE_RECONNECT_SEC` (default 180): force RTSP reconnect on sustained freeze.
-- `RTSP_FREEZE_REMEDIATION_CMD` (default empty): optional command hook for camera reboot automation.
-- `RTSP_FREEZE_REMEDIATION_SEC` (default 420): freeze age before running remediation command.
+- `RTSP_FREEZE_RECONNECT_SEC` (default 180): force RTSP reconnect on sustained visual freeze.
+- `RTSP_MIN_INPUT_FPS` (default 8): camera frame arrival rate below this counts as starved ingest (0 disables the guard).
+- `RTSP_LOW_FPS_RECONNECT_SEC` (default 120): starved for this long -> force RTSP reconnect.
+- `RTSP_LOW_FPS_EXIT_SEC` (default 900): starved this long -> exit so `restart: always` restarts capture (0 disables).
+- `OPENCV_FFMPEG_CAPTURE_OPTIONS` (default `rtsp_transport;tcp`): the camera link is WiFi, so RTSP runs over TCP instead of corrupting frames on UDP loss.
 - `ANALYZER_CATCHUP_SEC` (default 15): skip/trim stale raw frames older than this age to jump back to live.
 - `ANALYZER_CATCHUP_KEEP_N` (default 30): how many newest raw frames to retain when trimming.
 - `FRAME_STALL_SEC` (default 120): readiness requires frames newer than this.

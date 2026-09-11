@@ -24,7 +24,6 @@ import threading
 import time
 from typing import Optional
 import json
-import subprocess
 
 # ------------------ third-party ---------------------
 import cv2
@@ -58,17 +57,27 @@ REDIS_URL: str = get_env("REDIS_URL")
 RAW_FRAME_KEY: str = get_env("RAW_FRAME_KEY")
 FRAME_BUFFER_SIZE: int = int(get_env("FRAME_BUFFER_SIZE"))
 
-# Freeze detection + remediation knobs
+# Freeze detection knobs. The MAD detector sees a *visually frozen* stream: same
+# picture, arriving 15 times a second. It is blind to the other way the camera
+# starves this service - live, changing frames that only arrive at 0.2-4 FPS
+# because the WiFi link is dropping them. That mode starves every downstream
+# stage while looking perfectly healthy here, so arrival rate is tracked
+# separately (RTSP_MIN_INPUT_FPS) and escalates on its own.
 RTSP_FREEZE_DETECT_SEC: float = float(os.getenv("RTSP_FREEZE_DETECT_SEC", "120"))
 RTSP_FREEZE_MAD_THRESHOLD: float = float(os.getenv("RTSP_FREEZE_MAD_THRESHOLD", "0.015"))
 RTSP_FREEZE_SAMPLE_WIDTH: int = int(os.getenv("RTSP_FREEZE_SAMPLE_WIDTH", "160"))
 RTSP_FREEZE_SAMPLE_HEIGHT: int = int(os.getenv("RTSP_FREEZE_SAMPLE_HEIGHT", "90"))
 RTSP_FREEZE_RECONNECT_SEC: float = float(os.getenv("RTSP_FREEZE_RECONNECT_SEC", "180"))
 RTSP_FREEZE_RECONNECT_COOLDOWN_SEC: float = float(os.getenv("RTSP_FREEZE_RECONNECT_COOLDOWN_SEC", "60"))
-RTSP_FREEZE_REMEDIATION_SEC: float = float(os.getenv("RTSP_FREEZE_REMEDIATION_SEC", "420"))
-RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC: float = float(os.getenv("RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC", "1800"))
-RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC: float = float(os.getenv("RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC", "45"))
-RTSP_FREEZE_REMEDIATION_CMD: str = os.getenv("RTSP_FREEZE_REMEDIATION_CMD", "").strip()
+
+# Ingest-rate guard (0 disables the guard, or the exit stage when 0).
+RTSP_MIN_INPUT_FPS: float = float(os.getenv("RTSP_MIN_INPUT_FPS", "8"))
+RTSP_LOW_FPS_RECONNECT_SEC: float = float(os.getenv("RTSP_LOW_FPS_RECONNECT_SEC", "120"))
+RTSP_LOW_FPS_EXIT_SEC: float = float(os.getenv("RTSP_LOW_FPS_EXIT_SEC", "900"))
+
+# Readiness tolerance for a below-floor input rate, so one quiet second does not
+# flap the probe.
+READY_LOW_INPUT_FPS_SEC: float = 30.0
 
 
 class RTSPToRedis(RTSPServiceStatusMixin):
@@ -108,14 +117,20 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.freeze_active_incident_id = 0
         self.freeze_incident_start_ts: Optional[float] = None
         self.last_reconnect_ts = 0.0
-        self.last_remediation_ts = 0.0
-        self.last_remediation_incident_id = 0
 
-        # Surface freeze state in status logs/health output.
+        # Ingest-rate state: when the camera's frame arrival rate first dropped
+        # below RTSP_MIN_INPUT_FPS, or None while the rate is healthy.
+        self.last_input_fps = 0.0
+        self.low_input_fps_since: Optional[float] = None
+
+        # Surface freeze/ingest state in status logs/health output.
         self.update_custom_metric("freeze_age_sec", 0.0)
         self.update_custom_metric("freeze_mad", 0.0)
         self.update_custom_metric("frozen", 0)
         self.update_custom_metric("freeze_incidents", 0)
+        self.update_custom_metric("input_fps", 0.0)
+        self.update_custom_metric("low_input_fps_sec", 0.0)
+        self.update_custom_metric("low_input_fps_events", 0)
 
         # OpenTelemetry metrics and tracer (set from main)
         self.metrics = None
@@ -321,62 +336,80 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self._increment_custom_metric("rtsp_reconnects", 1)
         self.last_reconnect_ts = time.time()
 
-    def _run_freeze_remediation_cmd(self) -> None:
-        if not RTSP_FREEZE_REMEDIATION_CMD:
+    def _track_input_fps(self, fps: float, now_ts: float) -> None:
+        """Track sustained camera frame arrival rate.
+
+        The freeze detector answers "is the picture moving?"; this answers "are
+        frames arriving?". A lossy camera link fails the second question while
+        passing the first, and every stage downstream starves.
+        """
+        self.last_input_fps = fps
+        self.update_custom_metric("input_fps", round(fps, 2))
+        if RTSP_MIN_INPUT_FPS <= 0:
             return
 
-        if self.freeze_active_incident_id <= 0:
+        if fps >= RTSP_MIN_INPUT_FPS:
+            if self.low_input_fps_since is not None:
+                logger.info(
+                    "Camera input rate recovered: %.2f FPS after %.1fs below %.1f FPS",
+                    fps,
+                    now_ts - self.low_input_fps_since,
+                    RTSP_MIN_INPUT_FPS,
+                )
+            self.low_input_fps_since = None
+            self.update_custom_metric("low_input_fps_sec", 0.0)
             return
 
-        now = time.time()
-        if self.last_remediation_incident_id == self.freeze_active_incident_id:
+        if self.low_input_fps_since is None:
+            self.low_input_fps_since = now_ts
+            self._increment_custom_metric("low_input_fps_events", 1)
+            logger.warning("Camera input rate below floor: %.2f FPS < %.1f FPS", fps, RTSP_MIN_INPUT_FPS)
+        self.update_custom_metric("low_input_fps_sec", round(now_ts - self.low_input_fps_since, 1))
+
+    def _reconnect_reason(self, now_ts: float) -> Optional[str]:
+        """Why capture should be re-opened right now, or None if it should not.
+
+        Both triggers share one cooldown: a reconnect costs a couple of seconds of
+        frames, so it is only worth it once per cooldown either way.
+        """
+        if now_ts - self.last_reconnect_ts < RTSP_FREEZE_RECONNECT_COOLDOWN_SEC:
+            return None
+
+        if self.freeze_detector is not None and RTSP_FREEZE_RECONNECT_SEC > 0:
+            if self.freeze_age_sec >= RTSP_FREEZE_RECONNECT_SEC:
+                return f"picture frozen for {self.freeze_age_sec:.1f}s"
+
+        if RTSP_LOW_FPS_RECONNECT_SEC > 0 and self.low_input_fps_since is not None:
+            below_for = now_ts - self.low_input_fps_since
+            if below_for >= RTSP_LOW_FPS_RECONNECT_SEC:
+                return f"input rate below {RTSP_MIN_INPUT_FPS:.1f} FPS for {below_for:.1f}s"
+
+        return None
+
+    def _exit_if_ingest_degraded(self, now_ts: float) -> None:
+        """Restart the container when the camera has starved us past recovery.
+
+        A fresh process re-opens the RTSP session and clears any wedged decoder
+        state; ``restart: always`` brings it straight back. Same idiom as the
+        analyzer and ffmpeg watchdogs, and the last resort the old
+        remediation-command hook never actually performed.
+        """
+        if RTSP_LOW_FPS_EXIT_SEC <= 0 or self.low_input_fps_since is None:
             return
-        if now - self.last_remediation_ts < RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC:
+
+        degraded_for = now_ts - self.low_input_fps_since
+        if degraded_for < RTSP_LOW_FPS_EXIT_SEC:
             return
-        if self.freeze_age_sec < RTSP_FREEZE_REMEDIATION_SEC:
+        if not self.get_status_snapshot().get("redis_connected", False):
+            # Redis is what is actually down; restarting capture would not help.
             return
 
         logger.error(
-            "Freeze remediation command for incident #%d (freeze_age=%.1fs): %s",
-            self.freeze_active_incident_id,
-            self.freeze_age_sec,
-            RTSP_FREEZE_REMEDIATION_CMD,
+            "Ingest degraded for %.1fs (camera below %.1f FPS); exiting so the container restarts",
+            degraded_for,
+            RTSP_MIN_INPUT_FPS,
         )
-        try:
-            result = subprocess.run(
-                RTSP_FREEZE_REMEDIATION_CMD,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC,
-                check=False,
-            )
-            self.last_remediation_ts = now
-            self.last_remediation_incident_id = self.freeze_active_incident_id
-            self.update_custom_metric("last_freeze_remediation_exit_code", result.returncode)
-            if result.returncode != 0:
-                logger.error(
-                    "Freeze remediation failed (exit=%d): %s",
-                    result.returncode,
-                    (result.stderr or result.stdout or "").strip()[:500],
-                )
-                self.increment_counter("error_count", 1)
-            else:
-                logger.info("Freeze remediation command succeeded.")
-        except Exception as e:
-            self.increment_counter("error_count", 1)
-            logger.error(f"Freeze remediation command error: {e}")
-
-    def _should_force_reconnect_for_freeze(self) -> bool:
-        if self.freeze_detector is None:
-            return False
-        if RTSP_FREEZE_RECONNECT_SEC <= 0:
-            return False
-        if self.freeze_age_sec < RTSP_FREEZE_RECONNECT_SEC:
-            return False
-        if time.time() - self.last_reconnect_ts < RTSP_FREEZE_RECONNECT_COOLDOWN_SEC:
-            return False
-        return True
+        os._exit(1)
 
     def run(self):
         # Prometheus removed - using OpenTelemetry instead
@@ -426,14 +459,16 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                         # Stamp capture moment as close to cap.read() as possible
                         capture_ts = time.time()
                         self._update_freeze_state(frame, capture_ts)
-                        self._run_freeze_remediation_cmd()
+                        self._exit_if_ingest_degraded(capture_ts)
 
-                        if self._should_force_reconnect_for_freeze():
+                        reconnect_reason = self._reconnect_reason(capture_ts)
+                        if reconnect_reason:
                             logger.error(
-                                "Freeze remediation stage 1: forcing RTSP reconnect "
-                                "(freeze_age=%.1fs, reconnect_threshold=%.1fs)",
+                                "Forcing RTSP reconnect: %s (freeze_age=%.1fs, input_fps=%.2f, cooldown=%.0fs)",
+                                reconnect_reason,
                                 self.freeze_age_sec,
-                                RTSP_FREEZE_RECONNECT_SEC,
+                                self.last_input_fps,
+                                RTSP_FREEZE_RECONNECT_COOLDOWN_SEC,
                             )
                             self._record_rtsp_reconnect()
                             break
@@ -451,6 +486,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                             elapsed_fps_time = current_time - fps_update_time
                             calculated_fps = rtsp_frames_count / elapsed_fps_time
                             self.update_rtsp_fps(calculated_fps)
+                            self._track_input_fps(calculated_fps, current_time)
                             rtsp_frames_count = 0
                             fps_update_time = current_time
 
@@ -520,7 +556,17 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         if freeze_enabled and not warming_up:
             freeze_ok = self.freeze_age_sec < RTSP_FREEZE_DETECT_SEC
 
-        ready = bool(health_status["healthy"] and redis_ok and thread_ok and push_ok and freeze_ok)
+        # Ingest rate, independent of push_ok: a link that drops most frames still
+        # delivers one every few seconds, which keeps push_age under its stale
+        # threshold while every downstream stage starves.
+        input_fps_ok = True
+        low_input_fps_sec = 0.0
+        if RTSP_MIN_INPUT_FPS > 0 and self.low_input_fps_since is not None:
+            low_input_fps_sec = max(0.0, time.time() - self.low_input_fps_since)
+            if not warming_up:
+                input_fps_ok = low_input_fps_sec < READY_LOW_INPUT_FPS_SEC
+
+        ready = bool(health_status["healthy"] and redis_ok and thread_ok and push_ok and freeze_ok and input_fps_ok)
         return {
             "ready": ready,
             "warming_up": warming_up,
@@ -538,6 +584,10 @@ class RTSPToRedis(RTSPServiceStatusMixin):
             "freeze_mad": round(self.freeze_mad, 4),
             "freeze_mad_threshold": RTSP_FREEZE_MAD_THRESHOLD,
             "freeze_incidents": self.freeze_incidents,
+            "input_fps": round(self.last_input_fps, 2),
+            "input_fps_min": RTSP_MIN_INPUT_FPS,
+            "input_fps_ok": input_fps_ok,
+            "low_input_fps_seconds": round(low_input_fps_sec, 1),
         }
 
     def health_check(self):

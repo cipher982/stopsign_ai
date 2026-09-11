@@ -12,18 +12,25 @@ services:
       - RAW_FRAME_KEY=${RAW_FRAME_KEY}
       - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE}
       - RTSP_JPEG_QUALITY=${RTSP_JPEG_QUALITY:-85}
+      # The camera link is WiFi and drops packets. Over UDP that shows up as corrupt
+      # slices ("error while decoding MB", "missing reference picture") plus bursty,
+      # starved delivery. RTSP-interleaved TCP retransmits instead of corrupting.
+      - OPENCV_FFMPEG_CAPTURE_OPTIONS=${OPENCV_FFMPEG_CAPTURE_OPTIONS:-rtsp_transport;tcp}
       - RTSP_FREEZE_DETECT_SEC=${RTSP_FREEZE_DETECT_SEC:-120}
       - RTSP_FREEZE_MAD_THRESHOLD=${RTSP_FREEZE_MAD_THRESHOLD:-0.015}
       - RTSP_FREEZE_RECONNECT_SEC=${RTSP_FREEZE_RECONNECT_SEC:-180}
       - RTSP_FREEZE_RECONNECT_COOLDOWN_SEC=${RTSP_FREEZE_RECONNECT_COOLDOWN_SEC:-60}
-      - RTSP_FREEZE_REMEDIATION_SEC=${RTSP_FREEZE_REMEDIATION_SEC:-420}
-      - RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC=${RTSP_FREEZE_REMEDIATION_COOLDOWN_SEC:-1800}
-      - RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC=${RTSP_FREEZE_REMEDIATION_TIMEOUT_SEC:-45}
-      - RTSP_FREEZE_REMEDIATION_CMD=${RTSP_FREEZE_REMEDIATION_CMD:-}
+      # Arrival-rate guard: the MAD detector cannot see a live camera that is
+      # delivering almost no frames. 0 on the exit stage allows a restart loop.
+      - RTSP_MIN_INPUT_FPS=${RTSP_MIN_INPUT_FPS:-8}
+      - RTSP_LOW_FPS_RECONNECT_SEC=${RTSP_LOW_FPS_RECONNECT_SEC:-120}
+      - RTSP_LOW_FPS_EXIT_SEC=${RTSP_LOW_FPS_EXIT_SEC:-900}
     command: >
       sh -c "stdbuf -oL -eL python rtsp_to_redis.py 2>&1 | stdbuf -oL -eL grep -vE '\\[h264 @ 0x[0-9a-f]+\\] SEI type 764 size [0-9]+ truncated at [0-9]+'"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      # /ready, not /healthz: an unhealthy container should read as unhealthy, so
+      # `docker ps` and the deploy check show a starving camera instead of green.
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ready"]
       interval: 30s
       timeout: 10s
       retries: 3
