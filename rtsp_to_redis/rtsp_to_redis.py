@@ -16,6 +16,7 @@ any other statements, as PEP 8 expects.
 from __future__ import annotations
 
 # ----------------- standard library -----------------
+from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
 import os
@@ -71,7 +72,13 @@ RTSP_FREEZE_RECONNECT_SEC: float = float(os.getenv("RTSP_FREEZE_RECONNECT_SEC", 
 RTSP_FREEZE_RECONNECT_COOLDOWN_SEC: float = float(os.getenv("RTSP_FREEZE_RECONNECT_COOLDOWN_SEC", "60"))
 
 # Ingest-rate guard (0 disables the guard, or the exit stage when 0).
-RTSP_MIN_INPUT_FPS: float = float(os.getenv("RTSP_MIN_INPUT_FPS", "8"))
+# The floor is calibrated against this link's observed range: it delivers 9.5-15 FPS
+# when healthy and 0.15-4 FPS when starved, so 6 sits in the gap with headroom on
+# both sides. It is scored over a window because a lossy link - and the TCP
+# retransmission that now carries it - delivers frames in bursts: a one-second
+# sample reads 1.7 FPS in a gap and 15 FPS in a burst for a stream that is fine.
+RTSP_MIN_INPUT_FPS: float = float(os.getenv("RTSP_MIN_INPUT_FPS", "6"))
+RTSP_RATE_WINDOW_SEC: float = float(os.getenv("RTSP_RATE_WINDOW_SEC", "10"))
 RTSP_LOW_FPS_RECONNECT_SEC: float = float(os.getenv("RTSP_LOW_FPS_RECONNECT_SEC", "120"))
 RTSP_LOW_FPS_EXIT_SEC: float = float(os.getenv("RTSP_LOW_FPS_EXIT_SEC", "900"))
 
@@ -118,10 +125,16 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.freeze_incident_start_ts: Optional[float] = None
         self.last_reconnect_ts = 0.0
 
-        # Ingest-rate state: when the camera's frame arrival rate first dropped
-        # below RTSP_MIN_INPUT_FPS, or None while the rate is healthy.
+        # Ingest-rate state: frame arrival timestamps inside the rate window, the first
+        # frame we ever saw (the window denominator), and when the rate first dropped
+        # below RTSP_MIN_INPUT_FPS (None while healthy). The rate is recomputed from
+        # the timestamps on every frame, so it is never a stale bucket and never
+        # misreads the bursty delivery a lossy link produces.
+        self._frame_times: deque[float] = deque()
+        self._first_frame_ts: Optional[float] = None
         self.last_input_fps = 0.0
         self.low_input_fps_since: Optional[float] = None
+        self.low_input_fps_warned = False
 
         # Surface freeze/ingest state in status logs/health output.
         self.update_custom_metric("freeze_age_sec", 0.0)
@@ -344,6 +357,41 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self._increment_custom_metric("rtsp_reconnects", 1)
         self.last_reconnect_ts = time.time()
 
+    def _refresh_input_rate(self, now_ts: float) -> None:
+        """Recompute the windowed camera arrival rate and hand it to the guard.
+
+        Called with the timestamp of the frame that just arrived, so the rate always
+        includes the newest evidence and cannot be stale relative to a blocking read.
+        """
+        if self._first_frame_ts is None:
+            self._first_frame_ts = now_ts
+
+        cutoff = now_ts - RTSP_RATE_WINDOW_SEC
+        while self._frame_times and self._frame_times[0] < cutoff:
+            self._frame_times.popleft()
+
+        # Denominator is the observed span, capped at the window, floored at one
+        # second so a cold start is not reported as a starvation.
+        observed_sec = max(1.0, min(RTSP_RATE_WINDOW_SEC, now_ts - self._first_frame_ts))
+        rate = len(self._frame_times) / observed_sec
+        self.update_rtsp_fps(rate)
+        self._track_input_fps(rate, now_ts)
+
+    def _redis_reachable(self) -> bool:
+        """Authoritative Redis liveness, used where the answer changes a decision.
+
+        The status flag is a cache written by the publisher, and while the camera is
+        starved nothing publishes - so the cache is exactly as old as the outage this
+        check exists to avoid acting on.
+        """
+        client = self.redis_client
+        if client is None:
+            return False
+        try:
+            return bool(client.ping())
+        except Exception:
+            return False
+
     def _track_input_fps(self, fps: float, now_ts: float) -> None:
         """Track sustained camera frame arrival rate.
 
@@ -357,7 +405,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
             return
 
         if fps >= RTSP_MIN_INPUT_FPS:
-            if self.low_input_fps_since is not None:
+            if self.low_input_fps_since is not None and self.low_input_fps_warned:
                 logger.info(
                     "Camera input rate recovered: %.2f FPS after %.1fs below %.1f FPS",
                     fps,
@@ -365,14 +413,29 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                     RTSP_MIN_INPUT_FPS,
                 )
             self.low_input_fps_since = None
+            self.low_input_fps_warned = False
             self.update_custom_metric("low_input_fps_sec", 0.0)
             return
 
         if self.low_input_fps_since is None:
             self.low_input_fps_since = now_ts
             self._increment_custom_metric("low_input_fps_events", 1)
-            logger.warning("Camera input rate below floor: %.2f FPS < %.1f FPS", fps, RTSP_MIN_INPUT_FPS)
-        self.update_custom_metric("low_input_fps_sec", round(now_ts - self.low_input_fps_since, 1))
+
+        below_for = now_ts - self.low_input_fps_since
+        self.update_custom_metric("low_input_fps_sec", round(below_for, 1))
+
+        # A dip shorter than the reconnect threshold is a burst on a lossy link, not
+        # an incident - it is already visible in /ready and the status line. Logging
+        # one warning per bucket turned a bursty-but-fine stream into 20 lines a
+        # minute of noise, which is how a real incident gets missed.
+        if not self.low_input_fps_warned and RTSP_LOW_FPS_RECONNECT_SEC > 0 and below_for >= RTSP_LOW_FPS_RECONNECT_SEC:
+            self.low_input_fps_warned = True
+            logger.warning(
+                "Camera input rate below floor: %.2f FPS for %.0fs (floor %.1f FPS)",
+                fps,
+                below_for,
+                RTSP_MIN_INPUT_FPS,
+            )
 
     def _reconnect_reason(self, now_ts: float) -> Optional[str]:
         """Why capture should be re-opened right now, or None if it should not.
@@ -408,8 +471,10 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         degraded_for = now_ts - self.low_input_fps_since
         if degraded_for < RTSP_LOW_FPS_EXIT_SEC:
             return
-        if not self.get_status_snapshot().get("redis_connected", False):
-            # Redis is what is actually down; restarting capture would not help.
+        if not self._redis_reachable():
+            # Redis is what is actually down; restarting capture would not help, and
+            # the cached status flag cannot be trusted here (nothing publishes while
+            # the camera is starved, so it can be arbitrarily old).
             return
 
         logger.error(
@@ -438,8 +503,6 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                 cap = self.initialize_capture()
                 frame_time = 1 / self.fps
                 last_frame_time = time.time()
-                fps_update_time = time.time()
-                rtsp_frames_count = 0
 
                 while not self.should_stop.is_set():
                     current_time = time.time()
@@ -462,22 +525,17 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                                 # RTSP errors tracked in OpenTelemetry
                                 break
 
-                        rtsp_frames_count += 1
+                        frame_ts = time.time()
 
-                        # Score the input-rate bucket BEFORE evaluating remediation: a
-                        # stream that has just recovered has to be able to clear the
-                        # degraded state before the guard acts on it, otherwise the
-                        # first healthy frames of a recovery can still trip the exit.
-                        if current_time - fps_update_time >= 1:
-                            elapsed_fps_time = current_time - fps_update_time
-                            calculated_fps = rtsp_frames_count / elapsed_fps_time
-                            self.update_rtsp_fps(calculated_fps)
-                            self._track_input_fps(calculated_fps, current_time)
-                            rtsp_frames_count = 0
-                            fps_update_time = current_time
+                        # Frame arrival is scored first, with the timestamp of the frame
+                        # that just arrived: the rate is recomputed from actual arrival
+                        # times rather than a bucket, so a stream that has recovered
+                        # clears the degraded state before the guard can act on it.
+                        self._frame_times.append(frame_ts)
+                        self._refresh_input_rate(frame_ts)
 
                         # Stamp capture moment as close to cap.read() as possible
-                        capture_ts = time.time()
+                        capture_ts = frame_ts
                         self._update_freeze_state(frame, capture_ts)
                         self._exit_if_ingest_degraded(capture_ts)
 
@@ -543,7 +601,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.update_status_metric("buffer_utilization_percent", buffer_util)
 
         # Basic connectivity checks
-        redis_ok = self.redis_client and self.redis_client.ping() if self.redis_client else False
+        redis_ok = self._redis_reachable()
         thread_ok = self.processing_thread and self.processing_thread.is_alive() if self.processing_thread else False
         self.update_status_metric("redis_connected", bool(redis_ok))
 

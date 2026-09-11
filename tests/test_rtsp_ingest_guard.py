@@ -7,6 +7,7 @@ signal green. These tests pin the guard that covers it.
 """
 
 import importlib
+import threading
 import time
 
 import numpy as np
@@ -31,10 +32,14 @@ def _silence_exit(monkeypatch, module):
     return exits
 
 
+def _live_redis():
+    return type("_FakeRedis", (), {"ping": lambda self: True})()
+
+
 def test_live_but_starved_camera_escalates_while_no_freeze_is_detected(monkeypatch):
     module = _load(monkeypatch, RTSP_MIN_INPUT_FPS="8", RTSP_LOW_FPS_RECONNECT_SEC="120")
     service = module.RTSPToRedis()
-    service.update_status_metric("redis_connected", True)
+    service.redis_client = _live_redis()
     exits = _silence_exit(monkeypatch, module)
 
     t0 = 1_000_000.0
@@ -66,23 +71,10 @@ def test_recovery_clears_the_guard(monkeypatch):
     assert service._reconnect_reason(5_000.0) is None
 
 
-def test_guard_does_not_restart_capture_while_redis_is_down(monkeypatch):
-    """A Redis outage must not bounce the RTSP container; restarting would not help."""
-    module = _load(monkeypatch, RTSP_MIN_INPUT_FPS="8", RTSP_LOW_FPS_EXIT_SEC="900")
-    service = module.RTSPToRedis()
-    service.update_status_metric("redis_connected", False)
-    exits = _silence_exit(monkeypatch, module)
-
-    service._track_input_fps(0.1, 1_000.0)
-    service._exit_if_ingest_degraded(9_999.0)
-
-    assert exits == []
-
-
 def test_readiness_gates_on_the_input_rate(monkeypatch):
     module = _load(monkeypatch, RTSP_MIN_INPUT_FPS="8")
     service = module.RTSPToRedis()
-    service.redis_client = type("_FakeRedis", (), {"ping": lambda self: True})()
+    service.redis_client = _live_redis()
     monkeypatch.setattr(service, "get_uptime_seconds", lambda: 10_000.0)
 
     service._track_input_fps(0.2, 1_000.0)
@@ -173,15 +165,99 @@ class _StarvedCapture:
         pass
 
 
+def test_guard_does_not_restart_capture_when_redis_is_actually_down(monkeypatch):
+    """The skip must survive a Redis that is down, not just a flag that says so."""
+    module = _load(monkeypatch, RTSP_MIN_INPUT_FPS="6", RTSP_LOW_FPS_EXIT_SEC="900")
+    service = module.RTSPToRedis()
+
+    class _DeadRedis:
+        def ping(self):
+            raise module.redis.exceptions.ConnectionError("redis is down")
+
+    service.redis_client = _DeadRedis()
+    exits = _silence_exit(monkeypatch, module)
+    service._track_input_fps(0.1, 1_000.0)
+
+    service._exit_if_ingest_degraded(9_999.0)
+
+    assert exits == []
+
+
+def test_a_recovered_stream_is_not_restarted_at_the_deadline(monkeypatch):
+    """Rate is recomputed from arrival times, so recovery wins before the guard reads it."""
+    module = _load(
+        monkeypatch,
+        RTSP_MIN_INPUT_FPS="6",
+        RTSP_RATE_WINDOW_SEC="10",
+        RTSP_LOW_FPS_EXIT_SEC="900",
+    )
+    service = module.RTSPToRedis()
+    exits = _silence_exit(monkeypatch, module)
+
+    service._refresh_input_rate(1_000.0)  # one frame, then a long starved gap
+
+    # A full window of healthy arrivals lands before the guard is asked to act.
+    for i in range(150):
+        service._refresh_input_rate(2_000.0 + i / 15.0)
+    service._exit_if_ingest_degraded(2_010.0)
+
+    assert exits == []
+
+
+def test_zero_frame_stream_reinitialises_capture_instead_of_starving_forever(monkeypatch):
+    """A camera that yields no frames never reaches the rate guard, and does not need to.
+
+    read() fails, the loop re-opens capture, and it keeps re-opening rather than
+    exiting the process: re-opening the session is the same remediation the exit
+    exists to trigger, minus the restart.
+    """
+    module = _load(monkeypatch, RTSP_MIN_INPUT_FPS="6", RTSP_LOW_FPS_EXIT_SEC="1")
+    exits = _silence_exit(monkeypatch, module)
+    opened = []
+
+    class _DeadCapture:
+        def isOpened(self):
+            return True
+
+        def set(self, *args):
+            return True
+
+        def read(self):
+            return False, None
+
+        def release(self):
+            pass
+
+    def _capture(*args, **kwargs):
+        opened.append(True)
+        return _DeadCapture()
+
+    monkeypatch.setattr(module.redis, "from_url", lambda *a, **k: _FakeRedis())
+    monkeypatch.setattr(module.cv2, "VideoCapture", _capture)
+
+    service = module.RTSPToRedis()
+    service.set_telemetry(None, _NullTracer())
+
+    thread = threading.Thread(target=service.run, daemon=True)
+    thread.start()
+    time.sleep(2.0)
+    service.should_stop.set()
+    thread.join(timeout=5)
+
+    assert len(opened) >= 2
+    assert exits == []
+
+
 def test_capture_loop_restarts_capture_when_starvation_persists(monkeypatch):
-    """End to end through run(): read -> rate bucket -> guard -> restart request.
+    """End to end through run(): read -> rate -> guard -> restart request.
 
     Drives the production call site rather than the private helpers, so it fails if
-    the guard stops being wired into the loop or is scored against a stale bucket.
+    the guard stops being wired into the loop or is scored against stale evidence.
     """
     module = _load(
         monkeypatch,
-        RTSP_MIN_INPUT_FPS="8",
+        RTSP_MIN_INPUT_FPS="6",
+        RTSP_RATE_WINDOW_SEC="1",
         RTSP_LOW_FPS_RECONNECT_SEC="999",  # isolate the exit stage
         RTSP_LOW_FPS_EXIT_SEC="2",
         RTSP_FREEZE_DETECT_SEC="0",  # freeze detection off: only the rate guard can act

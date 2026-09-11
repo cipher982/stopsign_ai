@@ -292,3 +292,27 @@ def test_flip_sweep_is_rate_limited(monkeypatch):
     image_storage._maybe_retry_pending_flips(now=161.0)
 
     assert calls == [db, db]
+
+
+def test_upload_worker_sweeps_pending_flips_on_its_idle_path(monkeypatch):
+    """The sweep has to run with an empty queue: a quiet evening adds no captures."""
+    sweeps = []
+
+    class _Stop(BaseException):
+        pass
+
+    def _fake_sweep(now=None):
+        sweeps.append(now)
+        if len(sweeps) >= 2:
+            raise _Stop
+
+    monkeypatch.setattr(image_storage, "_maybe_retry_pending_flips", _fake_sweep)
+    monkeypatch.setattr(image_storage, "_upload_queue", queue.Queue())
+    monkeypatch.setattr(image_storage, "FLIP_SWEEP_INTERVAL_SECONDS", 0.05)
+
+    worker = threading.Thread(target=image_storage._bremen_upload_worker, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert len(sweeps) >= 2

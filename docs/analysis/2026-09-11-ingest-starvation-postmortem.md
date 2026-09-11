@@ -71,12 +71,19 @@ default), so lost packets are never retransmitted.
 ## What changed
 
 **Ingress rate guard** (`rtsp_to_redis/rtsp_to_redis.py`) — arrival rate is tracked
-alongside content motion. Below `RTSP_MIN_INPUT_FPS` for
+alongside content motion, recomputed from frame arrival timestamps over
+`RTSP_RATE_WINDOW_SEC` on every frame. Below `RTSP_MIN_INPUT_FPS` for
 `RTSP_LOW_FPS_RECONNECT_SEC` forces an RTSP reconnect (shared cooldown with the
 freeze trigger); below it for `RTSP_LOW_FPS_EXIT_SEC` the process exits so
-`restart: always` re-opens capture with a fresh session. Skipped while Redis itself
-is down. This is the analyzer's existing watchdog idiom, and the remediation the
-shell hook never performed. The dead `RTSP_FREEZE_REMEDIATION_*` hook is deleted.
+`restart: always` re-opens capture with a fresh session. The exit is skipped when
+Redis is unreachable *at that moment* — checked with a live ping, because the
+cached status flag cannot be trusted while nothing is publishing. Reconnects are
+deliberately not gated on Redis: a reconnect is about the camera. A stream that
+yields no frames at all never reaches either stage, and does not need to: the
+read times out, the loop re-opens capture, and it keeps re-opening — the same
+remediation without the restart. This is the analyzer's existing watchdog idiom,
+and the remediation the shell hook never performed. The dead
+`RTSP_FREEZE_REMEDIATION_*` hook is deleted.
 
 **Readiness now means something** — `/ready` fails on sustained low input rate,
 and the compose healthcheck probes `/ready` instead of `/healthz`.
@@ -102,9 +109,12 @@ a pass, so no retry could ever have succeeded. Failed flips are now swept from t
 upload worker's idle loop (50 per 60 s sweep, 15 min horizon), and at the end of
 that window a file no pass references is released for pruning — the row is written
 at zone exit, seconds after the capture, so a row still missing after 15 minutes
-is not late, it is never coming. Releasing stays safe even if that judgement is
-wrong: `resolve_image_url` falls back to `/vehicle-image/<name>`, which streams
-the object from Bremen.
+is not late, it is never coming. Two caveats: the sweep is worker-driven, so it
+does not run while the worker is blocked on an upload, and a database error
+delays expiry rather than forcing it. Both are the conservative direction —
+files are retained, never deleted on a doubt. Releasing stays safe even if that
+judgement is wrong: `resolve_image_url` falls back to `/vehicle-image/<name>`,
+which streams the object from Bremen.
 
 ## What is still open
 

@@ -27,9 +27,13 @@ Two independent signals, because they fail in different ways:
   `last_motion_ts` whenever `mad > RTSP_FREEZE_MAD_THRESHOLD`; declare frozen
   when `now - last_motion_ts >= RTSP_FREEZE_DETECT_SEC`. Matches FFmpeg
   `freezedetect` semantics (noise threshold + duration persistence).
-- **Frame starvation** — the once-per-second input FPS already computed by the
-  loop. Declare starved when it stays below `RTSP_MIN_INPUT_FPS`, which is the
-  mode a WiFi link in packet loss produces (0.2-4 FPS, live content).
+- **Frame starvation** — the input FPS the loop already computes, scored over
+  `RTSP_RATE_WINDOW_SEC` rather than per second. A lossy link delivers frames in
+  bursts, so a one-second sample reads 1.7 FPS inside a gap and 15 FPS inside a
+  burst for a stream that is fine; the window is what makes the signal mean
+  something. Declare starved when the windowed rate stays below
+  `RTSP_MIN_INPUT_FPS`, which is the mode a WiFi link in packet loss produces
+  (0.15-4 FPS of live content, against 9.5-15 FPS healthy on this camera).
 
 A frozen stream is not starved and a starved stream is not frozen; a guard that
 only measures one of them reports healthy through the other.
@@ -57,7 +61,15 @@ reinitializing capture. Both triggers share one cooldown
 When the input rate has stayed below the floor for `RTSP_LOW_FPS_EXIT_SEC`, log
 and `os._exit(1)`. `restart: always` re-creates the container, re-opening the
 RTSP session and clearing any wedged decoder state. This is the same shape as
-the video analyzer's stall watchdog and is skipped while Redis itself is down.
+the video analyzer's stall watchdog, and it is skipped when Redis is unreachable
+at that moment — decided by a live ping, because the cached connectivity flag is
+written by the publisher and is therefore exactly as stale as the outage.
+
+A stream that yields no frames at all never reaches this stage, and does not need
+to: the read times out, the loop re-opens capture, and it keeps re-opening.
+
+Stage 1 is deliberately *not* gated on Redis: a reconnect is an action on the
+camera, and re-opening the RTSP session is correct whether or not Redis is up.
 
 A sustained *visual freeze* deliberately has no stage 2: it is retried with
 stage-1 reconnects and left to the chain-level alert. A frozen camera still
@@ -78,7 +90,8 @@ forced reconnect).
 - `RTSP_FREEZE_SAMPLE_HEIGHT` (default `90`)
 - `RTSP_FREEZE_RECONNECT_SEC` (default `180`)
 - `RTSP_FREEZE_RECONNECT_COOLDOWN_SEC` (default `60`)
-- `RTSP_MIN_INPUT_FPS` (default `8`, `0` disables the rate guard)
+- `RTSP_MIN_INPUT_FPS` (default `6`, `0` disables the rate guard)
+- `RTSP_RATE_WINDOW_SEC` (default `10`)
 - `RTSP_LOW_FPS_RECONNECT_SEC` (default `120`)
 - `RTSP_LOW_FPS_EXIT_SEC` (default `900`, `0` disables the restart)
 - `OPENCV_FFMPEG_CAPTURE_OPTIONS` (default `rtsp_transport;tcp`)

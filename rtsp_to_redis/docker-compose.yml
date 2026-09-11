@@ -21,8 +21,11 @@ services:
       - RTSP_FREEZE_RECONNECT_SEC=${RTSP_FREEZE_RECONNECT_SEC:-180}
       - RTSP_FREEZE_RECONNECT_COOLDOWN_SEC=${RTSP_FREEZE_RECONNECT_COOLDOWN_SEC:-60}
       # Arrival-rate guard: the MAD detector cannot see a live camera that is
-      # delivering almost no frames. 0 on the exit stage allows a restart loop.
-      - RTSP_MIN_INPUT_FPS=${RTSP_MIN_INPUT_FPS:-8}
+      # delivering almost no frames. RTSP_RATE_WINDOW_SEC smooths the bursty
+      # delivery a lossy link (and TCP retransmission) produces; 0 on the exit
+      # stage allows a restart loop.
+      - RTSP_MIN_INPUT_FPS=${RTSP_MIN_INPUT_FPS:-6}
+      - RTSP_RATE_WINDOW_SEC=${RTSP_RATE_WINDOW_SEC:-10}
       - RTSP_LOW_FPS_RECONNECT_SEC=${RTSP_LOW_FPS_RECONNECT_SEC:-120}
       - RTSP_LOW_FPS_EXIT_SEC=${RTSP_LOW_FPS_EXIT_SEC:-900}
     command: >
