@@ -499,7 +499,7 @@ def main():
     fps_frame_count = 0
     fps_last_log_time = time.monotonic()
     new_frame_count = 0
-    dup_frame_count = 0
+    starved_frame_count = 0
     snap_count = 0  # times stall-recovery snap fired
 
     try:
@@ -591,7 +591,7 @@ def main():
                         except Exception as trim_err:
                             logger.debug("Failed to cap FIFO processed backlog: %s", trim_err)
             elif last_raw_frame:
-                dup_frame_count += 1
+                starved_frame_count += 1
 
             # No frame yet (startup) — advance deadline and wait
             if last_raw_frame is None:
@@ -632,19 +632,26 @@ def main():
                 elapsed = now - fps_last_log_time
                 actual_fps = fps_frame_count / elapsed
                 new_fps = new_frame_count / elapsed
-                dup_pct = (dup_frame_count / fps_frame_count * 100) if fps_frame_count > 0 else 0
+                # Share of output slots written with the previous frame because no new
+                # frame was available: an upstream underrun measure, not a check for
+                # duplicate *content*.
+                starved_pct = (starved_frame_count / fps_frame_count * 100) if fps_frame_count > 0 else 0
                 logger.info(
-                    "FFmpeg output: %.1f FPS (new: %.1f, dup: %.0f%%, snaps: %d, dropped_stale: %d)",
+                    "FFmpeg output: %.1f FPS (new: %.1f, starved: %.0f%%, snaps: %d, dropped_stale: %d)",
                     actual_fps,
                     new_fps,
-                    dup_pct,
+                    starved_pct,
                     snap_count,
                     stale_drop_count,
                 )
-                # Pipeline-health signal: persist the new-vs-dup snapshot so the web
-                # /api/pipeline-health endpoint and Sauron can alert without scraping
-                # logs. A high dup percentage means ffmpeg is repeating the last frame
-                # because the analyzer stopped producing new ones (frozen frame).
+                # Pipeline-health signal: persist the fresh-vs-starved snapshot so the
+                # web /api/pipeline-health endpoint and Sauron can alert without
+                # scraping logs. A high starved percentage means no new frame reached
+                # the encoder, i.e. the capture->analyzer chain is underrun somewhere
+                # upstream (camera link loss, ingest stall, analyzer stall). It is NOT
+                # evidence of a frozen picture - a live camera whose WiFi link is
+                # dropping frames produces exactly this signature. `dup_pct`/
+                # `dup_count` keep their published names for compatibility.
                 if REDIS_CLIENT is not None:
                     try:
                         REDIS_CLIENT.set(
@@ -653,8 +660,8 @@ def main():
                                 {
                                     "fps": round(actual_fps, 2),
                                     "new_fps": round(new_fps, 2),
-                                    "dup_pct": round(dup_pct, 1),
-                                    "dup_count": dup_frame_count,
+                                    "dup_pct": round(starved_pct, 1),
+                                    "dup_count": starved_frame_count,
                                     "new_count": new_frame_count,
                                     "snaps": snap_count,
                                     "dropped_stale": stale_drop_count,
@@ -668,7 +675,7 @@ def main():
                         logger.debug("Failed to persist ffmpeg health snapshot: %s", e)
                 fps_frame_count = 0
                 new_frame_count = 0
-                dup_frame_count = 0
+                starved_frame_count = 0
                 snap_count = 0
                 stale_drop_count = 0
                 fps_last_log_time = now

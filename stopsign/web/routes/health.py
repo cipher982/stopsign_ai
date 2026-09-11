@@ -156,7 +156,7 @@ async def pipeline_health():
 
     Exposes, in one read-only endpoint: archive upload health (same signal as
     /api/archive-health), analyzer frame age / uptime / last stall reason, the
-    ffmpeg new-vs-dup ratio, and HLS playlist freshness. The Sauron
+    ffmpeg fresh-vs-starved ratio, and HLS playlist freshness. The Sauron
     stopsign-pipeline-health job polls this so a silent freeze anywhere in the
     chain pages instead of going unnoticed for days.
     """
@@ -204,8 +204,10 @@ async def pipeline_health():
         analyzer = {"available": False, "error": str(e)}
     payload["analyzer"] = analyzer
 
-    # FFmpeg: dup-ratio snapshot written every 5s. dup_pct -> ~100 means ffmpeg is
-    # repeating the last frame because the analyzer stopped producing new ones.
+    # FFmpeg: fresh-vs-starved snapshot written every 5s (key name is historical).
+    # `dup_pct` -> ~100 means no fresh frame reached the encoder, so the chain is
+    # underrun upstream of it: camera link loss, ingest stall, or analyzer stall.
+    # It does not distinguish those, and it is not proof of a frozen picture.
     try:
         ff_raw = r.get(FFMPEG_HEALTH_KEY)
         if ff_raw:
