@@ -40,6 +40,7 @@ from stopsign.frame_codec import HEADER_MIN_LEN
 from stopsign.frame_codec import LEGACY_MAGIC
 from stopsign.frame_codec import pack_frame
 from stopsign.frame_codec import unpack_frame
+from stopsign.pass_spool import start_spool_worker
 from stopsign.service_status import VideoAnalyzerStatusMixin
 from stopsign.settings import ANALYZER_BOOT_TS_KEY
 from stopsign.settings import ANALYZER_LAST_FRAME_AT_KEY
@@ -1167,5 +1168,10 @@ if __name__ == "__main__":
 
     config = Config("/app/config/config.yaml")
     db = Database(db_url=DB_URL)
+
+    # Drain anything a previous process spooled: a pass that could not be written
+    # before a restart is still a pass, and the worker's first sweep runs immediately.
+    start_spool_worker(db)
+
     processor = VideoAnalyzer(config, db)
     processor.run()

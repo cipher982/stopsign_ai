@@ -286,6 +286,25 @@ class Database:
             return pass_id
 
     @log_execution_time
+    def has_vehicle_pass(self, vehicle_id: int | None, exit_time: float | None) -> bool:
+        """Has this pass already been written?
+
+        Only needed when replaying a spooled pass: the insert either commits or raises,
+        with one exception - the commit lands and the response never returns. Vehicle id
+        plus zone exit time identifies the pass well enough to catch that replay.
+        """
+        if vehicle_id is None or exit_time is None:
+            return False
+
+        with self.Session() as session:
+            return (
+                session.query(VehiclePass.id)
+                .filter(VehiclePass.vehicle_id == vehicle_id, VehiclePass.exit_time == exit_time)
+                .first()
+                is not None
+            )
+
+    @log_execution_time
     def save_vehicle_pass_raw(
         self,
         vehicle_pass_id: int,

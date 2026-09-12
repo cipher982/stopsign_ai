@@ -18,6 +18,7 @@ from stopsign.image_storage import CROP_PADDING_FACTOR
 from stopsign.image_storage import compute_crop_rect
 from stopsign.image_storage import save_vehicle_image
 from stopsign.kalman_filter import KalmanFilterWrapper
+from stopsign.pass_spool import spool_failed_pass
 from stopsign.settings import PROCESSED_FRAME_KEY
 from stopsign.trajectory_scorer import TrajectoryScore
 from stopsign.trajectory_scorer import score_samples
@@ -929,31 +930,33 @@ class StopDetector:
                     logger.error("Failed to build raw payload for car_id=%s: %s", car.id, e)
 
                 # Persist the pass. A transient DB error (e.g. a connection dropout to
-                # clifford) must not silently drop the pass: retry briefly with backoff,
-                # then surface loudly via an error log + analyzer exception metric.
+                # clifford) must not quietly drop the pass: retry briefly with backoff,
+                # and if the database is still refusing, spool the payload to disk so a
+                # background worker can land it later.
+                pass_kwargs = {
+                    "vehicle_id": car.id,
+                    "time_in_zone": car.state.zone.time_in_zone,
+                    "stop_duration": car.state.zone.stop_duration,
+                    "min_speed": car.state.zone.min_speed,
+                    "image_path": car.state.capture.image_path,
+                    "entry_time": car.state.zone.entry_time,
+                    "exit_time": car.state.zone.exit_time,
+                    "entry_speed": entry_speed,
+                    "decel_score": decel_score,
+                    "track_quality": track_quality,
+                    "stop_pos_x": stop_pos_x,
+                    "stop_pos_y": stop_pos_y,
+                    "stream_queue_depth_exit": stream_queue_depth_exit,
+                    "stream_lag_est_sec": stream_lag_est_sec,
+                    "raw_payload": raw_payload,
+                    "sample_count": sample_count,
+                    "raw_complete": raw_payload.get("raw_complete", False) if raw_payload else False,
+                }
                 pass_id = None
                 insert_attempt = 0
                 while True:
                     try:
-                        pass_id = self.db.add_vehicle_pass(
-                            vehicle_id=car.id,
-                            time_in_zone=car.state.zone.time_in_zone,
-                            stop_duration=car.state.zone.stop_duration,
-                            min_speed=car.state.zone.min_speed,
-                            image_path=car.state.capture.image_path,
-                            entry_time=car.state.zone.entry_time,
-                            exit_time=car.state.zone.exit_time,
-                            entry_speed=entry_speed,
-                            decel_score=decel_score,
-                            track_quality=track_quality,
-                            stop_pos_x=stop_pos_x,
-                            stop_pos_y=stop_pos_y,
-                            stream_queue_depth_exit=stream_queue_depth_exit,
-                            stream_lag_est_sec=stream_lag_est_sec,
-                            raw_payload=raw_payload,
-                            sample_count=sample_count,
-                            raw_complete=raw_payload.get("raw_complete", False) if raw_payload else False,
-                        )
+                        pass_id = self.db.add_vehicle_pass(**pass_kwargs)
                         break
                     except Exception as e:
                         insert_attempt += 1
@@ -969,12 +972,13 @@ class StopDetector:
                         time.sleep(insert_attempt)  # 1s, 2s backoff
                 if pass_id is None:
                     logger.error(
-                        "Vehicle pass LOST for car_id=%s after %d insert attempts - DB unreachable; "
-                        "pass data (time_in_zone=%.2fs) not recorded",
+                        "Vehicle pass not written for car_id=%s after %d insert attempts - "
+                        "spooling it to disk (time_in_zone=%.2fs)",
                         car.id,
-                        insert_attempt + 1,
+                        insert_attempt,
                         car.state.zone.time_in_zone,
                     )
+                    spool_failed_pass(self.db, pass_kwargs)
                     analyzer = self._video_analyzer
                     if analyzer is not None:
                         try:
