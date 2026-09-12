@@ -429,3 +429,30 @@ def test_upload_worker_sweeps_pending_flips_on_its_idle_path(monkeypatch):
 
     assert not worker.is_alive()
     assert len(sweeps) >= 2
+
+
+def test_upload_worker_sweeps_outbox_while_queue_has_work(monkeypatch):
+    monkeypatch.setattr(threading, "excepthook", lambda _args: None)
+    requeues = []
+
+    class _Stop(BaseException):
+        pass
+
+    monkeypatch.setattr(image_storage, "_maybe_retry_pending_flips", lambda: None)
+    monkeypatch.setattr(image_storage, "_process_upload_item", lambda *_args: None)
+
+    def _fake_requeue(now=None):
+        requeues.append(now)
+        raise _Stop
+
+    monkeypatch.setattr(image_storage, "_maybe_requeue_unarchived_uploads", _fake_requeue)
+    work = queue.Queue()
+    work.put(("/tmp/capture.jpg", "capture.jpg", None))
+    monkeypatch.setattr(image_storage, "_upload_queue", work)
+
+    worker = threading.Thread(target=image_storage._bremen_upload_worker, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert requeues

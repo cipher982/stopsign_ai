@@ -556,6 +556,10 @@ def _bremen_upload_worker():
             try:
                 _process_upload_item(local_path, object_name, db)
                 _maybe_retry_pending_flips()
+                # A steady stream can keep the queue non-empty forever. Sweep
+                # after work as well as on timeout, or restart-recovered captures
+                # starve until the camera goes quiet.
+                _maybe_requeue_unarchived_uploads()
             finally:
                 _upload_queue.task_done()
         except Exception as e:
