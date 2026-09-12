@@ -88,7 +88,7 @@ _flip_retry_db: Optional[Database] = None
 # restart that lost the in-memory state) are re-queued from disk on the same idle
 # loop. Bounded on purpose: a few files, oldest first, and never more often than the
 # interval, so a long archive outage retries gently instead of hammering it.
-REQUEUE_SWEEP_INTERVAL_SECONDS = 300.0
+REQUEUE_SWEEP_INTERVAL_SECONDS = 120.0
 REQUEUE_BATCH = 5
 REQUEUE_MIN_AGE_SECONDS = 60.0
 _last_requeue_sweep_monotonic = 0.0
@@ -305,6 +305,16 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
                 object_name,
                 now - enqueued_at,
             )
+
+
+def start_upload_worker() -> None:
+    """Start the archive worker. Called at analyzer boot as well as on first save.
+
+    Starting it lazily from the first capture left a restart with nothing draining:
+    the flip retries and the unarchived-file sweep both ride this worker's idle path,
+    so after a restart they waited for a vehicle to happen by.
+    """
+    _start_upload_worker()
 
 
 def _start_upload_worker():
