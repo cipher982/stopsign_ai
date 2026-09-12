@@ -172,3 +172,69 @@ which streams the object from Bremen.
   (416x173, 433x183 - the same size a line capture produces), against a 31%
   no-image rate in the six hours before. The labeling cron picks these up with no
   change, since it selects unlabeled passes that have an `image_path`.
+
+## 2026-09-12 — the outage that was not the camera (and the reviews)
+
+Ten hours of nothing. The analyzer processed its last frame at 05:42Z and the last
+pass was written at 04:37Z; from then until 15:20Z the pipeline recorded nothing,
+while the website, the HLS stream and the database all kept serving happily. The
+camera was never the problem — it answered a ping from cube in 3 ms the whole time.
+
+**What actually happened.** `cube` reaches `192.168.1.151` (the camera) over
+`tailscale0`, because the netmap carried a subnet route for `192.168.1.0/24`
+advertised by `RICHMCBNAS` — the NAS — and Tailscale's policy routing (table 52,
+rule 5270) precedes the main table. Cube is itself on that subnet
+(`192.168.1.66/24`, directly attached), so the route was never needed: it made a
+remote node the path to cube's own LAN. `RICHMCBNAS` left the tailnet at
+05:22:16Z, and every packet cube sent to the camera went into a tunnel to an
+offline node. The ingest guard did what it could — `rtsp_to_redis` retried,
+went unhealthy, never reconnected — but no retry can fix a route.
+
+**Fix, applied and verified:** `tailscale set --accept-routes=false` on cube. The
+camera is reachable again on the local interface (3.3 ms, `dev enp7s0`), the
+ingest container reconnected at full 15 fps, and `new_fps 15.0 / dup_pct 0.0` with
+a fresh analyzer frame age confirmed the whole chain. The only IPv4 subnet route
+in the netmap was that one, so nothing else lost a path. Rollback is
+`tailscale set --accept-routes=true`.
+
+**Same node, second consequence.** `RICHMCBNAS` is also
+`BREMEN_MINIO_ENDPOINT` (`100.98.103.56:9000`) — the archive every capture is
+uploaded to. Since 05:22Z every upload has failed with a 10 s connect timeout, so
+captures accumulate on local disk and their passes keep a `'/Users/davidrose/.omp/agent/sessions/-git-stopsign_ai/2026-09-11T23-20-51-227Z_01a092c6-191b-767e-98c2-17657a314be2/local'` path. The
+site serves them anyway now, but the archive itself is unreachable until that node
+returns to the tailnet; that is the one item here that needs hands, not code.
+
+**Reviews (hatch `codex astra` + `cursor grok`, both returning BLOCKED) landed
+four fixes:**
+
+- The late-track capture is latched once per tracked vehicle, and constrained to
+  the approach corridor — the band the stop zone and pre-stop line are drawn
+  across. Without the latch, a vehicle that left the zone through a side edge
+  could be photographed twice; without the corridor, a track crossing well clear
+  of the roadway was photographed as traffic. Measured over 600 stored late-track
+  trajectories: real vehicles sit within 1.8 roadway half-widths, the off-road
+  counterexample at ~3.5.
+- `/vehicle-image` now reads the local copy first, like the thumbnail route always
+  did, so an image is served while its upload is pending or the archive is
+  unreachable. Verified against an object that exists only locally: 200, 317x177
+  JPEG (previously 404), and `..%2F..` now answers 400.
+- Unarchived local captures are re-queued from disk on the upload worker's idle
+  path — the worker gave up after three attempts and kept its state in memory, so
+  a capture that missed its window was stranded permanently. This is what the
+  2026-09-11 pile was made of.
+- The reconciliation script's documented apply procedure was impossible (`docker
+  exec` into a container it had just stopped) and its final line called every
+  remaining row "gone from both", including captures still inside the settle
+  window. Both corrected.
+
+**Checked and not reproducing:** the analyzer skips YOLO on frames older than
+100 ms, which review read as "starved ingest disables tracking". Measured on the
+live queue: frame age p50 32 ms, max 105 ms over 25 samples, 1 over the gate — the
+raw queue is drained on arrival, so the gate is a backpressure valve, not a
+detection blocker. It is worth a counter before trusting that on a bad night.
+
+**Still open:** analyzer restarts lose the in-flight upload queue and the pass
+insert gives up after three attempts (durable state, not a rescan, is the real
+fix); `dup_pct` 10-49% still has no witness; a pass has no reason column, so a
+row with no image cannot say why. The ffmpeg startup path still clears the HLS
+directory, which 404s the public window for the length of a restart.
