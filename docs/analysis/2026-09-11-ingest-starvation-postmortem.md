@@ -261,7 +261,40 @@ detection blocker. It is worth a counter before trusting that on a bad night.
   deleting the directory, so a deploy no longer 404s the public stream (verified: a
   pre-deploy segment still served 200 through the restart).
 
-**Still open:** `dup_pct` 10-49% still has no witness (a product call); a pass has no
-reason column, so a row with no image cannot say why - the value of adding one dropped
-once the capture fixes landed. The stall watchdog has no test for the case where the
-queue depth is readable but stale.
+**Everything from that list, closed:**
+
+- **`dup_pct` 10-49%** — decided, not deferred. Measured over 15 minutes of daylight:
+  the camera delivered 15.0 fps and ffmpeg starved 0.0%. At night the same camera
+  delivers 4.7-10 fps (its accepted WiFi/low-light constraint), so ffmpeg duplicates
+  the difference and the band is simply the link's shortfall. A threshold there would
+  page every night. The failures that could hide inside it now have their own
+  witnesses: a frame the analyzer cannot keep up with shows in `yolo_stale_frames_total`
+  and in the analyzer frame age, a stream that stops advancing in hls-freshness, a
+  chain that stops passing vehicles in the pass-gap check (hard threshold), and the
+  one this band is most likely to cause - vehicles recorded without pictures - in the
+  new no-image check. Revisit only if a choppy-but-working stream is itself worth an
+  email.
+- **The 516 rows** — fixed without touching the data. `resolve_image_url()` has always
+  pointed a pass with no image at `/static/placeholder.jpg`, and that file did not
+  exist, so all 6,673 image-less passes rendered a broken image; and `/vehicle-image`
+  answered 404 for an object missing from both the local directory and the archive,
+  which is exactly those 516 rows. The panel now exists (site palette, capture aspect)
+  and the route serves it with a five-minute cache. Verified: a missing object returns
+  200 / 7,507-byte JPEG.
+- **Night** — the case that mattered, since the baseline was 75-85% there. Split by
+  local hour over the stored population: **110/110 night passes (100%)** would now be
+  photographed, against 551/575 daytime (95.8%). The night population is *easier*
+  because fewer frames mean later acquisition, which is precisely what the fallback
+  serves.
+- **The stale-frame gate** — the counter review asked for is live
+  (`yolo_stale_frames_total`, analyzer `:9090/metrics`). Over 120s: 1,801 frames
+  processed (15.0/s) with 79 YOLO skips for staleness — 4.4% of frames, about 8% of
+  the ~8/s YOLO slots, so detection still runs ~7.3 times a second. It is a
+  backpressure valve, not the freeze the review feared, and the rate is now
+  observable rather than inferred.
+- **The skipped 17:00 watchdog run** — investigated: a manifest reload clears job
+  *definitions*, not the queue, and re-registration re-schedules from the reload
+  instant, so a run landing in that window is deferred rather than lost. The job ran
+  at 17:15:48 and 17:20:11 (both with the new no-image check: `PASS — only 16 pass(es)
+  in the last 6h; not judging`), the queue holds no stuck stopsign rows, and the worst
+  case is a check deferred by one cron cycle.
