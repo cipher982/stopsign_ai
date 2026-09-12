@@ -32,6 +32,25 @@ RETRY_INTERVAL_SECONDS = float(os.getenv("PASS_SPOOL_RETRY_SECONDS", "60"))
 RETRY_BATCH = 20
 SPOOL_MAX_FILES = 5000
 
+
+def pending_pass_image_paths() -> set[str]:
+    """Return image paths held by durable pass records waiting for the database."""
+    directory = Path(SPOOL_DIR)
+    if not directory.exists():
+        return set()
+
+    image_paths: set[str] = set()
+    for path in directory.glob("pass_*.json"):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, TypeError, ValueError):
+            continue
+        image_path = payload.get("image_path") if isinstance(payload, dict) else None
+        if isinstance(image_path, str) and image_path.startswith("local://"):
+            image_paths.add(image_path.removeprefix("local://"))
+    return image_paths
+
+
 _lock = threading.Lock()
 _worker_started = False
 

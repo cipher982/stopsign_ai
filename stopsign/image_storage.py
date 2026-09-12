@@ -14,6 +14,7 @@ import urllib3
 from minio import Minio
 
 from stopsign.database import Database
+from stopsign.pass_spool import pending_pass_image_paths
 from stopsign.settings import ARCHIVE_HEALTH_REDIS_KEY
 from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
 from stopsign.settings import BREMEN_MINIO_BUCKET
@@ -69,13 +70,11 @@ _upload_state_lock = threading.Lock()
 # Objects already archived in Bremen whose DB path flip has not landed yet. The pass
 # row is written when the vehicle leaves the zone, which can be a minute after the
 # image was captured, so the upload worker's inline retry window can expire first.
-# Without this queue the flip then never happened at all: the pass kept its local://
-# path forever and its file could never be pruned, so the local directory grew
-# without bound (8.4k files against a 500 cap by 2026-09-11) and the archive was no
-# longer what the site served from.
+# Keep the durable outbox for a full day; a database outage can leave the pass spool
+# waiting much longer than the ordinary zone-exit window.
 _flip_pending: dict[str, float] = {}
 _FLIP_PENDING_MAX = 5000
-_FLIP_RETRY_MAX_AGE_SEC = 900.0
+_FLIP_RETRY_MAX_AGE_SEC = 24 * 60 * 60
 _FLIP_RETRY_BATCH = 50
 
 # The sweep runs on the upload worker's idle loop, so it needs its own handle on the
@@ -91,6 +90,12 @@ _flip_retry_db: Optional[Database] = None
 REQUEUE_SWEEP_INTERVAL_SECONDS = 120.0
 REQUEUE_BATCH = 5
 REQUEUE_MIN_AGE_SECONDS = 60.0
+
+# A marker is written only after the archive object exists and the database path
+# is reconciled (or the capture is proven to have no future pass row). It turns
+# the existing local image directory into a restart-safe outbox without another
+# database or queue service.
+ARCHIVE_MARKER_SUFFIX = ".uploaded"
 _last_requeue_sweep_monotonic = 0.0
 
 
@@ -146,18 +151,47 @@ def _seed_health_from_redis() -> None:
                 _health[key] = value
 
 
+def _durable_pending_local_file_count() -> Optional[int]:
+    """Count local captures without an archive acknowledgement marker."""
+    image_dir = Path(LOCAL_IMAGE_DIR)
+    try:
+        if not image_dir.exists():
+            return 0
+        return sum(1 for path in image_dir.glob("*.jpg") if not _is_durably_archived(path.name))
+    except OSError:
+        return None
+
+
 def _health_snapshot() -> dict:
     _seed_health_from_redis()
     with _health_lock:
         h = dict(_health)
-    h["upload_healthy"] = h["upload_failures"] == 0 or (
-        h["last_upload_success_ts"] is not None and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
+    pending_local_files = _durable_pending_local_file_count()
+    with _upload_state_lock:
+        in_memory_pending = sum(1 for state in _upload_state.values() if state in ("pending", "failed"))
+    if pending_local_files is None:
+        h["pending_local_files"] = in_memory_pending
+        h["archive_outbox_observed"] = False
+    else:
+        h["pending_local_files"] = max(pending_local_files, in_memory_pending)
+        h["archive_outbox_observed"] = True
+    h["upload_healthy"] = (
+        pending_local_files is not None
+        and (
+            h["upload_failures"] == 0
+            or (
+                h["last_upload_success_ts"] is not None
+                and h["last_upload_failure_ts"] is not None
+                and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
+            )
+        )
+        and h["pending_local_files"] == 0
     )
     h["local_save_healthy"] = h["local_save_failures"] == 0 or (
-        h["last_local_save_ts"] is not None and h["last_local_save_ts"] >= h["last_local_save_failure_ts"]
+        h["last_local_save_ts"] is not None
+        and h["last_local_save_failure_ts"] is not None
+        and h["last_local_save_ts"] >= h["last_local_save_failure_ts"]
     )
-    with _upload_state_lock:
-        h["pending_local_files"] = sum(1 for s in _upload_state.values() if s in ("pending", "failed"))
     return h
 
 
@@ -223,7 +257,41 @@ def _mark_upload_state(object_name: str, state: str) -> None:
 
 def _get_upload_state(object_name: str) -> Optional[str]:
     with _upload_state_lock:
-        return _upload_state.get(object_name)
+        state = _upload_state.get(object_name)
+    if state is not None:
+        return state
+    return "uploaded" if _is_durably_archived(object_name) else None
+
+
+def _archive_marker_path(object_name: str) -> Path:
+    return Path(LOCAL_IMAGE_DIR) / f"{object_name}{ARCHIVE_MARKER_SUFFIX}"
+
+
+def _is_durably_archived(object_name: str) -> bool:
+    try:
+        return _archive_marker_path(object_name).is_file()
+    except OSError:
+        return False
+
+
+def _mark_durably_archived(object_name: str) -> bool:
+    """Persist the archive acknowledgement beside the local outbox object."""
+    local_path = Path(LOCAL_IMAGE_DIR) / object_name
+    if not local_path.exists():
+        # Tests and a completed prune may not have a local outbox file left to
+        # mark. The archive/DB acknowledgement is still sufficient in that case.
+        return True
+    marker = _archive_marker_path(object_name)
+    partial = marker.with_suffix(marker.suffix + ".part")
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        partial.write_text(f"archived_at={time.time():.6f}\n")
+        partial.replace(marker)
+        return True
+    except OSError as exc:
+        logger.warning("Could not persist archive marker for %s: %s", object_name, exc)
+        partial.unlink(missing_ok=True)
+        return False
 
 
 def _enqueue_flip_retry(object_name: str) -> None:
@@ -264,7 +332,8 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
     """Retry DB path flips the upload worker gave up on.
 
     Bounded batch per sweep so a backlog cannot stall the worker, and nothing here
-    runs on the capture path.
+    runs on the capture path. A durable failed-pass spool reference keeps an
+    uploaded object alive until the pass can be inserted after a long DB outage.
     """
     if db is None or not _flip_pending:
         return
@@ -272,6 +341,7 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
     now = time.time()
     with _upload_state_lock:
         batch = sorted(_flip_pending.items(), key=lambda kv: kv[1])[:_FLIP_RETRY_BATCH]
+    pending_pass_images = pending_pass_image_paths()
 
     for object_name, enqueued_at in batch:
         if _get_upload_state(object_name) == "uploaded":
@@ -285,19 +355,24 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
             continue
 
         if rows:
-            _mark_upload_state(object_name, "uploaded")
-            _forget_pending_flip(object_name)
-            logger.info("Delayed DB path flip landed for %s: local:// -> bremen://", object_name)
+            if _mark_durably_archived(object_name):
+                _mark_upload_state(object_name, "uploaded")
+                _forget_pending_flip(object_name)
+                logger.info("Delayed DB path flip landed for %s: local:// -> bremen://", object_name)
             continue
 
         if now - enqueued_at > _FLIP_RETRY_MAX_AGE_SEC:
-            # Still unreferenced at the end of the retry window. The upload succeeded
-            # (that is the only way an entry gets queued), so the object is in Bremen
-            # and this local copy serves nothing: release it for pruning. Those are
-            # the capture-line images of cars that never completed a pass, which is
-            # most of what leaked before - the row is written at zone exit, seconds
-            # after the capture, so a row still missing after 15 minutes is not late,
-            # it is never coming.
+            if object_name in pending_pass_images:
+                logger.info(
+                    "Keeping %s: a durable failed-pass record still references the local image",
+                    object_name,
+                )
+                continue
+            # Still unreferenced after the retention window. The archive upload
+            # succeeded (the only way an entry gets here), so the object is in
+            # Bremen and this local copy serves no recorded pass.
+            if not _mark_durably_archived(object_name):
+                continue
             _mark_upload_state(object_name, "uploaded")
             _forget_pending_flip(object_name)
             logger.info(
@@ -307,13 +382,11 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
             )
 
 
-def start_upload_worker() -> None:
-    """Start the archive worker. Called at analyzer boot as well as on first save.
-
-    Starting it lazily from the first capture left a restart with nothing draining:
-    the flip retries and the unarchived-file sweep both ride this worker's idle path,
-    so after a restart they waited for a vehicle to happen by.
-    """
+def start_upload_worker(db: Optional[Database] = None) -> None:
+    """Start the archive worker and retain a DB handle for restart reconciliation."""
+    global _flip_retry_db
+    if db is not None:
+        _flip_retry_db = db
     _start_upload_worker()
 
 
@@ -388,9 +461,14 @@ def _process_upload_item(local_path: str, object_name: str, db: Optional[Databas
             _record_upload_success()
 
             # Only release the local file for pruning once BOTH the object is
-            # archived AND the DB path points at the archive (bremen://).
+            # archived AND the DB path points at the archive. The marker makes
+            # that acknowledgement survive an analyzer restart.
             if _flip_db_path_with_retry(db, object_name):
-                _mark_upload_state(object_name, "uploaded")
+                if _mark_durably_archived(object_name):
+                    _mark_upload_state(object_name, "uploaded")
+                else:
+                    _mark_upload_state(object_name, "failed")
+                    _enqueue_flip_retry(object_name)
             else:
                 _mark_upload_state(object_name, "failed")
                 _enqueue_flip_retry(object_name)
@@ -518,6 +596,7 @@ def _prune_old_images():
         for img_path in prunable[:to_remove]:
             try:
                 img_path.unlink()
+                _archive_marker_path(img_path.name).unlink(missing_ok=True)
                 removed += 1
                 logger.debug(f"Pruned archived image: {img_path.name}")
             except Exception as e:
@@ -622,14 +701,12 @@ def save_vehicle_image(
         # Protect the file from pruning until it is archived and the DB path flips.
         _mark_upload_state(filename, "pending")
 
-        # Start upload worker if not already running
-        _start_upload_worker()
-
-        # Remember the handle for the background flip sweep: the upload worker has no
-        # other way to reach the database while its queue is idle.
+        # Retain the database handle before starting the worker. A restart can
+        # have an idle outbox sweep before the next vehicle capture.
         global _flip_retry_db
         if db is not None:
             _flip_retry_db = db
+        _start_upload_worker()
 
         # Queue upload to Bremen MinIO (non-blocking)
         try:

@@ -1224,9 +1224,9 @@ if __name__ == "__main__":
     # before a restart is still a pass, and the worker's first sweep runs immediately.
     start_spool_worker(db)
 
-    # Same for the archive: start the worker now so flip retries and the
-    # unarchived-file sweep run whether or not a vehicle passes in the meantime.
-    start_upload_worker()
+    # Same for the archive: start with the DB handle so restart reconciliation
+    # can complete delayed path flips before another vehicle is captured.
+    start_upload_worker(db)
 
     processor = VideoAnalyzer(config, db)
     processor.run()
