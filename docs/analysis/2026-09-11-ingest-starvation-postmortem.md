@@ -116,7 +116,7 @@ files are retained, never deleted on a doubt. Releasing stays safe even if that
 judgement is wrong: `resolve_image_url` falls back to `/vehicle-image/<name>`,
 which streams the object from Bremen.
 
-## What is still open
+## Where this stands
 
 - **The camera link is a permanent constraint, not a defect.** The camera is on
   WiFi through the building's exterior walls and stays there — no cable will be
@@ -125,15 +125,33 @@ which streams the object from Bremen.
   exists to *bound* that damage rather than to remove it: TCP removes corruption,
   the rate guard converts an unbounded starvation into a reconnect or a restart,
   and the chain-level alert is the backstop for whatever still gets through.
-- **The existing `local://` backlog** — 15750 pass rows (of which ~7300 point at a
-  file that is already gone) and ~8400 files on disk — is only handled going
-  forward: the release path applies to objects this process watched fail. Clearing
-  the backlog needs a one-off sweep that stats each object in Bremen and then
-  either flips or releases it. That is a production data change and was left for
-  an explicit decision. Nothing is user-visible either way, because
-  `resolve_image_url` falls back to the archive.
+- **The `local://` backlog is reconciled** — `scripts/reconcile_local_images.py`
+  (dry run by default) flipped 15009 rows the archive already held, recovered 225
+  more by re-uploading the local copy, left 516 pre-July rows that are gone from
+  both sides, and reclaimed 8405 files. `bremen://` rows went 4935 → 20169 and the
+  image directory 8407 files → 0. Nothing user-visible moved: a row still on
+  `local://` serves through `/vehicle-image/`, and the thumbnail builder falls back
+  to the archive when the local file is absent. The 516 unrecoverable rows keep
+  their `local://` path and 404 their image; making them render the placeholder
+  instead would rewrite the record of what was captured, so that stays a decision.
 - **`dup_pct >= 90`** remains the alert threshold, so 10–49 % starvation (5.2 h of
   the 26 h studied) still has no witness. That is a product question — how choppy
   may the public stream be before it is worth an email — not a bug.
-- **`PIPELINE_WATCHDOG_SEC`** still defaults to 0 and is unset in the ffmpeg
-  compose service, so ffmpeg cannot self-restart on HLS staleness.
+- **`PIPELINE_WATCHDOG_SEC`** is set to 180 in the ffmpeg compose service, so a
+  wedged encoder now restarts itself. With the ≤180 s freshness threshold in
+  `stopsign/hls_health.py` and a 10 s poll, a stalled encoder exits and is
+  re-created roughly six minutes after its last playlist write.
+
+## What is left
+
+- **516 pass rows** (0.7 % of 77991) whose image is gone from both the local disk
+  and the archive, all created before July. Their `local://` path 404s. Rendering
+  the placeholder instead means nulling the path — the same choice as above.
+- **`dup_pct >= 90`** remains the alert threshold, so 10–49 % starvation (5.2 h of
+  the 26 h studied) still has no witness. That is a product question — how choppy
+  may the public stream be before it is worth an email — not a bug.
+- **8.6 % of passes have no image at all** (6671 rows with an empty `image_path`,
+  still occurring today). Capture happens at the capture-line crossing and the pass
+  at zone exit, so a car that enters the zone without crossing the line is recorded
+  without a picture. Whether that is expected for turns or a missed capture is a
+  detection question, not an ingest one.
