@@ -33,7 +33,7 @@ def _update_car(car, detector, timestamp, location, bbox, frame):
     detector.update_car_stop_status(car, timestamp, frame, prev_timestamp=prev_timestamp)
 
 
-def test_trajectory_primary_records_late_track(mock_config, mock_database):
+def test_trajectory_primary_records_late_track_with_its_own_image(mock_config, mock_database):
     detector = _make_detector(mock_config, mock_database)
     car = Car(id=42, config=mock_config)
     frame = np.zeros((900, 1800, 3), dtype=np.uint8)
@@ -55,9 +55,9 @@ def test_trajectory_primary_records_late_track(mock_config, mock_database):
     assert mock_database.add_vehicle_pass.called
     _, kwargs = mock_database.add_vehicle_pass.call_args
     assert kwargs["raw_payload"]["raw_complete"] is True
-    assert kwargs["image_path"] == ""
+    assert kwargs["image_path"] == "local://test.jpg"
     assert kwargs["time_in_zone"] == kwargs["raw_payload"]["summary"]["time_in_zone"]
-    assert detector.capture_car_image.call_count == 0
+    assert detector.capture_car_image.call_count == 1
 
 
 def test_trajectory_primary_preserves_capture_line_image(mock_config, mock_database):

@@ -616,7 +616,13 @@ class TestLatePreStopRecovery:
         car.update(location, timestamp, bbox)
         car.state.raw_speed = car.state.speed
 
-    def test_late_track_entering_from_pre_stop_side_records_pass(self, mock_config, mock_database):
+    def test_late_track_entering_from_pre_stop_side_records_pass(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(
+            tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "local://vehicle_late_42.jpg"
+        )
         detector = self._make_detector(mock_config, mock_database)
         car = Car(id=42, config=mock_config)
         frame = np.zeros((900, 1800, 3), dtype=np.uint8)
@@ -655,7 +661,10 @@ class TestLatePreStopRecovery:
         assert kwargs["raw_payload"]["raw_complete"] is True
         assert kwargs["raw_complete"] is True
         assert kwargs["sample_count"] == len(kwargs["raw_payload"]["samples"])
-        assert kwargs["image_path"] == ""
+        # The track was acquired past the capture line, so this pass has no line shot;
+        # it gets the first usable view instead of no picture at all.
+        assert saved, "a late-acquired track must still be photographed"
+        assert kwargs["image_path"] == "local://vehicle_late_42.jpg"
         assert not mock_database.save_vehicle_pass_raw.called
 
     def test_parked_jitter_in_zone_does_not_recover_pre_stop(self, mock_config, mock_database):
@@ -689,7 +698,10 @@ class TestLatePreStopRecovery:
         assert car.state.zone.passed_pre_stop is False
         assert mock_database.add_vehicle_pass.call_count == 0
 
-    def test_diagonal_approach_in_zone_recovers_pre_stop(self, mock_config, mock_database):
+    def test_diagonal_approach_in_zone_recovers_pre_stop(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: "local://vehicle_diag.jpg")
         detector = self._make_detector(mock_config, mock_database)
         car = Car(id=9, config=mock_config)
         frame = np.zeros((900, 1800, 3), dtype=np.uint8)
@@ -707,6 +719,94 @@ class TestLatePreStopRecovery:
             detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + max(idx - 1, 0) * 0.1)
 
         assert car.state.zone.passed_pre_stop is True
+
+
+class TestCaptureDecision:
+    """When a vehicle is photographed: at the configured line, or on a late-acquired track.
+
+    The pass is written at stop-zone exit, so a track the tracker only picks up past the
+    capture line used to reach the database with no picture at all.
+    """
+
+    def _detector(self, mock_config, mock_database):
+        mock_config.in_zone_frame_threshold = 2
+        mock_config.out_zone_frame_threshold = 2
+        mock_config.in_zone_time_threshold = 0.1
+        mock_config.out_zone_time_threshold = 0.1
+        mock_config.stop_speed_threshold = 20.0
+        detector = StopDetector(mock_config, mock_database)
+        detector.stop_zone = np.array([[900, 700], [1150, 700], [1150, 860], [900, 860]], dtype=np.float32)
+        detector.pre_stop_line_proc = np.array([[1660, 650], [1660, 900]], dtype=np.float32)
+        detector.capture_line_proc = np.array([[1460, 650], [1460, 900]], dtype=np.float32)
+        return detector
+
+    def _run(self, detector, frame, positions, start_x=None):
+        car = Car(id=1, config=detector.config)
+        base = 1000.0
+        for idx, x in enumerate(positions):
+            ts = base + idx * 0.1
+            bbox = (x - 60.0, 700.0, x + 60.0, 800.0)
+            car.update((x, 750.0), ts, bbox)
+            car.state.raw_speed = car.state.speed
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + max(idx - 1, 0) * 0.1)
+        return car
+
+    def test_past_the_line_track_is_photographed_at_first_sight(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(
+            tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "local://vehicle_late.jpg"
+        )
+        detector = self._detector(mock_config, mock_database)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+
+        # First seen at x=1185, already past the capture line (1460), heading for the zone.
+        car = self._run(detector, frame, [1185.0, 1120.0, 1060.0, 1000.0])
+
+        assert len(saved) == 1, "expected exactly one capture, at the earliest usable view"
+        assert saved[0]["bbox"] == car.state.capture.bbox
+        assert car.state.capture.image_path == "local://vehicle_late.jpg"
+        assert car.state.capture.crop_rect is not None
+
+    def test_track_still_right_of_the_line_is_left_for_the_line_shot(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "x.jpg")
+        detector = self._detector(mock_config, mock_database)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+
+        # Approaching but not yet at the line: the configured capture point is still ahead.
+        self._run(detector, frame, [1900.0, 1820.0, 1740.0, 1690.0])
+
+        assert saved == [], "the line shot must not be pre-empted by first sight"
+
+    def test_track_past_the_line_heading_away_is_not_photographed(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "x.jpg")
+        detector = self._detector(mock_config, mock_database)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+
+        # Past the line but driving away from the stop zone: an exit-angle crop, not evidence.
+        self._run(detector, frame, [1000.0, 1080.0, 1160.0, 1240.0])
+
+        assert saved == []
+
+    def test_jittering_track_past_the_line_is_not_photographed(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "x.jpg")
+        detector = self._detector(mock_config, mock_database)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+
+        # A parked vehicle the tracker keeps re-acquiring is not an approaching vehicle.
+        self._run(detector, frame, [1100.0, 1101.0, 1099.0, 1100.0])
+
+        assert saved == []
 
 
 class TestResetCarState:

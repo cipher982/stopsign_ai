@@ -370,6 +370,8 @@ class StopDetector:
     # Max time a car can be in_zone before we treat it as parking, not a pass
     ZONE_TIMEOUT_SECONDS = 60.0
     APPROACH_MIN_PROGRESS_PX = 20.0
+    # Movement needed before a track counts as approaching rather than jittering in place
+    CAPTURE_MIN_APPROACH_PX = 5.0
 
     def __init__(self, config: Config, db: Database):
         self.config = config
@@ -640,6 +642,60 @@ class StopDetector:
             return True
         return self._trajectory_approaches_stop_zone(car, in_stop_zone)
 
+    def _past_capture_line(self, location: Tuple[float, float]) -> bool:
+        """Is this point on the stop-zone side of the capture line?"""
+        if self.capture_line_proc is None or self.stop_zone is None:
+            return False
+        zone_center = np.mean(self.stop_zone, axis=0)
+        return self._side_of_capture_line(location) * self._side_of_capture_line(zone_center) > 0
+
+    def _side_of_capture_line(self, point) -> float:
+        (x1, y1), (x2, y2) = self.capture_line_proc
+        return float((x2 - x1) * (point[1] - y1) - (y2 - y1) * (point[0] - x1))
+
+    def _approaching_stop_zone(self, car: Car) -> bool:
+        """Is the vehicle upstream of the zone centre and moving along the approach?
+
+        Both halves matter. A vehicle past the middle of the intersection is not
+        approaching anything - that includes a vehicle photographed on an earlier pass
+        whose track is still alive while it drives off - and a vehicle moving against
+        the approach direction is traffic going the other way.
+        """
+        if self.stop_zone is None or self.pre_stop_line_proc is None:
+            return False
+
+        recent_track = car.state.track[-30:]
+        if len(recent_track) < 2:
+            return False
+
+        approach_vector = np.mean(self.stop_zone, axis=0) - np.mean(self.pre_stop_line_proc, axis=0)
+        approach_norm = float(np.linalg.norm(approach_vector))
+        if approach_norm < 1e-6:
+            return False
+        unit_approach = approach_vector / approach_norm
+
+        start = np.array(recent_track[0][0], dtype=float)
+        end = np.array(recent_track[-1][0], dtype=float)
+        travelled = float(np.dot(end - start, unit_approach))
+        to_zone_centre = float(np.dot(np.mean(self.stop_zone, axis=0) - end, unit_approach))
+
+        return travelled >= self.CAPTURE_MIN_APPROACH_PX and to_zone_centre > 0
+
+    def _should_capture(self, car: Car, car_polygon: np.ndarray) -> bool:
+        """Is this frame's view of the vehicle the one to keep?
+
+        The configured capture line is the intended shot: the approach was observed, so
+        the vehicle crosses the line and is photographed side-on there. A track acquired
+        after that line - the tracker missed the approach, which is a third of passes,
+        most of them after dark - can never cross it, and the pass it produces is real,
+        so it gets the first usable view instead of no picture at all. Both paths need
+        the vehicle heading towards the stop zone, which is what keeps exit-angle and
+        wrong-way crops out.
+        """
+        if car.state.zone.passed_pre_stop and self._polygon_crosses_line(car_polygon, self.capture_line_proc):
+            return True
+        return self._past_capture_line(car.state.location) and self._approaching_stop_zone(car)
+
     def _score_current_trajectory(self, car: Car, samples: list[list[float]] | None = None) -> TrajectoryScore:
         if self.stop_zone is None or self.pre_stop_line_proc is None:
             return TrajectoryScore(False, "bad_geometry")
@@ -708,13 +764,9 @@ class StopDetector:
         if not car.state.zone.passed_pre_stop and self._has_pre_stop_approach(car, car_polygon, in_stop_zone):
             car.state.zone.passed_pre_stop = True
 
-        # Check if car crosses the capture line (only capture if pre-stop line was crossed first)
-        # This ensures we only capture cars going the correct direction (right-to-left)
-        if (
-            car.state.zone.passed_pre_stop
-            and not car.state.capture.image_captured
-            and self._polygon_crosses_line(car_polygon, self.capture_line_proc)
-        ):
+        # Capture at the configured line once the approach has been seen, or at the
+        # first usable view when the track was acquired past that line.
+        if not car.state.capture.image_captured and self._should_capture(car, car_polygon):
             self.capture_car_image(car, timestamp, frame)
 
         # Update consecutive frame counters and time-based debounce timestamps

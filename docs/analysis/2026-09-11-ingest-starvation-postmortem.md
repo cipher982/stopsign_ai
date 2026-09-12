@@ -150,8 +150,20 @@ which streams the object from Bremen.
 - **`dup_pct >= 90`** remains the alert threshold, so 10–49 % starvation (5.2 h of
   the 26 h studied) still has no witness. That is a product question — how choppy
   may the public stream be before it is worth an email — not a bug.
-- **8.6 % of passes have no image at all** (6671 rows with an empty `image_path`,
-  still occurring today). Capture happens at the capture-line crossing and the pass
-  at zone exit, so a car that enters the zone without crossing the line is recorded
-  without a picture. Whether that is expected for turns or a missed capture is a
-  detection question, not an ingest one.
+- **Passes with no image are fixed.** The rate is not 8.6% overall - it is ~35% of
+  passes every day, and 75-85% after dark, since 2026-05-18 (6,672 rows in total).
+  That date is when `9be2204` and `47cbb28` started *recording* passes from tracks
+  the detector only picks up past the capture line, instead of discarding them;
+  the pass counts rose ~50% that week and the extra passes are exactly the ones
+  with no picture. They are real, distinct vehicles, not duplicates (only 4.8%
+  have an imaged pass within ±10s, against a 3.1% control). The defect was
+  structural: a capture needs `passed_pre_stop` *then* a capture-line crossing, and
+  74.5% of these tracks never cross that line while tracked - they are first seen a
+  median of 270 px past it, at full size (bbox 233x95 px, so the picture was always
+  there to take). The capture gate now also fires on the first usable view of a
+  track acquired past the line, provided the vehicle is still upstream of the zone
+  centre and moving along the approach. Replayed over 600 stored no-image
+  trajectories: 96.2% would be photographed, a median of 2 frames after
+  acquisition; over 600 imaged ones the line shot is unchanged for 97.5%. The
+  remaining ~4% are first seen at or behind the zone centre (0.2% already inside
+  the zone), where the only "picture" available is an exit-angle crop.
