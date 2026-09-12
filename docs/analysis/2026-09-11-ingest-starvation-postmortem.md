@@ -239,8 +239,29 @@ live queue: frame age p50 32 ms, max 105 ms over 25 samples, 1 over the gate —
 raw queue is drained on arrival, so the gate is a backpressure valve, not a
 detection blocker. It is worth a counter before trusting that on a bad night.
 
-**Still open:** analyzer restarts lose the in-flight upload queue and the pass
-insert gives up after three attempts (durable state, not a rescan, is the real
-fix); `dup_pct` 10-49% still has no witness; a pass has no reason column, so a
-row with no image cannot say why. The ffmpeg startup path still clears the HLS
-directory, which 404s the public window for the length of a restart.
+**Second round, same day (all deployed and verified):**
+
+- A pass the database refuses is spooled to disk and replayed by a worker that starts
+  at boot, instead of being logged and dropped - the one failure that nothing later
+  could repair, because nothing was left to repair from. Replays are idempotent on
+  vehicle id + zone exit time, and the spool is bounded.
+- The capture no longer waits for the analyzer's parked gate. Review caught that the
+  96.2% figure was the capture rule's, not the pipeline's: a track acquired
+  mid-approach is judged parked for ~1.33 s, and by then the vehicle is often past the
+  zone centre. Replayed through the gate the same 600 passes gave 451 (75%) instead of
+  577 (96%); still-parked-but-moving cars now get the capture decision on its own.
+- The analyzer's stall watchdog tells starvation from a wedge: an empty frame queue
+  means there was nothing to process, so it waits instead of exiting. With the camera
+  dead it had been restarting every two minutes - 280 times over the outage, each
+  reloading the model.
+- Archive health counters are seeded across restarts. They are in memory, so a restart
+  reset them to zero, and zero reads as healthy: every one of those 280 restarts
+  announced a healthy archive for its first seconds.
+- ffmpeg's startup cleanup prunes HLS files older than the live window instead of
+  deleting the directory, so a deploy no longer 404s the public stream (verified: a
+  pre-deploy segment still served 200 through the restart).
+
+**Still open:** `dup_pct` 10-49% still has no witness (a product call); a pass has no
+reason column, so a row with no image cannot say why - the value of adding one dropped
+once the capture fixes landed. The stall watchdog has no test for the case where the
+queue depth is readable but stale.
