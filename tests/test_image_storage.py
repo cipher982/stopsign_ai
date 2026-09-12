@@ -240,6 +240,8 @@ def test_archive_health_counts_disk_outbox_after_restart(monkeypatch, tmp_path):
 
     assert health["pending_local_files"] == 1
     assert health["oldest_pending_local_age_seconds"] == 100.0
+    assert health["oldest_pending_local_ts"] == 100.0
+    assert health["archive_health_observed_at"] == 200.0
     assert health["archive_outbox_observed"] is True
     assert health["upload_transport_healthy"] is True
     assert health["archive_reconciliation_healthy"] is False

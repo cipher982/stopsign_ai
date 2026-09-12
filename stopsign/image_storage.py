@@ -151,24 +151,24 @@ def _seed_health_from_redis() -> None:
                 _health[key] = value
 
 
-def _durable_pending_local_stats() -> tuple[Optional[int], Optional[float]]:
-    """Count unacknowledged local captures and report the oldest age."""
+def _durable_pending_local_stats() -> tuple[Optional[int], Optional[float], Optional[float]]:
+    """Count unacknowledged local captures and report their age and timestamp."""
     image_dir = Path(LOCAL_IMAGE_DIR)
     try:
         if not image_dir.exists():
-            return 0, None
+            return 0, None, None
         pending = [path for path in image_dir.glob("*.jpg") if not _is_durably_archived(path.name)]
         if not pending:
-            return 0, None
+            return 0, None, None
         oldest_mtime = min(path.stat().st_mtime for path in pending)
-        return len(pending), max(0.0, time.time() - oldest_mtime)
+        return len(pending), max(0.0, time.time() - oldest_mtime), oldest_mtime
     except OSError:
-        return None, None
+        return None, None, None
 
 
 def _durable_pending_local_file_count() -> Optional[int]:
     """Backward-compatible count helper for callers outside this module."""
-    count, _oldest_age = _durable_pending_local_stats()
+    count, _oldest_age, _oldest_ts = _durable_pending_local_stats()
     return count
 
 
@@ -176,7 +176,7 @@ def _health_snapshot() -> dict:
     _seed_health_from_redis()
     with _health_lock:
         h = dict(_health)
-    pending_local_files, oldest_pending_age = _durable_pending_local_stats()
+    pending_local_files, oldest_pending_age, oldest_pending_ts = _durable_pending_local_stats()
     with _upload_state_lock:
         in_memory_pending = sum(1 for state in _upload_state.values() if state in ("pending", "failed"))
     if pending_local_files is None:
@@ -186,6 +186,8 @@ def _health_snapshot() -> dict:
         h["pending_local_files"] = max(pending_local_files, in_memory_pending)
         h["archive_outbox_observed"] = True
     h["oldest_pending_local_age_seconds"] = oldest_pending_age
+    h["oldest_pending_local_ts"] = oldest_pending_ts
+    h["archive_health_observed_at"] = time.time()
     h["upload_transport_healthy"] = pending_local_files is not None and (
         h["upload_failures"] == 0
         or (

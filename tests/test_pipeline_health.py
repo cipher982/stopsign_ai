@@ -185,6 +185,26 @@ def test_archive_health_response_shape(monkeypatch):
     assert payload["upload_successes"] == 11
 
 
+def test_archive_health_recomputes_pending_age_from_persisted_timestamp(monkeypatch):
+    observed_at = 1_000.0
+    now = 1_900.0
+    signature = {
+        "pending_local_files": 1,
+        "oldest_pending_local_ts": observed_at,
+        "oldest_pending_local_age_seconds": 1.0,
+        "archive_health_observed_at": observed_at,
+    }
+    fake = _FakeRedis({"stopsign.archive.health": json.dumps(signature)})
+    monkeypatch.setattr("stopsign.web.routes.health.redis_lib.from_url", lambda url, **kw: fake)
+    monkeypatch.setattr("stopsign.web.routes.health.time.time", lambda: now)
+
+    response = asyncio.run(archive_health())
+    payload = json.loads(response.body)
+
+    assert payload["oldest_pending_local_age_seconds"] == 900.0
+    assert payload["archive_health_age_seconds"] == 900.0
+
+
 def test_archive_health_shape_when_no_signal_yet(monkeypatch):
     fake = _FakeRedis({})
     monkeypatch.setattr("stopsign.web.routes.health.redis_lib.from_url", lambda url, **kw: fake)

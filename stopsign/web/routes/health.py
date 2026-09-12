@@ -60,6 +60,18 @@ def _parse_hls_playlist(path: str) -> dict:
     return info
 
 
+def _refresh_archive_health(payload: dict) -> dict:
+    """Recompute age-bearing archive fields from persisted timestamps on read."""
+    now = time.time()
+    oldest_pending_ts = payload.get("oldest_pending_local_ts")
+    if isinstance(oldest_pending_ts, (int, float)) and not isinstance(oldest_pending_ts, bool):
+        payload["oldest_pending_local_age_seconds"] = max(0.0, now - oldest_pending_ts)
+    observed_at = payload.get("archive_health_observed_at")
+    if isinstance(observed_at, (int, float)) and not isinstance(observed_at, bool):
+        payload["archive_health_age_seconds"] = max(0.0, now - observed_at)
+    return payload
+
+
 class DBHealthTracker:
     def __init__(self):
         self.last_failure_time = None
@@ -111,7 +123,7 @@ async def archive_health():
             return JSONResponse(
                 {"available": False, "detail": "No archive health signal yet (analyzer has not recorded one)"}
             )
-        payload = json.loads(raw)
+        payload = _refresh_archive_health(json.loads(raw))
         payload["available"] = True
         return JSONResponse(payload)
     except Exception as e:
@@ -172,7 +184,7 @@ async def pipeline_health():
     try:
         raw = r.get(ARCHIVE_HEALTH_REDIS_KEY)
         if raw:
-            archive = json.loads(raw)
+            archive = _refresh_archive_health(json.loads(raw))
             archive["available"] = True
         else:
             archive = {"available": False, "detail": "No archive health signal yet (analyzer has not recorded one)"}
