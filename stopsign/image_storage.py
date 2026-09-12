@@ -151,22 +151,32 @@ def _seed_health_from_redis() -> None:
                 _health[key] = value
 
 
-def _durable_pending_local_file_count() -> Optional[int]:
-    """Count local captures without an archive acknowledgement marker."""
+def _durable_pending_local_stats() -> tuple[Optional[int], Optional[float]]:
+    """Count unacknowledged local captures and report the oldest age."""
     image_dir = Path(LOCAL_IMAGE_DIR)
     try:
         if not image_dir.exists():
-            return 0
-        return sum(1 for path in image_dir.glob("*.jpg") if not _is_durably_archived(path.name))
+            return 0, None
+        pending = [path for path in image_dir.glob("*.jpg") if not _is_durably_archived(path.name)]
+        if not pending:
+            return 0, None
+        oldest_mtime = min(path.stat().st_mtime for path in pending)
+        return len(pending), max(0.0, time.time() - oldest_mtime)
     except OSError:
-        return None
+        return None, None
+
+
+def _durable_pending_local_file_count() -> Optional[int]:
+    """Backward-compatible count helper for callers outside this module."""
+    count, _oldest_age = _durable_pending_local_stats()
+    return count
 
 
 def _health_snapshot() -> dict:
     _seed_health_from_redis()
     with _health_lock:
         h = dict(_health)
-    pending_local_files = _durable_pending_local_file_count()
+    pending_local_files, oldest_pending_age = _durable_pending_local_stats()
     with _upload_state_lock:
         in_memory_pending = sum(1 for state in _upload_state.values() if state in ("pending", "failed"))
     if pending_local_files is None:
@@ -175,18 +185,20 @@ def _health_snapshot() -> dict:
     else:
         h["pending_local_files"] = max(pending_local_files, in_memory_pending)
         h["archive_outbox_observed"] = True
-    h["upload_healthy"] = (
-        pending_local_files is not None
-        and (
-            h["upload_failures"] == 0
-            or (
-                h["last_upload_success_ts"] is not None
-                and h["last_upload_failure_ts"] is not None
-                and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
-            )
+    h["oldest_pending_local_age_seconds"] = oldest_pending_age
+    h["upload_transport_healthy"] = pending_local_files is not None and (
+        h["upload_failures"] == 0
+        or (
+            h["last_upload_success_ts"] is not None
+            and h["last_upload_failure_ts"] is not None
+            and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
         )
-        and h["pending_local_files"] == 0
     )
+    h["archive_reconciliation_healthy"] = pending_local_files is not None and h["pending_local_files"] == 0
+    # Keep this field as the transport signal. A non-empty outbox can represent
+    # a delayed database reconciliation or a capture with no eventual pass row;
+    # it is not proof that Bremen uploads are failing.
+    h["upload_healthy"] = h["upload_transport_healthy"]
     h["local_save_healthy"] = h["local_save_failures"] == 0 or (
         h["last_local_save_ts"] is not None
         and h["last_local_save_failure_ts"] is not None

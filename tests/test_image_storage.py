@@ -231,13 +231,19 @@ def test_archive_health_survives_a_restart(monkeypatch):
 
 def test_archive_health_counts_disk_outbox_after_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
-    (tmp_path / "vehicle_pending.jpg").write_bytes(b"jpg")
+    pending = tmp_path / "vehicle_pending.jpg"
+    pending.write_bytes(b"jpg")
+    os.utime(pending, (100.0, 100.0))
+    monkeypatch.setattr(image_storage.time, "time", lambda: 200.0)
 
     health = image_storage._health_snapshot()
 
     assert health["pending_local_files"] == 1
+    assert health["oldest_pending_local_age_seconds"] == 100.0
     assert health["archive_outbox_observed"] is True
-    assert health["upload_healthy"] is False
+    assert health["upload_transport_healthy"] is True
+    assert health["archive_reconciliation_healthy"] is False
+    assert health["upload_healthy"] is True
 
 
 def test_upload_worker_flips_db_path_with_retry(monkeypatch):
