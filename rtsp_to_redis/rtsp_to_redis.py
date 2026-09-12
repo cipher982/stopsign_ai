@@ -357,12 +357,13 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self._increment_custom_metric("rtsp_reconnects", 1)
         self.last_reconnect_ts = time.time()
 
-    def _refresh_input_rate(self, now_ts: float) -> None:
-        """Recompute the windowed camera arrival rate and hand it to the guard.
+    def _record_arrival(self, now_ts: float) -> None:
+        """Record one camera frame arrival and re-score the windowed rate.
 
-        Called with the timestamp of the frame that just arrived, so the rate always
-        includes the newest evidence and cannot be stale relative to a blocking read.
+        The single entry point for this accounting, so the loop and any check that
+        follows it can never disagree about what is in the window.
         """
+        self._frame_times.append(now_ts)
         if self._first_frame_ts is None:
             self._first_frame_ts = now_ts
 
@@ -527,12 +528,11 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
                         frame_ts = time.time()
 
-                        # Frame arrival is scored first, with the timestamp of the frame
-                        # that just arrived: the rate is recomputed from actual arrival
-                        # times rather than a bucket, so a stream that has recovered
-                        # clears the degraded state before the guard can act on it.
-                        self._frame_times.append(frame_ts)
-                        self._refresh_input_rate(frame_ts)
+                        # Frame arrival is recorded first, with the timestamp of the
+                        # frame that just arrived: the rate is recomputed from actual
+                        # arrival times rather than a bucket, so a stream that has
+                        # recovered clears the degraded state before the guard acts.
+                        self._record_arrival(frame_ts)
 
                         # Stamp capture moment as close to cap.read() as possible
                         capture_ts = frame_ts

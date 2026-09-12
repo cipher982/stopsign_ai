@@ -166,9 +166,11 @@ class _StarvedCapture:
 
 
 def test_guard_does_not_restart_capture_when_redis_is_actually_down(monkeypatch):
-    """The skip must survive a Redis that is down, not just a flag that says so."""
+    """A stale healthy flag must not be enough to restart capture."""
     module = _load(monkeypatch, RTSP_MIN_INPUT_FPS="6", RTSP_LOW_FPS_EXIT_SEC="900")
     service = module.RTSPToRedis()
+    # The cached flag says healthy (set before the outage); the ping is the truth.
+    service.update_status_metric("redis_connected", True)
 
     class _DeadRedis:
         def ping(self):
@@ -179,8 +181,13 @@ def test_guard_does_not_restart_capture_when_redis_is_actually_down(monkeypatch)
     service._track_input_fps(0.1, 1_000.0)
 
     service._exit_if_ingest_degraded(9_999.0)
-
     assert exits == []
+
+    # Control: the same state with a reachable Redis does restart capture, so the
+    # assertion above cannot pass for want of a firing guard.
+    service.redis_client = _live_redis()
+    service._exit_if_ingest_degraded(9_999.0)
+    assert exits == [1]
 
 
 def test_a_recovered_stream_is_not_restarted_at_the_deadline(monkeypatch):
@@ -191,16 +198,24 @@ def test_a_recovered_stream_is_not_restarted_at_the_deadline(monkeypatch):
         RTSP_RATE_WINDOW_SEC="10",
         RTSP_LOW_FPS_EXIT_SEC="900",
     )
-    service = module.RTSPToRedis()
     exits = _silence_exit(monkeypatch, module)
 
-    service._refresh_input_rate(1_000.0)  # one frame, then a long starved gap
+    # Control: the same starvation with no recovery does reach the exit.
+    starved = module.RTSPToRedis()
+    starved.redis_client = _live_redis()
+    starved._record_arrival(1_000.0)
+    starved._exit_if_ingest_degraded(2_000.0)
+    assert exits == [1]
+    exits.clear()
 
-    # A full window of healthy arrivals lands before the guard is asked to act.
+    # Recovered: a full window of healthy arrivals lands before the guard is asked.
+    recovered = module.RTSPToRedis()
+    recovered.redis_client = _live_redis()
+    recovered._record_arrival(1_000.0)
     for i in range(150):
-        service._refresh_input_rate(2_000.0 + i / 15.0)
-    service._exit_if_ingest_degraded(2_010.0)
+        recovered._record_arrival(2_000.0 + i / 15.0)
 
+    recovered._exit_if_ingest_degraded(2_010.0)
     assert exits == []
 
 
