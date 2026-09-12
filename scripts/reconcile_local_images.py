@@ -47,7 +47,11 @@ archive credentials and the files:
 
     docker cp scripts/reconcile_local_images.py <analyzer>:/tmp/reconcile.py
     docker exec <analyzer> python /tmp/reconcile.py                # dry run
-    docker exec <analyzer> python /tmp/reconcile.py --apply --release-unreferenced
+    docker stop <analyzer>                                         # only if releasing orphans
+    docker exec <analyzer> python /tmp/reconcile.py --apply --release-unreferenced --analyzer-stopped
+
+(``--release-unreferenced`` refuses to run without ``--analyzer-stopped``: stop the
+container first, so nothing can be mid-upload while a file's only copy is removed.)
 """
 
 from __future__ import annotations
@@ -263,12 +267,22 @@ def object_referenced(engine, name: str) -> bool:
 
 
 def archived_now(client: Minio, name: str) -> bool:
+    """Is this object in the archive right now?
+
+    Only an explicit not-found means no. Any other error (permissions, a 5xx, a
+    bucket problem) is uncertainty, and uncertainty must keep the file: this answer
+    decides whether the only local copy is removed.
+    """
     try:
         client.stat_object(BREMEN_MINIO_BUCKET, name)
         return True
-    except S3Error:
-        return False
-    except Exception:  # noqa: BLE001 - on any doubt keep the file
+    except S3Error as exc:
+        if exc.code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket", "ResourceNotFound", "NotFound"}:
+            return False
+        print(f"  archive check for {name} failed ({exc.code}); keeping the file", file=sys.stderr)
+        return True
+    except Exception as exc:  # noqa: BLE001 - same reasoning: keep on doubt
+        print(f"  archive check for {name} errored ({exc}); keeping the file", file=sys.stderr)
         return True
 
 
@@ -396,7 +410,8 @@ def main() -> int:
         print(f"orphans kept (referenced or archived since the listing) {len(orphans_kept)}")
     print(f"left on disk                {len(files_on_disk())}")
 
-    remaining = len(plan["unrecoverable"])
+    # Count what is actually left, not what the pre-mutation plan expected.
+    remaining = len(local_row_names(engine))
     print()
     print(f"rows still on local://      {remaining} (image gone from both the file and the archive)")
     if upload_failed or delete_failed:
