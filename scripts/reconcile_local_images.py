@@ -42,16 +42,36 @@ pruner has the same effect; it is transient and needs no action.
 
 Nothing is written unless ``--apply`` is passed, and re-running is safe: the plan is
 recomputed from a fresh archive listing and a fresh query immediately before any
-mutation. Run it inside the analyzer container, which has the database URL, the
+mutation.
+
+Run the dry run inside the analyzer container, which has the database URL, the
 archive credentials and the files:
 
     docker cp scripts/reconcile_local_images.py <analyzer>:/tmp/reconcile.py
     docker exec <analyzer> python /tmp/reconcile.py                # dry run
-    docker stop <analyzer>                                         # only if releasing orphans
-    docker exec <analyzer> python /tmp/reconcile.py --apply --release-unreferenced --analyzer-stopped
 
-(``--release-unreferenced`` refuses to run without ``--analyzer-stopped``: stop the
-container first, so nothing can be mid-upload while a file's only copy is removed.)
+``--release-unreferenced`` additionally needs the analyzer to be *stopped*, so that
+nothing can be mid-upload while a file's only copy is removed - and a stopped
+container cannot be ``docker exec``'d into, so the apply runs in a throwaway
+container from the same image, with the same volume and the analyzer's environment:
+
+    docker stop <analyzer>
+    docker run --rm --network host \
+      -e DB_URL="$(docker inspect <analyzer> --format '{{range .Config.Env}}\
+{{println .}}{{end}}' | sed -n 's/^DB_URL=//p')" \
+      -e BREMEN_MINIO_ENDPOINT="$(...)" -e BREMEN_MINIO_ACCESS_KEY="$(...)" \
+      -e BREMEN_MINIO_SECRET_KEY="$(...)" -e BREMEN_MINIO_BUCKET=vehicle-images \
+      -v "$(docker inspect <analyzer> --format \
+'{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Name}}{{end}}{{end}}'):/app/data" \
+      -v "$PWD/scripts:/scripts:ro" \
+      $(docker inspect <analyzer> --format '{{.Config.Image}}') \
+      python /scripts/reconcile_local_images.py --apply --release-unreferenced \
+      --analyzer-stopped
+    docker start <analyzer>
+
+Without ``--release-unreferenced`` the apply is not quiescence-sensitive (it only
+touches rows and files the archive already serves) and can run in the live
+container.
 """
 
 from __future__ import annotations
@@ -410,15 +430,24 @@ def main() -> int:
         print(f"orphans kept (referenced or archived since the listing) {len(orphans_kept)}")
     print(f"left on disk                {len(files_on_disk())}")
 
-    # Count what is actually left, not what the pre-mutation plan expected.
-    remaining = len(local_row_names(engine))
+    # Count what is actually left, not what the pre-mutation plan expected, and split
+    # it: a row whose file is still here is simply waiting for the archive (a capture
+    # from the last few minutes), which is not the same as an image that is gone.
+    remaining = local_row_names(engine)
+    on_disk = set(files_on_disk())
+    still_here = sorted(name for name in remaining if name in on_disk)
+    gone = sorted(name for name in remaining if name not in on_disk)
     print()
-    print(f"rows still on local://      {remaining} (image gone from both the file and the archive)")
-    if upload_failed or delete_failed:
-        print(f"failed operations           {len(upload_failed)} upload(s), {len(delete_failed)} delete(s)")
-    if (remaining or upload_failed or delete_failed) and not args.allow_incomplete:
+    print(f"rows still on local://      {len(remaining)}")
+    print(f"  image still on disk       {len(still_here)} (pending the archive, served from here)")
+    print(f"  gone from both            {len(gone)} (nothing can serve these)")
+    if gone and not args.allow_incomplete:
         print("incomplete; pass --allow-incomplete to exit 0 anyway")
         return 1
+    if upload_failed or delete_failed:
+        print(f"failed operations           {len(upload_failed)} upload(s), {len(delete_failed)} delete(s)")
+        if not args.allow_incomplete:
+            return 1
     return 0
 
 

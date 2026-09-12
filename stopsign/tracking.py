@@ -66,6 +66,10 @@ class ZoneState:
 class CaptureState:
     image_captured: bool = False
     image_path: str = ""
+    # Set once a photograph has been taken for this tracked vehicle and deliberately
+    # carried across _reset_car_state: one picture per track, however many times the
+    # zone state is reset underneath it.
+    latched: bool = False
     # Geometry at capture (processed coordinate space): the detection bbox and the
     # padded/clamped rect actually saved, so offline passes can re-crop tighter.
     bbox: Optional[Tuple[float, float, float, float]] = None
@@ -372,6 +376,9 @@ class StopDetector:
     APPROACH_MIN_PROGRESS_PX = 20.0
     # Movement needed before a track counts as approaching rather than jittering in place
     CAPTURE_MIN_APPROACH_PX = 5.0
+    # How far off the approach axis (in multiples of the roadway's own half-width) a
+    # vehicle may sit and still be treated as traffic approaching the junction.
+    CORRIDOR_HALF_WIDTH_FACTOR = 2.0
 
     def __init__(self, config: Config, db: Database):
         self.config = config
@@ -681,6 +688,37 @@ class StopDetector:
 
         return travelled >= self.CAPTURE_MIN_APPROACH_PX and to_zone_centre > 0
 
+    def _in_approach_corridor(self, point) -> bool:
+        """Is this point on the roadway band the two configured lines are drawn across?
+
+        The stop zone and the pre-stop line both span the approach roadway, so the widest
+        of the two is the road's own width at this point. A vehicle further out than that
+        is not approaching the junction - it is somewhere else in the scene (a driveway,
+        a side street, the far pavement) and must not be photographed as if it were
+        traffic. Measured against stored late-track captures, real vehicles sit within
+        1.8 of this half-width; a track crossing well clear of the roadway sits at ~3.5.
+        """
+        if self.stop_zone is None or self.pre_stop_line_proc is None:
+            return False
+
+        approach_vector = np.mean(self.stop_zone, axis=0) - np.mean(self.pre_stop_line_proc, axis=0)
+        approach_norm = float(np.linalg.norm(approach_vector))
+        if approach_norm < 1e-6:
+            return False
+        perpendicular = np.array([-approach_vector[1], approach_vector[0]]) / approach_norm
+
+        zone_centre = np.mean(self.stop_zone, axis=0)
+        halves = [
+            max(abs(float(np.dot(vertex - zone_centre, perpendicular))) for vertex in self.stop_zone),
+            max(abs(float(np.dot(vertex - zone_centre, perpendicular))) for vertex in self.pre_stop_line_proc),
+        ]
+        road_half_width = max(halves)
+        if road_half_width < 1e-6:
+            return False
+
+        lateral = abs(float(np.dot(np.asarray(point, dtype=float) - zone_centre, perpendicular)))
+        return lateral <= self.CORRIDOR_HALF_WIDTH_FACTOR * road_half_width
+
     def _should_capture(self, car: Car, car_polygon: np.ndarray) -> bool:
         """Is this frame's view of the vehicle the one to keep?
 
@@ -689,12 +727,18 @@ class StopDetector:
         after that line - the tracker missed the approach, which is a third of passes,
         most of them after dark - can never cross it, and the pass it produces is real,
         so it gets the first usable view instead of no picture at all. Both paths need
-        the vehicle heading towards the stop zone, which is what keeps exit-angle and
-        wrong-way crops out.
+        the vehicle heading towards the stop zone within the approach corridor, which is
+        what keeps exit-angle, wrong-way and off-roadway crops out.
         """
+        if car.state.capture.latched:
+            return False
         if car.state.zone.passed_pre_stop and self._polygon_crosses_line(car_polygon, self.capture_line_proc):
             return True
-        return self._past_capture_line(car.state.location) and self._approaching_stop_zone(car)
+        return (
+            self._past_capture_line(car.state.location)
+            and self._approaching_stop_zone(car)
+            and self._in_approach_corridor(car.state.location)
+        )
 
     def _score_current_trajectory(self, car: Car, samples: list[list[float]] | None = None) -> TrajectoryScore:
         if self.stop_zone is None or self.pre_stop_line_proc is None:
@@ -963,7 +1007,8 @@ class StopDetector:
 
     def _reset_car_state(self, car: Car) -> None:
         car.state.zone = ZoneState()
-        car.state.capture = CaptureState()
+        latched = car.state.capture.latched
+        car.state.capture = CaptureState(latched=latched)
         car.state.motion = MotionState()
         car.state.samples = []
         logger.debug(f"Reset state for Car {car.id}")
@@ -986,6 +1031,7 @@ class StopDetector:
             # Local save succeeded (archive upload is async and trailing). Record the
             # real local path so the pass is honest and visible in live stats.
             car.state.capture.image_captured = True
+            car.state.capture.latched = True
             car.state.capture.image_path = image_path
             car.state.capture.bbox = tuple(float(v) for v in car.state.bbox)
             car.state.capture.crop_rect = compute_crop_rect(car.state.bbox, frame.shape[1], frame.shape[0])

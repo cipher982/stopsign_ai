@@ -84,6 +84,15 @@ FLIP_SWEEP_INTERVAL_SECONDS = 60.0
 _last_flip_sweep_monotonic = 0.0
 _flip_retry_db: Optional[Database] = None
 
+# Local captures the worker gave up on (three failed attempts, a full queue, or a
+# restart that lost the in-memory state) are re-queued from disk on the same idle
+# loop. Bounded on purpose: a few files, oldest first, and never more often than the
+# interval, so a long archive outage retries gently instead of hammering it.
+REQUEUE_SWEEP_INTERVAL_SECONDS = 300.0
+REQUEUE_BATCH = 5
+REQUEUE_MIN_AGE_SECONDS = 60.0
+_last_requeue_sweep_monotonic = 0.0
+
 
 def _get_redis_client():
     """Lazily build a short-timeout Redis client (best-effort; never raises)."""
@@ -347,6 +356,54 @@ def _process_upload_item(local_path: str, object_name: str, db: Optional[Databas
                 time.sleep(2**attempt)  # Exponential backoff: 1s, 2s
 
 
+def _maybe_requeue_unarchived_uploads(now: Optional[float] = None) -> int:
+    """Re-queue local captures that never reached the archive.
+
+    The worker gives up after three attempts, a full queue skips the archive
+    outright, and the per-file state that tracks both is in memory - so a capture that
+    missed its window (an archive outage, an overflow, a restart mid-upload) would
+    otherwise sit on disk forever while its pass kept pointing at ``local://``.
+    Returns the number re-queued.
+    """
+    global _last_requeue_sweep_monotonic
+
+    now = time.monotonic() if now is None else now
+    if now - _last_requeue_sweep_monotonic < REQUEUE_SWEEP_INTERVAL_SECONDS:
+        return 0
+    if not BREMEN_MINIO_SECRET_KEY:
+        return 0
+
+    image_dir = Path(LOCAL_IMAGE_DIR)
+    if not image_dir.exists():
+        return 0
+
+    _last_requeue_sweep_monotonic = now
+    wall = time.time()
+    candidates: list[Path] = []
+    for path in image_dir.glob("*.jpg"):
+        try:
+            # Skip whatever is still being written or is queued right now.
+            if wall - path.stat().st_mtime < REQUEUE_MIN_AGE_SECONDS:
+                continue
+        except OSError:
+            continue
+        if _get_upload_state(path.name) != "uploaded":
+            candidates.append(path)
+
+    candidates.sort(key=lambda p: p.stat().st_mtime)
+    requeued = 0
+    for path in candidates[:REQUEUE_BATCH]:
+        try:
+            _upload_queue.put_nowait((str(path), path.name, _flip_retry_db))
+        except queue.Full:
+            break
+        requeued += 1
+
+    if requeued:
+        logger.info(f"Re-queued {requeued} local capture(s) that had not reached the archive")
+    return requeued
+
+
 def _bremen_upload_worker():
     """Background worker: uploads queued images, and sweeps pending DB path flips.
 
@@ -360,6 +417,7 @@ def _bremen_upload_worker():
                 local_path, object_name, db = _upload_queue.get(timeout=FLIP_SWEEP_INTERVAL_SECONDS)
             except queue.Empty:
                 _maybe_retry_pending_flips()
+                _maybe_requeue_unarchived_uploads()
                 continue
             try:
                 _process_upload_item(local_path, object_name, db)

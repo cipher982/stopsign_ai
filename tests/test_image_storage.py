@@ -18,6 +18,7 @@ def isolate_image_storage_state(monkeypatch):
     monkeypatch.setattr(image_storage, "_flip_pending", {})
     monkeypatch.setattr(image_storage, "_flip_retry_db", None)
     monkeypatch.setattr(image_storage, "_last_flip_sweep_monotonic", 0.0)
+    monkeypatch.setattr(image_storage, "_last_requeue_sweep_monotonic", 0.0)
     monkeypatch.setattr(image_storage, "_health", dict(image_storage._health))
     monkeypatch.setattr(image_storage, "_redis_attempted", True)
     monkeypatch.setattr(image_storage, "_redis_client", None)
@@ -152,8 +153,37 @@ def test_prune_preserves_everything_when_nothing_is_uploaded(monkeypatch, tmp_pa
     assert remaining == ["vehicle_0.jpg", "vehicle_1.jpg", "vehicle_2.jpg", "vehicle_3.jpg"]
 
 
+def test_archive_outage_captures_are_retried_from_disk(monkeypatch, tmp_path):
+    """A capture the worker gave up on is re-queued, so an archive outage or a queue
+    overflow cannot strand it on local:// forever."""
+    upload_queue: queue.Queue = queue.Queue()
+    monkeypatch.setattr(image_storage, "_upload_queue", upload_queue)
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_SECRET_KEY", "secret")
+
+    old = time.time() - 600
+    for name, state in (("vehicle_failed.jpg", "failed"), ("vehicle_never_queued.jpg", None)):
+        path = tmp_path / name
+        path.write_bytes(b"jpg")
+        os.utime(path, (old, old))
+        if state:
+            image_storage._mark_upload_state(name, state)
+    fresh_path = tmp_path / "vehicle_fresh.jpg"
+    fresh_path.write_bytes(b"jpg")
+    image_storage._mark_upload_state("vehicle_fresh.jpg", "pending")
+    done_path = tmp_path / "vehicle_uploaded.jpg"
+    done_path.write_bytes(b"jpg")
+    os.utime(done_path, (old, old))
+    image_storage._mark_upload_state("vehicle_uploaded.jpg", "uploaded")
+
+    requeued = image_storage._maybe_requeue_unarchived_uploads(now=1000.0)
+
+    queued = {upload_queue.get_nowait()[1] for _ in range(upload_queue.qsize())}
+    assert requeued == 2
+    assert queued == {"vehicle_failed.jpg", "vehicle_never_queued.jpg"}
+
+
 def test_upload_worker_flips_db_path_with_retry(monkeypatch):
-    """The flip must wait for the pass row (inserted after the async upload) and retry."""
     from unittest.mock import MagicMock
 
     db = MagicMock()

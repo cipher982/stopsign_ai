@@ -808,6 +808,52 @@ class TestCaptureDecision:
 
         assert saved == []
 
+    def test_track_off_the_roadway_is_not_photographed(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "x.jpg")
+        detector = self._detector(mock_config, mock_database)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+
+        # Past the capture line, moving towards the zone centre, but far off the roadway
+        # the two configured lines span: not traffic approaching the junction.
+        car = Car(id=1, config=mock_config)
+        base = 1000.0
+        for idx, x in enumerate([1185.0, 1120.0, 1060.0, 1000.0]):
+            ts = base + idx * 0.1
+            bbox = (x - 60.0, 250.0, x + 60.0, 350.0)
+            car.update((x, 300.0), ts, bbox)
+            car.state.raw_speed = car.state.speed
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + max(idx - 1, 0) * 0.1)
+
+        assert saved == []
+
+    def test_a_track_is_photographed_only_once(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "local://once.jpg")
+        detector = self._detector(mock_config, mock_database)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+
+        car = self._run(detector, frame, [1185.0, 1120.0, 1060.0])
+        assert len(saved) == 1
+
+        # A completed pass resets the zone/capture state underneath the track. The
+        # vehicle keeps driving with geometry that qualifies again; without a latch that
+        # would take a second, exit-angle photograph of the same vehicle.
+        detector._reset_car_state(car)
+        base = 1000.0
+        for idx, x in enumerate([1100.0, 1060.0, 1020.0]):
+            ts = base + 5 + idx * 0.1
+            bbox = (x - 60.0, 700.0, x + 60.0, 800.0)
+            car.update((x, 750.0), ts, bbox)
+            car.state.raw_speed = car.state.speed
+            detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + 4 + idx * 0.1)
+
+        assert len(saved) == 1, "one photograph per tracked vehicle"
+
 
 class TestResetCarState:
     """Test that _reset_car_state fully resets all sub-states."""

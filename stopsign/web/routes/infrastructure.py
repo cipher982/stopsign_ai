@@ -14,7 +14,6 @@ from fastapi import Request
 from fastapi.responses import FileResponse
 from fastapi.responses import HTMLResponse
 from fastapi.responses import Response
-from fastapi.responses import StreamingResponse
 from minio import Minio
 from PIL import Image
 from PIL import ImageOps
@@ -104,20 +103,31 @@ def _thumbnail_response_headers(object_name: str) -> dict[str, str]:
 
 @router.get("/vehicle-image/{object_name:path}")
 def get_image(object_name: str):
-    if not object_name or not isinstance(object_name, str) or object_name.strip() == "":
-        logger.warning(f"Invalid object_name requested: {object_name}")
+    """Serve a captured image, from here first and from the archive otherwise.
+
+    The two sources are the same file: the capture writes it locally and the archive
+    upload trails it. Reading the local copy first is what keeps a pass visible while
+    an upload is pending or the archive is unreachable - the thumbnail route has always
+    worked this way, and serving a 404 for an image that is sitting on disk is not a
+    fallback (the 516 pre-July rows are a separate, genuinely missing case).
+    """
+    try:
+        normalized_name = _normalize_object_name(object_name)
+    except ValueError:
+        logger.warning(f"Invalid image object requested: {object_name}")
         return HTMLResponse("Invalid image request", status_code=400)
 
     try:
-        client = get_bremen_minio_client()
-        data = client.get_object(BREMEN_MINIO_BUCKET, object_name)
-        response = StreamingResponse(data, media_type="image/jpeg")
-        response.headers["Cache-Control"] = "public, max-age=86400"
-        response.headers["ETag"] = f'"{hash(object_name)}"'
-        return response
+        body = _read_source_image_bytes(normalized_name)
     except Exception as e:
-        logger.error(f"Error fetching image from Bremen MinIO: {str(e)}", exc_info=True)
+        logger.error(f"Error fetching image {normalized_name}: {e}", exc_info=True)
         return HTMLResponse("Image not found", status_code=404)
+
+    return Response(
+        content=body,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400", "ETag": f'"{hash(normalized_name)}"'},
+    )
 
 
 @router.get("/vehicle-thumb/{object_name:path}")
