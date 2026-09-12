@@ -695,19 +695,38 @@ def main():
             ffmpeg_process.wait()
 
 
-def clean_stream_directory():
-    """Clean up the stream directory by removing stale HLS files (preserves clips/)."""
-    logger.info("Cleaning up stream directory...")
+HLS_SEGMENT_SECONDS = 2
+# The live window ffmpeg itself keeps (hls_list_size x hls_time). Anything older than
+# this cannot belong to a playlist a viewer is holding, so it is safe to drop at
+# startup; anything younger may still be being watched.
+HLS_WINDOW_SECONDS = int(HLS_LIST_SIZE) * HLS_SEGMENT_SECONDS
+
+
+def clean_stream_directory(max_age_seconds: float = HLS_WINDOW_SECONDS) -> None:
+    """Drop HLS files from the stream directory that are older than the live window.
+
+    Deleting the whole directory at startup 404s the public stream for the length of
+    the restart: a viewer is holding a playlist whose segments have just been removed.
+    ffmpeg manages its own window (``-hls_flags delete_segments``), so the only thing
+    a restart has to clear is what an earlier, longer-lived session left behind -
+    which is by definition older than the window.
+    """
+    logger.info("Pruning stream directory files older than %ss...", max_age_seconds)
     os.makedirs(STREAM_DIR, exist_ok=True)
+    cutoff = time.time() - max_age_seconds
     for filename in os.listdir(STREAM_DIR):
         if filename == "clips":
             continue
         file_path = os.path.join(STREAM_DIR, filename)
         try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
+            if os.path.isdir(file_path) and not os.path.islink(file_path):
                 shutil.rmtree(file_path)
+                continue
+            if os.path.getmtime(file_path) >= cutoff:
+                continue
+            os.unlink(file_path)
+        except FileNotFoundError:
+            continue
         except Exception as e:
             logger.error(f"Failed to delete {file_path}. Reason: {e}")
 
