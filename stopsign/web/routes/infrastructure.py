@@ -37,6 +37,8 @@ router = APIRouter()
 THUMBNAIL_SIZE = (192, 120)
 THUMBNAIL_QUALITY = 82
 THUMBNAIL_CACHE_DIR = Path(LOCAL_IMAGE_DIR) / ".thumb-cache"
+# The same panel resolve_image_url() points a pass with no image at.
+PLACEHOLDER_PATH = Path(__file__).resolve().parents[3] / "static" / "placeholder.jpg"
 
 
 def get_minio_client():
@@ -120,13 +122,29 @@ def get_image(object_name: str):
     try:
         body = _read_source_image_bytes(normalized_name)
     except Exception as e:
-        logger.error(f"Error fetching image {normalized_name}: {e}", exc_info=True)
-        return HTMLResponse("Image not found", status_code=404)
+        logger.warning("Image %s is in neither the local directory nor the archive: %s", normalized_name, e)
+        return _placeholder_response()
 
     return Response(
         content=body,
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=86400", "ETag": f'"{hash(normalized_name)}"'},
+    )
+
+
+def _placeholder_response():
+    """The site's "no image" panel, for an object that is not there.
+
+    516 pre-July rows point at images that are gone from both sides, and a pass with no
+    image at all resolves here too - rendering a broken image for either is a defect the
+    placeholder exists to avoid. Cached briefly, not for a day: a capture whose upload is
+    still pending, or an archive that is briefly unreachable, is a temporary miss and
+    must not be pinned as "no image" in the edge cache.
+    """
+    return FileResponse(
+        PLACEHOLDER_PATH,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=300"},
     )
 
 

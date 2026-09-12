@@ -10,6 +10,20 @@ from stopsign.web.routes.infrastructure import _normalize_object_name
 from stopsign.web.services import images
 
 
+def test_a_missing_object_renders_the_placeholder_not_a_404():
+    """516 pre-July rows point at images gone from both sides; a broken image is a
+    defect the site's own placeholder exists to avoid."""
+    from stopsign.web.routes import infrastructure
+
+    assert infrastructure.PLACEHOLDER_PATH.exists(), "the placeholder resolve_image_url() points at"
+    response = infrastructure._placeholder_response()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    # Short, so a transient miss (upload pending, archive unreachable) is not pinned
+    assert "max-age=300" in response.headers["cache-control"]
+
+
 def test_extract_image_object_name_supports_all_storage_prefixes():
     assert images.extract_image_object_name("local://vehicle_123.jpg") == "vehicle_123.jpg"
     assert images.extract_image_object_name("bremen://archive/vehicle_456.jpg") == "archive/vehicle_456.jpg"
