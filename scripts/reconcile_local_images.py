@@ -28,10 +28,12 @@ For every file on disk:
                                written seconds after the capture, so a file this
                                old with no row is the capture-line image of a car
                                that never completed a pass, and nothing can serve
-                               it. That is the one irreversible rule here, so it
-                               is re-checked against a fresh archive listing and a
-                               fresh reference query, and it uses its own, much
-                               longer settle window.
+                               it. That is the one irreversible rule here: it needs
+                               ``--analyzer-stopped`` (stop the container first, so
+                               nothing can be mid-upload), waits its own much
+                               longer settle window, and re-checks each candidate
+                               against the live database and the archive
+                               immediately before its own unlink.
 
 Deleting the local copy of an image that is still referenced by a row on
 ``local://`` does not break the row, but a page rendered *before* the sweep may
@@ -57,6 +59,7 @@ import time
 
 import urllib3
 from minio import Minio
+from minio.error import S3Error
 from sqlalchemy import create_engine
 from sqlalchemy import text
 
@@ -227,6 +230,7 @@ def reupload(client: Minio, names: list[str], apply: bool) -> tuple[list[str], l
 
 
 def delete_local(names: list[str], apply: bool) -> tuple[int, list[str]]:
+    """Remove local copies the archive already serves. Safe by construction."""
     if not names:
         return 0, []
     if not apply:
@@ -241,6 +245,59 @@ def delete_local(names: list[str], apply: bool) -> tuple[int, list[str]]:
             failed.append(name)
             print(f"  delete failed for {name}: {exc}", file=sys.stderr)
     return removed, failed
+
+
+def object_referenced(engine, name: str) -> bool:
+    """Is this object named by any pass row, under any prefix?"""
+    with engine.connect() as conn:
+        return bool(
+            conn.execute(
+                text(
+                    "select 1 from vehicle_passes "
+                    "where image_path = :local or image_path = :bremen or image_path like :minio "
+                    "limit 1"
+                ),
+                {"local": f"{LOCAL_PREFIX}{name}", "bremen": f"{BREMEN_PREFIX}{name}", "minio": f"%/{name}"},
+            ).scalar()
+        )
+
+
+def archived_now(client: Minio, name: str) -> bool:
+    try:
+        client.stat_object(BREMEN_MINIO_BUCKET, name)
+        return True
+    except S3Error:
+        return False
+    except Exception:  # noqa: BLE001 - on any doubt keep the file
+        return True
+
+
+def release_unreferenced(client: Minio, engine, names: list[str], apply: bool) -> tuple[int, list[str], list[str]]:
+    """Delete the only copy of a file nothing references.
+
+    The one irreversible rule in this script, so every candidate is re-checked
+    against the live database and the archive immediately before its own unlink -
+    not against the plan's snapshot. A file that turned out to be referenced, or
+    to have reached the archive since the listing, is kept.
+    """
+    if not names:
+        return 0, [], []
+    if not apply:
+        return len(names), [], []
+    removed = 0
+    kept: list[str] = []
+    failed: list[str] = []
+    for name in names:
+        if object_referenced(engine, name) or archived_now(client, name):
+            kept.append(name)
+            continue
+        try:
+            os.unlink(os.path.join(LOCAL_IMAGE_DIR, name))
+            removed += 1
+        except OSError as exc:
+            failed.append(name)
+            print(f"  delete failed for {name}: {exc}", file=sys.stderr)
+    return removed, kept, failed
 
 
 def main() -> int:
@@ -264,11 +321,24 @@ def main() -> int:
         help="also delete unreferenced, unarchived files past the orphan settle window",
     )
     parser.add_argument(
+        "--analyzer-stopped",
+        action="store_true",
+        help="acknowledge that the analyzer is stopped, required by --release-unreferenced",
+    )
+    parser.add_argument(
         "--allow-incomplete",
         action="store_true",
         help="exit 0 even when rows are left unreachable (default: exit 1)",
     )
     args = parser.parse_args()
+
+    if args.release_unreferenced and not args.analyzer_stopped:
+        print(
+            "--release-unreferenced deletes the only copy of a file. Stop the analyzer\n"
+            "container first (so nothing can be mid-upload) and pass --analyzer-stopped.",
+            file=sys.stderr,
+        )
+        return 2
 
     if not DB_URL or not BREMEN_MINIO_SECRET_KEY:
         print("DB_URL and BREMEN_MINIO_* must be set", file=sys.stderr)
@@ -317,10 +387,13 @@ def main() -> int:
     flipped += flip_rows(engine, uploaded, True)
     print(f"flipped rows (after upload) {flipped}")
 
-    removed, delete_failed = delete_local(
-        sorted(set(plan["redundant"]) | set(uploaded) | set(plan["orphan_released"])), True
-    )
+    removed, delete_failed = delete_local(sorted(set(plan["redundant"]) | set(uploaded)), True)
+    orphans_removed, orphans_kept, orphan_failed = release_unreferenced(client, engine, plan["orphan_released"], True)
+    removed += orphans_removed
+    delete_failed += orphan_failed
     print(f"deleted local copies        {removed}")
+    if orphans_kept:
+        print(f"orphans kept (referenced or archived since the listing) {len(orphans_kept)}")
     print(f"left on disk                {len(files_on_disk())}")
 
     remaining = len(plan["unrecoverable"])
