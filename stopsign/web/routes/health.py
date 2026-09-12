@@ -65,10 +65,12 @@ def _refresh_archive_health(payload: dict) -> dict:
     now = time.time()
     oldest_pending_ts = payload.get("oldest_pending_local_ts")
     if isinstance(oldest_pending_ts, (int, float)) and not isinstance(oldest_pending_ts, bool):
-        payload["oldest_pending_local_age_seconds"] = max(0.0, now - oldest_pending_ts)
+        payload["oldest_pending_local_age_seconds"] = now - oldest_pending_ts
     observed_at = payload.get("archive_health_observed_at")
     if isinstance(observed_at, (int, float)) and not isinstance(observed_at, bool):
-        payload["archive_health_age_seconds"] = max(0.0, now - observed_at)
+        # Preserve negative ages: a future-dated observation is invalid evidence,
+        # not a fresh observation.
+        payload["archive_health_age_seconds"] = now - observed_at
     return payload
 
 

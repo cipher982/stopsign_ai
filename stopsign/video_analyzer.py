@@ -41,7 +41,7 @@ from stopsign.frame_codec import LEGACY_MAGIC
 from stopsign.frame_codec import pack_frame
 from stopsign.frame_codec import unpack_frame
 from stopsign.image_storage import start_upload_worker
-from stopsign.pass_spool import start_spool_worker
+from stopsign.pass_spool import start_pass_outbox_worker
 from stopsign.service_status import VideoAnalyzerStatusMixin
 from stopsign.settings import ANALYZER_BOOT_TS_KEY
 from stopsign.settings import ANALYZER_LAST_FRAME_AT_KEY
@@ -1220,9 +1220,9 @@ if __name__ == "__main__":
     config = Config("/app/config/config.yaml")
     db = Database(db_url=DB_URL)
 
-    # Drain anything a previous process spooled: a pass that could not be written
-    # before a restart is still a pass, and the worker's first sweep runs immediately.
-    start_spool_worker(db)
+    # Drain anything a previous process admitted: a pass is still a pass even
+    # when the remote database was unavailable during the prior process lifetime.
+    start_pass_outbox_worker(db)
 
     # Same for the archive: start with the DB handle so restart reconciliation
     # can complete delayed path flips before another vehicle is captured.

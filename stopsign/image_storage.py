@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import queue
 import threading
 import time
@@ -155,8 +156,9 @@ def _durable_pending_local_stats() -> tuple[Optional[int], Optional[float], Opti
     """Count unacknowledged local captures and report their age and timestamp."""
     image_dir = Path(LOCAL_IMAGE_DIR)
     try:
-        if not image_dir.exists():
-            return 0, None, None
+        # A missing outbox is an observation failure, not an empty backlog.
+        if not image_dir.is_dir():
+            return None, None, None
         pending = [path for path in image_dir.glob("*.jpg") if not _is_durably_archived(path.name)]
         if not pending:
             return 0, None, None
@@ -179,12 +181,9 @@ def _health_snapshot() -> dict:
     pending_local_files, oldest_pending_age, oldest_pending_ts = _durable_pending_local_stats()
     with _upload_state_lock:
         in_memory_pending = sum(1 for state in _upload_state.values() if state in ("pending", "failed"))
-    if pending_local_files is None:
-        h["pending_local_files"] = in_memory_pending
-        h["archive_outbox_observed"] = False
-    else:
-        h["pending_local_files"] = max(pending_local_files, in_memory_pending)
-        h["archive_outbox_observed"] = True
+    h["pending_local_files"] = pending_local_files
+    h["worker_pending_files"] = in_memory_pending
+    h["archive_outbox_observed"] = pending_local_files is not None
     h["oldest_pending_local_age_seconds"] = oldest_pending_age
     h["oldest_pending_local_ts"] = oldest_pending_ts
     h["archive_health_observed_at"] = time.time()
@@ -196,7 +195,7 @@ def _health_snapshot() -> dict:
             and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
         )
     )
-    h["archive_reconciliation_healthy"] = pending_local_files is not None and h["pending_local_files"] == 0
+    h["archive_reconciliation_healthy"] = pending_local_files == 0
     # Keep this field as the transport signal. A non-empty outbox can represent
     # a delayed database reconciliation or a capture with no eventual pass row;
     # it is not proof that Bremen uploads are failing.
@@ -376,9 +375,9 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
             continue
 
         if now - enqueued_at > _FLIP_RETRY_MAX_AGE_SEC:
-            if object_name in pending_pass_images:
+            if pending_pass_images is None or object_name in pending_pass_images:
                 logger.info(
-                    "Keeping %s: a durable failed-pass record still references the local image",
+                    "Keeping %s: durable pass-spool evidence is pending or unreadable",
                     object_name,
                 )
                 continue
@@ -566,6 +565,9 @@ def _bremen_upload_worker():
             except queue.Empty:
                 _maybe_retry_pending_flips()
                 _maybe_requeue_unarchived_uploads()
+                # Publish a periodic observation even when the street is quiet.
+                # Event-only publication makes a healthy idle archive look stale.
+                _write_health_to_redis()
                 continue
             try:
                 _process_upload_item(local_path, object_name, db)
@@ -705,13 +707,23 @@ def save_vehicle_image(
     image_dir.mkdir(parents=True, exist_ok=True)
 
     local_path = image_dir / filename
-
-    # Save to local filesystem. Closing the file makes the image visible to the
-    # upload worker without blocking the analyzer on a disk fsync.
     try:
         _, img_encoded = cv2.imencode(".jpg", cropped_image)
-        with open(local_path, "wb") as f:
-            f.write(img_encoded.tobytes())
+        partial_path = local_path.with_suffix(f"{local_path.suffix}.part")
+        try:
+            with partial_path.open("wb") as handle:
+                handle.write(img_encoded.tobytes())
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(partial_path, local_path)
+            directory_fd = os.open(str(image_dir), os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except Exception:
+            partial_path.unlink(missing_ok=True)
+            raise
 
         logger.debug(f"Saved vehicle image locally: {filename}")
         _record_local_save_success()

@@ -620,6 +620,8 @@ class TestLatePreStopRecovery:
         import stopsign.tracking as tracking
 
         saved = []
+        queued = []
+        monkeypatch.setattr(tracking, "enqueue_pass", lambda payload: queued.append(payload) or "pass-key")
         monkeypatch.setattr(
             tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "local://vehicle_late_42.jpg"
         )
@@ -656,8 +658,8 @@ class TestLatePreStopRecovery:
             self._update_car(car, ts, (bbox[0] + 50.0, 750.0), bbox)
             detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + (idx - 1) * 0.1)
 
-        assert mock_database.add_vehicle_pass.called
-        _, kwargs = mock_database.add_vehicle_pass.call_args
+        assert queued
+        kwargs = queued[0]
         assert kwargs["raw_payload"]["raw_complete"] is True
         assert kwargs["raw_complete"] is True
         assert kwargs["sample_count"] == len(kwargs["raw_payload"]["samples"])
@@ -719,6 +721,29 @@ class TestLatePreStopRecovery:
             detector.update_car_stop_status(car, ts, frame, prev_timestamp=base + max(idx - 1, 0) * 0.1)
 
         assert car.state.zone.passed_pre_stop is True
+
+    def test_failed_pass_admission_is_retried_without_resetting_track(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        detector = self._make_detector(mock_config, mock_database)
+        car = Car(id=10, config=mock_config)
+        payload = {"vehicle_id": car.id, "event_time": 1000.0}
+        car.state.pending_pass_kwargs = payload
+        attempts = iter([RuntimeError("sqlite temporarily unavailable"), "pass-key"])
+
+        def fake_enqueue(_payload):
+            result = next(attempts)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        monkeypatch.setattr(tracking, "enqueue_pass", fake_enqueue)
+
+        assert detector._retry_pending_pass(car) is True
+        assert car.state.pending_pass_kwargs is payload
+
+        assert detector._retry_pending_pass(car) is True
+        assert car.state.pending_pass_kwargs is None
 
 
 class TestCaptureDecision:

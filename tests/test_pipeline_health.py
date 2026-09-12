@@ -205,6 +205,23 @@ def test_archive_health_recomputes_pending_age_from_persisted_timestamp(monkeypa
     assert payload["archive_health_age_seconds"] == 900.0
 
 
+def test_archive_health_rejects_future_observation_age(monkeypatch):
+    now = 1_000.0
+    signature = {
+        "pending_local_files": 0,
+        "archive_outbox_observed": True,
+        "archive_health_observed_at": now + 30,
+    }
+    fake = _FakeRedis({"stopsign.archive.health": json.dumps(signature)})
+    monkeypatch.setattr("stopsign.web.routes.health.redis_lib.from_url", lambda url, **kw: fake)
+    monkeypatch.setattr("stopsign.web.routes.health.time.time", lambda: now)
+
+    response = asyncio.run(archive_health())
+    payload = json.loads(response.body)
+
+    assert payload["archive_health_age_seconds"] == -30.0
+
+
 def test_archive_health_shape_when_no_signal_yet(monkeypatch):
     fake = _FakeRedis({})
     monkeypatch.setattr("stopsign.web.routes.health.redis_lib.from_url", lambda url, **kw: fake)

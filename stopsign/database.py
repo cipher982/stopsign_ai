@@ -2,6 +2,8 @@ import functools
 import logging
 import os
 import time
+from datetime import UTC
+from datetime import datetime
 from typing import Dict
 from typing import List
 
@@ -244,6 +246,7 @@ class Database:
         stream_queue_depth_exit: int | None = None,
         stream_lag_est_sec: float | None = None,
         raw_payload: dict | None = None,
+        event_time: float | None = None,
         sample_count: int = 0,
         raw_complete: bool = True,
     ):
@@ -268,6 +271,8 @@ class Database:
                 stream_queue_depth_exit=stream_queue_depth_exit,
                 stream_lag_est_sec=stream_lag_est_sec,
             )
+            if event_time is not None:
+                vehicle_pass.timestamp = datetime.fromtimestamp(event_time, tz=UTC).replace(tzinfo=None)
             session.add(vehicle_pass)
             session.flush()
             pass_id = vehicle_pass.id

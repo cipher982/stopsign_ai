@@ -248,6 +248,30 @@ def test_archive_health_counts_disk_outbox_after_restart(monkeypatch, tmp_path):
     assert health["upload_healthy"] is True
 
 
+def test_archive_health_reports_unknown_when_local_outbox_is_missing(monkeypatch, tmp_path):
+    missing = tmp_path / "not-created"
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(missing))
+
+    health = image_storage._health_snapshot()
+
+    assert health["pending_local_files"] is None
+    assert health["archive_outbox_observed"] is False
+    assert health["upload_transport_healthy"] is False
+    assert health["archive_reconciliation_healthy"] is False
+
+
+def test_archive_health_does_not_inflate_disk_backlog_with_stale_worker_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    (tmp_path / "vehicle_on_disk.jpg").write_bytes(b"jpg")
+    image_storage._mark_upload_state("vehicle_on_disk.jpg", "failed")
+    image_storage._mark_upload_state("vehicle_stale_memory.jpg", "pending")
+
+    health = image_storage._health_snapshot()
+
+    assert health["pending_local_files"] == 1
+    assert health["worker_pending_files"] == 2
+
+
 def test_upload_worker_flips_db_path_with_retry(monkeypatch):
     from unittest.mock import MagicMock
 
@@ -329,10 +353,11 @@ def test_delayed_flip_retry_marks_uploaded_once_the_pass_row_lands():
     assert "x_123.jpg" not in image_storage._flip_pending
 
 
-def test_expired_flip_with_no_referencing_pass_releases_the_local_copy():
+def test_expired_flip_with_no_referencing_pass_releases_the_local_copy(monkeypatch):
     """An archived capture with no pass reference eventually becomes prune-eligible."""
     from unittest.mock import MagicMock
 
+    monkeypatch.setattr(image_storage, "pending_pass_image_paths", lambda: set())
     db = MagicMock()
     db.update_image_path.return_value = 0
     image_storage._mark_upload_state("x_orphan.jpg", "failed")
@@ -363,6 +388,21 @@ def test_expired_flip_waits_for_durable_failed_pass(monkeypatch, tmp_path):
 
     assert "x_pending.jpg" in image_storage._flip_pending
     assert image_storage._get_upload_state("x_pending.jpg") == "failed"
+
+
+def test_expired_flip_keeps_local_copy_when_pass_spool_is_unreadable(monkeypatch):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(image_storage, "pending_pass_image_paths", lambda: None)
+    db = MagicMock()
+    db.update_image_path.return_value = 0
+    image_storage._mark_upload_state("x_unknown.jpg", "failed")
+    image_storage._flip_pending["x_unknown.jpg"] = time.time() - image_storage._FLIP_RETRY_MAX_AGE_SEC - 1
+
+    image_storage._retry_pending_flips(db)
+
+    assert "x_unknown.jpg" in image_storage._flip_pending
+    assert image_storage._get_upload_state("x_unknown.jpg") == "failed"
 
 
 def test_start_upload_worker_retains_database_for_idle_reconciliation(monkeypatch):
@@ -428,6 +468,7 @@ def test_upload_worker_sweeps_pending_flips_on_its_idle_path(monkeypatch):
             raise _Stop
 
     monkeypatch.setattr(image_storage, "_maybe_retry_pending_flips", _fake_sweep)
+    monkeypatch.setattr(threading, "excepthook", lambda _args: None)
     monkeypatch.setattr(image_storage, "_upload_queue", queue.Queue())
     monkeypatch.setattr(image_storage, "FLIP_SWEEP_INTERVAL_SECONDS", 0.05)
 

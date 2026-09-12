@@ -1,133 +1,303 @@
-"""Durable spool for passes the database would not accept.
+"""Durable local outbox for completed vehicle passes.
 
-A pass is the product of the whole pipeline and it is written exactly once, at zone
-exit. The insert retries in line for a few seconds, which covers a blip; past that the
-pass was logged and dropped, so a database outage longer than the retry window - or a
-restart mid-write - lost the vehicle permanently.
-
-Failed writes are spooled to disk instead and replayed by a background worker, so the
-row lands when the database comes back rather than never. The worker starts at analyzer
-boot, which is also how a spool left behind by the previous process gets drained.
-
-Replays are idempotent: a pass with the same vehicle id and zone exit time is looked up
-before inserting, so a write that committed but never returned cannot duplicate.
+A completed pass is accepted locally before any remote database delivery is attempted.
+The outbox is SQLite-backed with full synchronous commits, and each payload remains
+pending until the remote insert is acknowledged or an idempotency lookup proves that
+the insert committed. A process restart therefore resumes delivery without losing a
+pass, and capacity pressure never discards the oldest accepted record.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import math
 import os
+import sqlite3
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 SPOOL_DIR = os.getenv("PASS_SPOOL_DIR", "/app/data/pending-passes")
 RETRY_INTERVAL_SECONDS = float(os.getenv("PASS_SPOOL_RETRY_SECONDS", "60"))
 RETRY_BATCH = 20
-SPOOL_MAX_FILES = 5000
+
+_lock = threading.Lock()
 
 
-def pending_pass_image_paths() -> set[str]:
-    """Return image paths held by durable pass records waiting for the database."""
+def _database_path() -> Path:
+    return Path(SPOOL_DIR) / "passes.sqlite3"
+
+
+_retry_lock = threading.Lock()
+_worker_started = False
+_worker_wakeup = threading.Event()
+
+_CREATE_TABLE = """
+CREATE TABLE IF NOT EXISTS pending_passes (
+    pass_key TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    updated_at REAL NOT NULL
+)
+"""
+
+
+def _open_database(*, read_only: bool = False) -> sqlite3.Connection:
+    path = _database_path()
+    if read_only:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30.0)
+        return connection
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path, timeout=30.0)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous=FULL")
+    connection.execute(_CREATE_TABLE)
+    connection.commit()
+    return connection
+
+
+def _encode_payload(kwargs: dict[str, Any]) -> str:
+    return json.dumps(kwargs, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _pass_key(payload_json: str) -> str:
+    return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+
+
+def _write_fallback_json(pass_key: str, payload_json: str) -> Path:
+    """Keep a durable file fallback when the SQLite outbox cannot be opened."""
+    directory = Path(SPOOL_DIR)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"pass_{pass_key}.json"
+    partial = target.with_suffix(".part")
+    with partial.open("w", encoding="utf-8") as handle:
+        handle.write(payload_json)
+        handle.flush()
+        os.fsync(handle.fileno())
+    partial.replace(target)
+    try:
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError:
+        logger.warning("Could not fsync pass outbox directory %s", directory)
+    return target
+
+
+def _read_json_file(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        logger.error("Unreadable legacy pass outbox file %s: %s", path.name, exc)
+        return None
+    if not isinstance(payload, dict):
+        logger.error("Legacy pass outbox file %s does not contain an object", path.name)
+        return None
+    return payload
+
+
+def _migrate_legacy_files(connection: sqlite3.Connection) -> None:
+    """Adopt JSON records written by pre-SQLite versions without losing them."""
     directory = Path(SPOOL_DIR)
     if not directory.exists():
-        return set()
+        return
 
-    image_paths: set[str] = set()
-    for path in directory.glob("pass_*.json"):
+    migrated: list[Path] = []
+    with connection:
+        for path in sorted(directory.glob("pass_*.json"), key=lambda item: item.stat().st_mtime):
+            payload = _read_json_file(path)
+            if payload is None:
+                continue
+            if "event_time" not in payload:
+                legacy_time = payload.get("exit_time")
+                if (
+                    isinstance(legacy_time, bool)
+                    or not isinstance(legacy_time, (int, float))
+                    or not math.isfinite(legacy_time)
+                ):
+                    logger.error(
+                        "Legacy pass outbox file %s has no trustworthy event time; leaving it for recovery",
+                        path.name,
+                    )
+                    continue
+                payload["event_time"] = float(legacy_time)
+            try:
+                payload_json = _encode_payload(payload)
+            except (TypeError, ValueError) as exc:
+                logger.error("Legacy pass outbox file %s is not serializable: %s", path.name, exc)
+                continue
+            now = time.time()
+            connection.execute(
+                "INSERT OR IGNORE INTO pending_passes "
+                "(pass_key, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (_pass_key(payload_json), payload_json, path.stat().st_mtime, now),
+            )
+            migrated.append(path)
+
+    # Delete only after the SQLite transaction committed. A crash before this point
+    # leaves the JSON file for the next boot; INSERT OR IGNORE makes that harmless.
+    for path in migrated:
         try:
-            payload = json.loads(path.read_text())
-        except (OSError, TypeError, ValueError):
-            continue
-        image_path = payload.get("image_path") if isinstance(payload, dict) else None
+            path.unlink()
+        except OSError as exc:
+            logger.warning("Migrated pass outbox file %s but could not remove it: %s", path.name, exc)
+
+
+def _pending_payloads() -> tuple[list[dict[str, Any]], bool]:
+    """Return pending payloads and whether every durable source was readable."""
+    payloads: list[dict[str, Any]] = []
+    complete = True
+    try:
+        connection = _open_database(read_only=True)
+        try:
+            rows = connection.execute("SELECT payload_json FROM pending_passes").fetchall()
+        finally:
+            connection.close()
+        for (payload_json,) in rows:
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError):
+                complete = False
+                continue
+            if isinstance(payload, dict):
+                payloads.append(payload)
+            else:
+                complete = False
+    except (OSError, sqlite3.Error) as exc:
+        logger.error("Could not read pass outbox database: %s", exc)
+        complete = False
+
+    directory = Path(SPOOL_DIR)
+    if not directory.is_dir():
+        return payloads, False
+    try:
+        legacy_paths = list(directory.glob("pass_*.json"))
+    except OSError as exc:
+        logger.error("Could not enumerate pass outbox files: %s", exc)
+        return payloads, False
+    for path in legacy_paths:
+        payload = _read_json_file(path)
+        if payload is not None:
+            payloads.append(payload)
+        else:
+            complete = False
+    return payloads, complete
+
+
+def pending_pass_image_paths() -> set[str] | None:
+    """Return image paths, or ``None`` when durable spool evidence is incomplete."""
+    payloads, complete = _pending_payloads()
+    if not complete:
+        return None
+    image_paths: set[str] = set()
+    for payload in payloads:
+        image_path = payload.get("image_path")
         if isinstance(image_path, str) and image_path.startswith("local://"):
             image_paths.add(image_path.removeprefix("local://"))
     return image_paths
 
 
-_lock = threading.Lock()
-_worker_started = False
-
-
-def spool_failed_pass(db: Any, kwargs: dict[str, Any]) -> Optional[Path]:
-    """Write a pass that could not be inserted to disk, for the worker to replay."""
+def enqueue_pass(kwargs: dict[str, Any]) -> str:
+    """Durably admit a completed pass before attempting remote delivery."""
+    payload_json = _encode_payload(kwargs)
+    pass_key = _pass_key(payload_json)
+    now = time.time()
     try:
-        directory = Path(SPOOL_DIR)
-        directory.mkdir(parents=True, exist_ok=True)
-
-        existing = sorted(directory.glob("pass_*.json"), key=lambda p: p.stat().st_mtime)
-        if len(existing) >= SPOOL_MAX_FILES:
-            # Bounded like everything else here: the oldest goes before the newest is
-            # refused, because a newer pass is likelier to still be in the zone.
-            for stale in existing[: len(existing) - SPOOL_MAX_FILES + 1]:
-                stale.unlink(missing_ok=True)
-            logger.error("Pass spool full; discarded the oldest entries")
-
-        target = directory / f"pass_{uuid.uuid4().hex}.json"
-        partial = target.with_suffix(".part")
-        # Write-then-rename: a half-written spool file is never replayed.
-        partial.write_text(json.dumps(kwargs))
-        partial.replace(target)
-        logger.warning(
-            "Spooled pass for vehicle %s (%s) after the database refused it",
-            kwargs.get("vehicle_id"),
-            target.name,
-        )
-        start_spool_worker(db)
-        return target
-    except Exception as exc:  # noqa: BLE001 - the caller is already on a failure path
-        logger.error("Failed to spool pass for vehicle %s: %s", kwargs.get("vehicle_id"), exc)
-        return None
-
-
-def retry_spooled_passes(db: Any) -> int:
-    """Insert every spooled pass the database will now accept. Returns how many landed."""
-    directory = Path(SPOOL_DIR)
-    if not directory.exists():
-        return 0
-
-    landed = 0
-    pending = sorted(directory.glob("pass_*.json"), key=lambda p: p.stat().st_mtime)
-    for path in pending[:RETRY_BATCH]:
+        connection = _open_database()
         try:
-            kwargs = json.loads(path.read_text())
-        except Exception as exc:  # noqa: BLE001 - an unreadable spool file is dead weight
-            logger.error("Discarding unreadable spool file %s: %s", path.name, exc)
-            path.unlink(missing_ok=True)
-            continue
+            with connection:
+                connection.execute(
+                    "INSERT OR IGNORE INTO pending_passes "
+                    "(pass_key, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                    (pass_key, payload_json, now, now),
+                )
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error) as exc:
+        # A second durable representation is preferable to dropping an accepted
+        # pass when SQLite is locked/corrupt. It is adopted on the next sweep.
+        logger.error("SQLite pass outbox unavailable; using durable file fallback: %s", exc)
+        _write_fallback_json(pass_key, payload_json)
 
+    _worker_wakeup.set()
+    logger.info("Durably queued vehicle pass %s", kwargs.get("vehicle_id"))
+    return pass_key
+
+
+def _record_attempt_failure(connection: sqlite3.Connection, pass_key: str, error: str) -> None:
+    connection.execute(
+        "UPDATE pending_passes SET attempts = attempts + 1, last_error = ?, updated_at = ? WHERE pass_key = ?",
+        (error[:2000], time.time(), pass_key),
+    )
+    connection.commit()
+
+
+def retry_pending_passes(db: Any) -> int:
+    """Deliver pending passes; keep every row until acknowledgement or proof."""
+    with _retry_lock:
         try:
-            if db.has_vehicle_pass(kwargs.get("vehicle_id"), kwargs.get("exit_time")):
-                logger.info("Spooled pass %s was already written; dropping the copy", path.name)
-                path.unlink(missing_ok=True)
-                continue
-            db.add_vehicle_pass(**kwargs)
-        except Exception as exc:  # noqa: BLE001 - the database is the thing that is down
-            logger.warning("Spooled pass %s still cannot be written: %s", path.name, exc)
-            break  # still down: stop here and try again next sweep
-        path.unlink(missing_ok=True)
-        landed += 1
-        logger.info("Recovered spooled pass for vehicle %s from %s", kwargs.get("vehicle_id"), path.name)
-    return landed
+            connection = _open_database()
+        except (OSError, sqlite3.Error) as exc:
+            logger.error("Pass outbox sweep cannot open SQLite database: %s", exc)
+            return 0
+
+        landed = 0
+        try:
+            _migrate_legacy_files(connection)
+            rows = connection.execute(
+                "SELECT pass_key, payload_json FROM pending_passes ORDER BY created_at, pass_key LIMIT ?",
+                (RETRY_BATCH,),
+            ).fetchall()
+            for pass_key, payload_json in rows:
+                try:
+                    kwargs = json.loads(payload_json)
+                    if not isinstance(kwargs, dict):
+                        raise ValueError("payload is not an object")
+                except (TypeError, ValueError) as exc:
+                    _record_attempt_failure(connection, pass_key, f"invalid payload: {exc}")
+                    continue
+
+                try:
+                    if db.has_vehicle_pass(kwargs.get("vehicle_id"), kwargs.get("exit_time")):
+                        logger.info("Pending pass %s was already written; dropping the acknowledged copy", pass_key)
+                    else:
+                        db.add_vehicle_pass(**kwargs)
+                        landed += 1
+                        logger.info("Recovered pending pass for vehicle %s", kwargs.get("vehicle_id"))
+                    with connection:
+                        connection.execute("DELETE FROM pending_passes WHERE pass_key = ?", (pass_key,))
+                except Exception as exc:  # noqa: BLE001 - the database is the retry boundary
+                    logger.warning("Pending pass %s still cannot be written: %s", pass_key, exc)
+                    _record_attempt_failure(connection, pass_key, str(exc))
+                    continue
+        finally:
+            connection.close()
+        return landed
 
 
-def _spool_worker_loop(db: Any) -> None:
+def _outbox_worker_loop(db: Any) -> None:
     while True:
         try:
-            retry_spooled_passes(db)
+            retry_pending_passes(db)
         except Exception as exc:  # noqa: BLE001 - the worker outlives its failures
-            logger.error("Pass spool sweep failed: %s", exc)
-        time.sleep(RETRY_INTERVAL_SECONDS)
+            logger.error("Pass outbox sweep failed: %s", exc)
+        _worker_wakeup.wait(RETRY_INTERVAL_SECONDS)
+        _worker_wakeup.clear()
 
 
-def start_spool_worker(db: Any) -> None:
-    """Start the replay worker once; the first sweep runs immediately."""
+def start_pass_outbox_worker(db: Any) -> None:
+    """Start the replay worker once, migrating pre-rewrite JSON records first."""
     global _worker_started
 
     if db is None:
@@ -135,8 +305,16 @@ def start_spool_worker(db: Any) -> None:
     with _lock:
         if _worker_started:
             return
+        try:
+            connection = _open_database()
+            try:
+                _migrate_legacy_files(connection)
+            finally:
+                connection.close()
+        except (OSError, sqlite3.Error) as exc:
+            logger.error("Pass outbox migration failed at analyzer boot: %s", exc)
         _worker_started = True
 
-    thread = threading.Thread(target=_spool_worker_loop, args=(db,), daemon=True, name="pass-spool")
+    thread = threading.Thread(target=_outbox_worker_loop, args=(db,), daemon=True, name="pass-outbox")
     thread.start()
-    logger.info("Pass spool worker started (dir %s, every %.0fs)", SPOOL_DIR, RETRY_INTERVAL_SECONDS)
+    logger.info("Pass outbox worker started (database %s, every %.0fs)", _database_path(), RETRY_INTERVAL_SECONDS)

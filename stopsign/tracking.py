@@ -1,6 +1,5 @@
 import logging
 import math
-import time
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -18,7 +17,7 @@ from stopsign.image_storage import CROP_PADDING_FACTOR
 from stopsign.image_storage import compute_crop_rect
 from stopsign.image_storage import save_vehicle_image
 from stopsign.kalman_filter import KalmanFilterWrapper
-from stopsign.pass_spool import spool_failed_pass
+from stopsign.pass_spool import enqueue_pass
 from stopsign.settings import PROCESSED_FRAME_KEY
 from stopsign.trajectory_scorer import TrajectoryScore
 from stopsign.trajectory_scorer import score_samples
@@ -91,6 +90,7 @@ class CarState:
     zone: ZoneState = field(default_factory=ZoneState)
     capture: CaptureState = field(default_factory=CaptureState)
     samples: List[List[float]] = field(default_factory=list)
+    pending_pass_kwargs: Optional[Dict] = None
 
 
 class Car:
@@ -798,9 +798,32 @@ class StopDetector:
         else:
             car.state.zone.stop_position = (0.0, 0.0)
 
+    def _retry_pending_pass(self, car: Car) -> bool:
+        """Retry a completed pass whose durable admission previously failed."""
+        payload = car.state.pending_pass_kwargs
+        if payload is None:
+            return False
+        try:
+            pass_key = enqueue_pass(payload)
+        except Exception as exc:  # noqa: BLE001 - keep the completion attached to the track
+            logger.error("Completed pass is still not durably admitted for car_id=%s: %s", car.id, exc)
+            analyzer = self._video_analyzer
+            if analyzer is not None:
+                try:
+                    analyzer.increment_exception_counter("PassOutboxError", "retry_enqueue_pass")
+                except Exception:
+                    pass
+            return True
+        logger.info("Previously rejected vehicle pass durably queued: key=%s vehicle_id=%s", pass_key, car.id)
+        car.state.pending_pass_kwargs = None
+        self._reset_car_state(car)
+        return True
+
     def update_car_stop_status(
         self, car: Car, timestamp: float, frame: np.ndarray, prev_timestamp: float = 0.0
     ) -> None:
+        if self._retry_pending_pass(car):
+            return
         # Lazy initialization of geometry once video dimensions are available
         if self._video_analyzer is not None and (
             self.stop_zone is None or self.pre_stop_line_proc is None or self.capture_line_proc is None
@@ -947,11 +970,6 @@ class StopDetector:
                     sample_count = len(car.state.samples)
                 except Exception as e:
                     logger.error("Failed to build raw payload for car_id=%s: %s", car.id, e)
-
-                # Persist the pass. A transient DB error (e.g. a connection dropout to
-                # clifford) must not quietly drop the pass: retry briefly with backoff,
-                # and if the database is still refusing, spool the payload to disk so a
-                # background worker can land it later.
                 pass_kwargs = {
                     "vehicle_id": car.id,
                     "time_in_zone": car.state.zone.time_in_zone,
@@ -961,6 +979,7 @@ class StopDetector:
                     "entry_time": car.state.zone.entry_time,
                     "exit_time": car.state.zone.exit_time,
                     "entry_speed": entry_speed,
+                    "event_time": car.state.zone.exit_time,
                     "decel_score": decel_score,
                     "track_quality": track_quality,
                     "stop_pos_x": stop_pos_x,
@@ -971,48 +990,37 @@ class StopDetector:
                     "sample_count": sample_count,
                     "raw_complete": raw_payload.get("raw_complete", False) if raw_payload else False,
                 }
-                pass_id = None
-                insert_attempt = 0
-                while True:
-                    try:
-                        pass_id = self.db.add_vehicle_pass(**pass_kwargs)
-                        break
-                    except Exception as e:
-                        insert_attempt += 1
-                        logger.error(
-                            "Failed to persist vehicle pass for car_id=%s (attempt %d/%d): %s",
-                            car.id,
-                            insert_attempt,
-                            VEHICLE_PASS_INSERT_ATTEMPTS,
-                            e,
-                        )
-                        if insert_attempt >= VEHICLE_PASS_INSERT_ATTEMPTS:
-                            break
-                        time.sleep(insert_attempt)  # 1s, 2s backoff
-                if pass_id is None:
-                    logger.error(
-                        "Vehicle pass not written for car_id=%s after %d insert attempts - "
-                        "spooling it to disk (time_in_zone=%.2fs)",
+
+                # Admit the completed pass to the local durable outbox before
+                # attempting any remote database write. The worker owns retries,
+                # restart recovery, and idempotent acknowledgement.
+                try:
+                    pass_key = enqueue_pass(pass_kwargs)
+                except Exception as e:
+                    logger.exception(
+                        "Failed to durably queue vehicle pass for car_id=%s; retaining completion on track: %s",
                         car.id,
-                        insert_attempt,
-                        car.state.zone.time_in_zone,
+                        e,
                     )
-                    spool_failed_pass(self.db, pass_kwargs)
+                    car.state.pending_pass_kwargs = pass_kwargs
                     analyzer = self._video_analyzer
                     if analyzer is not None:
                         try:
-                            analyzer.increment_exception_counter("DatabaseError", "add_vehicle_pass")
+                            analyzer.increment_exception_counter("PassOutboxError", "enqueue_pass")
                         except Exception:
                             pass
-                else:
-                    logger.info(
-                        f"Vehicle pass recorded: ID={car.id}, "
-                        f"Time in zone={car.state.zone.time_in_zone:.2f}s, "
-                        f"Stop duration={car.state.zone.stop_duration:.2f}s, "
-                        f"Min speed={car.state.zone.min_speed:.2f}px/s "
-                        f"Timestamp={datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')}"
-                    )
-                # Reset state
+                    return
+                logger.info(
+                    "Vehicle pass durably queued: key=%s vehicle_id=%s "
+                    "time_in_zone=%.2fs stop_duration=%.2fs min_speed=%.2fpx/s "
+                    "timestamp=%s",
+                    pass_key,
+                    car.id,
+                    car.state.zone.time_in_zone,
+                    car.state.zone.stop_duration,
+                    car.state.zone.min_speed,
+                    datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+                )
                 self._reset_car_state(car)
 
         if car.state.zone.in_zone:
