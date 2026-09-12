@@ -167,3 +167,8 @@ which streams the object from Bremen.
   acquisition; over 600 imaged ones the line shot is unchanged for 97.5%. The
   remaining ~4% are first seen at or behind the zone centre (0.2% already inside
   the zone), where the only "picture" available is an exit-angle crop.
+  Live after deploy: the first two passes recorded were both late-track captures
+  (capture x=935 and 869 against a line at 1269) and both serve as images
+  (416x173, 433x183 - the same size a line capture produces), against a 31%
+  no-image rate in the six hours before. The labeling cron picks these up with no
+  change, since it selects unlabeled passes that have an `image_path`.
