@@ -543,6 +543,63 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         thread.start()
         logger.info(f"Analyzer health server listening on port {ANALYZER_HEALTH_PORT}")
 
+    def _pending_frame_count(self) -> Optional[int]:
+        """How many frames are waiting, or None when that cannot be determined.
+
+        None keeps the watchdog's original behaviour (terminate): not knowing whether
+        there is work is not a reason to assume there is none.
+        """
+        try:
+            return int(self.redis_client.llen(RAW_FRAME_KEY))  # type: ignore[union-attr]
+        except Exception:
+            return None
+
+    def _stall_should_exit(self, lag: float) -> bool:
+        """What does this stall mean: nothing to process, or a wedged analyzer?
+
+        An empty frame queue is upstream starvation - restarting cannot fix it, and
+        during the 2026-09-12 camera outage it tried anyway, 280 times in ten hours,
+        each restart reloading the model against a dead camera. Frames waiting while
+        nothing is processed is the wedge this watchdog exists for. When the queue
+        depth cannot be read, the original behaviour stands: not knowing is not a
+        reason to assume there is no work.
+        """
+        pending = self._pending_frame_count()
+        if pending == 0:
+            logger.warning(
+                "No frames processed for %.1fs and the frame queue is empty - "
+                "upstream starvation, not an analyzer stall; waiting",
+                lag,
+            )
+            return False
+
+        logger.error(
+            "Analyzer watchdog trip: no frames processed for %.1fs (threshold %.1fs, %s frame(s) waiting)",
+            lag,
+            ANALYZER_STALL_SEC,
+            pending,
+        )
+        # Record the stall reason observably BEFORE exiting so the pipeline-health
+        # endpoint/job can surface why the analyzer died.
+        try:
+            self.redis_client.set(
+                ANALYZER_STALL_KEY,
+                json.dumps(
+                    {
+                        "triggered_at": time.time(),
+                        "lag_seconds": lag,
+                        "threshold_seconds": ANALYZER_STALL_SEC,
+                        "pending_frames": pending,
+                        "reason": f"no frames processed for {lag:.1f}s "
+                        f"(threshold {ANALYZER_STALL_SEC:.1f}s) with {pending} frame(s) waiting",
+                    }
+                ),
+                ex=900,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record analyzer stall reason: {e}")
+        return True
+
     def _start_stall_watchdog(self):
         if ANALYZER_STALL_SEC <= 0:
             logger.info("Analyzer stall watchdog disabled (ANALYZER_STALL_SEC <= 0)")
@@ -557,30 +614,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 time.sleep(5)
                 lag = time.time() - self.last_processed_time
                 if lag > ANALYZER_STALL_SEC:
-                    logger.error(
-                        "Analyzer watchdog trip: no frames processed for %.1fs (threshold %.1fs)",
-                        lag,
-                        ANALYZER_STALL_SEC,
-                    )
-                    # Record the stall reason observably BEFORE exiting so the
-                    # pipeline-health endpoint/job can surface why the analyzer died.
-                    try:
-                        self.redis_client.set(
-                            ANALYZER_STALL_KEY,
-                            json.dumps(
-                                {
-                                    "triggered_at": time.time(),
-                                    "lag_seconds": lag,
-                                    "threshold_seconds": ANALYZER_STALL_SEC,
-                                    "reason": f"no frames processed for {lag:.1f}s "
-                                    f"(threshold {ANALYZER_STALL_SEC:.1f}s)",
-                                }
-                            ),
-                            ex=900,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to record analyzer stall reason: {e}")
-                    os._exit(1)
+                    if self._stall_should_exit(lag):
+                        os._exit(1)
+                    # Starvation: carry on waiting rather than churning the process.
+                    self.last_processed_time = time.time()
 
         thread = threading.Thread(target=watchdog_loop, daemon=True)
         thread.start()
