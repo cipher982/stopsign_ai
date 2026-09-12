@@ -56,7 +56,10 @@ services:
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
       FFMPEG_ENCODER: ${FFMPEG_ENCODER}
       FFMPEG_PRESET: ${FFMPEG_PRESET}
-      # HLS staleness threshold and watchdog are baked into the service code
+      # Restart the encoder when it has produced no fresh HLS for this long; the
+      # freshness threshold itself (~180s, capped in stopsign/hls_health.py) is
+      # separate. Without this a wedged encoder never restarts.
+      PIPELINE_WATCHDOG_SEC: ${PIPELINE_WATCHDOG_SEC:-180}
     volumes:
       - storage-dir:/app/data
       - /mnt/hls-stream:/app/data/stream

@@ -282,7 +282,7 @@ Notes
 - `ANALYZER_CATCHUP_SEC` (default 15): skip/trim stale raw frames older than this age to jump back to live.
 - `ANALYZER_CATCHUP_KEEP_N` (default 30): how many newest raw frames to retain when trimming.
 - `FRAME_STALL_SEC` (default 120): readiness requires frames newer than this.
-- `PIPELINE_WATCHDOG_SEC` (disabled by default): restart ffmpeg_service on sustained staleness.
+- `PIPELINE_WATCHDOG_SEC` (default 180 in production): exit ffmpeg_service after this long with no fresh HLS segments, so `restart: always` re-creates the encoder (0 disables).
 - `REDIS_MAX_BACKOFF_SEC` (default 30) and `REDIS_INITIAL_BACKOFF_SEC` (default 0.5): reconnect strategy.
 
 ---
