@@ -230,6 +230,10 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         # Error and performance metrics
         self.exception_counter = Counter("exceptions_total", "Total number of exceptions", ["type", "method"])
         self.frames_discarded = Counter("frames_discarded_total", "Frames skipped because they could not be decoded")
+        self.yolo_stale_frames = Counter(
+            "yolo_stale_frames_total",
+            "Frames whose YOLO inference was skipped because capture lag exceeded the budget",
+        )
         self.current_memory_usage = Gauge("current_memory_usage_bytes", "Current memory usage of the process")
         self.current_cpu_usage = Gauge("current_cpu_usage_percent", "Current CPU usage percentage of the process")
 
@@ -645,6 +649,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         frame_age_sec = time.time() - float(capture_ts)
         yolo_lag_skip = frame_age_sec > (1.5 * frame_budget_sec)
         if yolo_lag_skip:
+            self.yolo_stale_frames.inc()
             logger.debug(
                 "YOLO skipped: frame %.0fms stale (budget %.0fms)",
                 frame_age_sec * 1000,
