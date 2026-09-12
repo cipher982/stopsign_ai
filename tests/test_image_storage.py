@@ -1,3 +1,4 @@
+import json
 import os
 import queue
 import threading
@@ -20,6 +21,7 @@ def isolate_image_storage_state(monkeypatch):
     monkeypatch.setattr(image_storage, "_last_flip_sweep_monotonic", 0.0)
     monkeypatch.setattr(image_storage, "_last_requeue_sweep_monotonic", 0.0)
     monkeypatch.setattr(image_storage, "_health", dict(image_storage._health))
+    monkeypatch.setattr(image_storage, "_health_seeded", True)
     monkeypatch.setattr(image_storage, "_redis_attempted", True)
     monkeypatch.setattr(image_storage, "_redis_client", None)
 
@@ -181,6 +183,50 @@ def test_archive_outage_captures_are_retried_from_disk(monkeypatch, tmp_path):
     queued = {upload_queue.get_nowait()[1] for _ in range(upload_queue.qsize())}
     assert requeued == 2
     assert queued == {"vehicle_failed.jpg", "vehicle_never_queued.jpg"}
+
+
+def test_a_capture_waiting_on_its_row_is_not_uploaded_twice(monkeypatch, tmp_path):
+    """The object is already in the archive; only the database path flip is outstanding."""
+    upload_queue: queue.Queue = queue.Queue()
+    monkeypatch.setattr(image_storage, "_upload_queue", upload_queue)
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_SECRET_KEY", "secret")
+
+    old = time.time() - 600
+    path = tmp_path / "vehicle_awaiting_flip.jpg"
+    path.write_bytes(b"jpg")
+    os.utime(path, (old, old))
+    image_storage._mark_upload_state("vehicle_awaiting_flip.jpg", "failed")
+    with image_storage._upload_state_lock:
+        image_storage._flip_pending["vehicle_awaiting_flip.jpg"] = old
+
+    assert image_storage._maybe_requeue_unarchived_uploads(now=1000.0) == 0
+    assert upload_queue.empty()
+
+
+def test_archive_health_survives_a_restart(monkeypatch):
+    """A restart must not announce a healthy archive that was failing a second ago."""
+    monkeypatch.setattr(image_storage, "_health_seeded", False)
+    monkeypatch.setattr(image_storage, "_health", dict(image_storage._health))
+
+    stored = {
+        "upload_failures": 3,
+        "upload_successes": 0,
+        "last_upload_failure_ts": 2000.0,
+        "last_upload_success_ts": 1000.0,
+    }
+
+    class _Client:
+        def get(self, _key):
+            return json.dumps(stored)
+
+    monkeypatch.setattr(image_storage, "ARCHIVE_HEALTH_REDIS_KEY", "k")
+    monkeypatch.setattr(image_storage, "_get_redis_client", lambda: _Client())
+
+    health = image_storage._health_snapshot()
+
+    assert health["upload_failures"] == 3
+    assert health["upload_healthy"] is False
 
 
 def test_upload_worker_flips_db_path_with_retry(monkeypatch):

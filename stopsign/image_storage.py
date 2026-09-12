@@ -111,7 +111,43 @@ def _get_redis_client():
     return _redis_client
 
 
+_health_seeded = False
+
+
+def _seed_health_from_redis() -> None:
+    """Carry the archive counters and timestamps across a restart.
+
+    They live in memory and the web reads them through Redis, so a restart reset them
+    to zero - and the derived flags read "healthy" from zero. Every one of the 280
+    analyzer restarts during the 2026-09-12 archive outage therefore announced a
+    healthy archive for its first seconds, on a signal the pipeline-health check
+    quotes. Seeding keeps the flag honest across restarts.
+    """
+    global _health_seeded
+
+    if _health_seeded:
+        return
+    _health_seeded = True
+
+    client = _get_redis_client()
+    if client is None:
+        return
+    try:
+        stored = json.loads(client.get(ARCHIVE_HEALTH_REDIS_KEY) or "{}")
+    except Exception:
+        return
+    if not isinstance(stored, dict):
+        return
+
+    with _health_lock:
+        for key in _health:
+            value = stored.get(key)
+            if isinstance(value, (int, float)):
+                _health[key] = value
+
+
 def _health_snapshot() -> dict:
+    _seed_health_from_redis()
     with _health_lock:
         h = dict(_health)
     h["upload_healthy"] = h["upload_failures"] == 0 or (
@@ -216,6 +252,12 @@ def _maybe_retry_pending_flips(now: Optional[float] = None) -> None:
 def _forget_pending_flip(object_name: str) -> None:
     with _upload_state_lock:
         _flip_pending.pop(object_name, None)
+
+
+def _is_flip_pending(object_name: str) -> bool:
+    """Is this object already archived, with only its database path left to flip?"""
+    with _upload_state_lock:
+        return object_name in _flip_pending
 
 
 def _retry_pending_flips(db: Optional[Database]) -> None:
@@ -364,6 +406,10 @@ def _maybe_requeue_unarchived_uploads(now: Optional[float] = None) -> int:
     missed its window (an archive outage, an overflow, a restart mid-upload) would
     otherwise sit on disk forever while its pass kept pointing at ``local://``.
     Returns the number re-queued.
+
+    Two kinds of file are left alone: anything already archived and flipped, and
+    anything the flip sweep is still holding - that upload succeeded, and re-uploading
+    it would be work for nothing.
     """
     global _last_requeue_sweep_monotonic
 
@@ -387,7 +433,7 @@ def _maybe_requeue_unarchived_uploads(now: Optional[float] = None) -> int:
                 continue
         except OSError:
             continue
-        if _get_upload_state(path.name) != "uploaded":
+        if _get_upload_state(path.name) != "uploaded" and not _is_flip_pending(path.name):
             candidates.append(path)
 
     candidates.sort(key=lambda p: p.stat().st_mtime)
