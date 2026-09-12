@@ -741,6 +741,25 @@ class StopDetector:
             and self._in_approach_corridor(car.state.location)
         )
 
+    def capture_if_approaching(self, car: Car, timestamp: float, frame: np.ndarray) -> bool:
+        """Photograph a moving vehicle whose track has not cleared the parked gate yet.
+
+        The analyzer only runs the stop-zone logic for cars it no longer judges parked,
+        and a track acquired mid-approach starts out parked until it has moved long
+        enough to clear that gate. Waiting for it costs the picture: replayed over 600
+        stored late-track passes, photographing from the first evaluated frame recovers
+        577 of them and waiting for the gate recovers 451. This runs the capture
+        decision alone - no zone state, no pass, nothing recorded - for those cars.
+        """
+        if car.state.capture.image_captured or car.state.capture.latched:
+            return False
+        if self.capture_line_proc is None or self.stop_zone is None:
+            return False
+        if not self._should_capture(car, self._get_car_polygon(car.state.bbox)):
+            return False
+        self.capture_car_image(car, timestamp, frame)
+        return True
+
     def _score_current_trajectory(self, car: Car, samples: list[list[float]] | None = None) -> TrajectoryScore:
         if self.stop_zone is None or self.pre_stop_line_proc is None:
             return TrajectoryScore(False, "bad_geometry")

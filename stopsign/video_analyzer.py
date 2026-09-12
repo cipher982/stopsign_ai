@@ -672,6 +672,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                     metrics.stop_violations.add(violations_detected)
                     span.set_attribute("violations.detected_count", violations_detected)
 
+            # A track acquired mid-approach is judged parked until it has moved long
+            # enough to clear that gate, and waiting for it puts the vehicle past the
+            # zone centre where no usable view is left. Take the picture now; the
+            # zone logic above still waits.
+            for car in self.car_tracker.get_cars().values():
+                if car.id in current_ids and car.state.motion.is_parked:
+                    self.stop_detector.capture_if_approaching(car, ts_for_logic, processed_frame)
+
             stop_detection_time = time.time() - stop_detection_start
             self.stop_detection_time.observe(stop_detection_time)
         else:

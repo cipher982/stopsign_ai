@@ -854,6 +854,53 @@ class TestCaptureDecision:
 
         assert len(saved) == 1, "one photograph per tracked vehicle"
 
+    def test_a_track_not_yet_unparked_is_still_photographed(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(
+            tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "local://early.jpg"
+        )
+        detector = self._detector(mock_config, mock_database)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+
+        car = Car(id=1, config=mock_config)
+        base = 1000.0
+        for idx, x in enumerate([1185.0, 1120.0, 1060.0]):
+            ts = base + idx * 0.1
+            car.update((x, 750.0), ts, (x - 60.0, 700.0, x + 60.0, 800.0))
+            car.state.raw_speed = car.state.speed
+
+        # The analyzer's active-car filter excludes this one, so nothing has called the
+        # stop-zone logic yet; the capture path is what must not wait for the gate.
+        car.state.motion.is_parked = True
+        entry_time_before = car.state.zone.entry_time
+
+        assert detector.capture_if_approaching(car, base + 0.3, frame) is True
+
+        assert len(saved) == 1
+        assert car.state.capture.latched is True
+        assert car.state.zone.entry_time == entry_time_before, "capture must not touch zone state"
+
+    def test_capture_if_approaching_leaves_a_parked_vehicle_alone(self, monkeypatch, mock_config, mock_database):
+        import stopsign.tracking as tracking
+
+        saved = []
+        monkeypatch.setattr(tracking, "save_vehicle_image", lambda **kwargs: saved.append(kwargs) or "x.jpg")
+        detector = self._detector(mock_config, mock_database)
+        frame = np.zeros((900, 1800, 3), dtype=np.uint8)
+
+        car = Car(id=1, config=mock_config)
+        base = 1000.0
+        for idx, x in enumerate([1100.0, 1101.0, 1099.0]):
+            ts = base + idx * 0.1
+            car.update((x, 750.0), ts, (x - 60.0, 700.0, x + 60.0, 800.0))
+            car.state.raw_speed = car.state.speed
+        car.state.motion.is_parked = True
+
+        assert detector.capture_if_approaching(car, base + 0.3, frame) is False
+        assert saved == []
+
 
 class TestResetCarState:
     """Test that _reset_car_state fully resets all sub-states."""

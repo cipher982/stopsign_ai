@@ -164,9 +164,15 @@ which streams the object from Bremen.
   track acquired past the line, provided the vehicle is still upstream of the zone
   centre and moving along the approach. Replayed over 600 stored no-image
   trajectories: 96.2% would be photographed, a median of 2 frames after
-  acquisition; over 600 imaged ones the line shot is unchanged for 97.5%. The
-  remaining ~4% are first seen at or behind the zone centre (0.2% already inside
-  the zone), where the only "picture" available is an exit-angle crop.
+  acquisition; over 600 imaged ones the line shot is unchanged for 97.5%. That
+  figure was measured against the capture rule alone, and review caught the gap:
+  the analyzer only evaluates cars it no longer judges parked, so a track acquired
+  mid-approach waits ~1.33 s for that gate - and by then the vehicle is often past
+  the zone centre. Replayed through the gate, the same 600 give 451 (75%) instead
+  of 577. The analyzer now takes the picture for a still-parked-but-moving track
+  without running the zone logic for it, which puts the two numbers back together.
+  The remaining ~4% are first seen at or behind the zone centre (0.2% already
+  inside the zone), where the only "picture" available is an exit-angle crop.
   Live after deploy: the first two passes recorded were both late-track captures
   (capture x=935 and 869 against a line at 1269) and both serve as images
   (416x173, 433x183 - the same size a line capture produces), against a 31%
