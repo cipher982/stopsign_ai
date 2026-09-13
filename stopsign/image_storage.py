@@ -180,7 +180,13 @@ def _health_snapshot() -> dict:
         h = dict(_health)
     pending_local_files, oldest_pending_age, oldest_pending_ts = _durable_pending_local_stats()
     with _upload_state_lock:
-        in_memory_pending = sum(1 for state in _upload_state.values() if state in ("pending", "failed"))
+        pending_worker_names = [
+            object_name for object_name, state in _upload_state.items() if state in ("pending", "failed")
+        ]
+    # A restart can leave an old failed/pending memory entry behind after the
+    # durable marker was written.  Count only work that still lacks that marker;
+    # the disk outbox is the recovery authority.
+    in_memory_pending = sum(1 for object_name in pending_worker_names if not _is_durably_archived(object_name))
     h["pending_local_files"] = pending_local_files
     h["worker_pending_files"] = in_memory_pending
     h["archive_outbox_observed"] = pending_local_files is not None
@@ -269,11 +275,12 @@ def _mark_upload_state(object_name: str, state: str) -> None:
 
 
 def _get_upload_state(object_name: str) -> Optional[str]:
+    # The marker is the durable acknowledgement and outranks stale in-memory
+    # state left by a failed upload or an analyzer restart.
+    if _is_durably_archived(object_name):
+        return "uploaded"
     with _upload_state_lock:
-        state = _upload_state.get(object_name)
-    if state is not None:
-        return state
-    return "uploaded" if _is_durably_archived(object_name) else None
+        return _upload_state.get(object_name)
 
 
 def _archive_marker_path(object_name: str) -> Path:
@@ -298,8 +305,16 @@ def _mark_durably_archived(object_name: str) -> bool:
     partial = marker.with_suffix(marker.suffix + ".part")
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        partial.write_text(f"archived_at={time.time():.6f}\n")
+        with partial.open("w", encoding="utf-8") as stream:
+            stream.write(f"archived_at={time.time():.6f}\n")
+            stream.flush()
+            os.fsync(stream.fileno())
         partial.replace(marker)
+        directory_fd = os.open(marker.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
         return True
     except OSError as exc:
         logger.warning("Could not persist archive marker for %s: %s", object_name, exc)

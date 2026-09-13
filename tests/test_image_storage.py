@@ -272,6 +272,20 @@ def test_archive_health_does_not_inflate_disk_backlog_with_stale_worker_state(mo
     assert health["worker_pending_files"] == 2
 
 
+def test_archive_health_ignores_failed_memory_state_after_durable_marker(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    image = tmp_path / "vehicle_archived.jpg"
+    image.write_bytes(b"jpg")
+    image_storage._mark_durably_archived(image.name)
+    image_storage._mark_upload_state(image.name, "failed")
+
+    health = image_storage._health_snapshot()
+
+    assert health["pending_local_files"] == 0
+    assert health["worker_pending_files"] == 0
+    assert image_storage._get_upload_state(image.name) == "uploaded"
+
+
 def test_upload_worker_flips_db_path_with_retry(monkeypatch):
     from unittest.mock import MagicMock
 
