@@ -45,6 +45,7 @@ from stopsign.pass_spool import start_pass_outbox_worker
 from stopsign.service_status import VideoAnalyzerStatusMixin
 from stopsign.settings import ANALYZER_BOOT_TS_KEY
 from stopsign.settings import ANALYZER_LAST_FRAME_AT_KEY
+from stopsign.settings import ANALYZER_LAST_INFERENCE_AT_KEY
 from stopsign.settings import ANALYZER_STALL_KEY
 from stopsign.settings import DB_URL
 from stopsign.settings import FRAME_METADATA_KEY
@@ -661,10 +662,17 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             # YOLO PATH: Full processing after raw -> processing coordinate setup.
             self.ensure_raw_dimensions(frame)
             frame = self.crop_scale_frame(frame)
-
-            # Object Detection (expensive - only run when scheduled)
+            # A processed frame is not proof that YOLO completed. Publish a
+            # separate timestamp only after the detector returns successfully;
+            # pipeline health can then distinguish forwarding from inference.
             object_detection_start = time.time()
             processed_frame, boxes = self.detect_objects(frame)
+            try:
+                self.redis_client.set(ANALYZER_LAST_INFERENCE_AT_KEY, time.time())
+            except Exception:
+                # Redis health publication is best-effort; the watchdog fails
+                # closed when this durable signal is absent or stale.
+                logger.debug("Could not publish last successful inference timestamp", exc_info=True)
             object_detection_time = time.time() - object_detection_start
             self.object_detection_time.observe(object_detection_time)
             self.object_detection_fps_count += 1

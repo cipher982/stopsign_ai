@@ -204,10 +204,16 @@ LOCAL_IMAGE_MAX_COUNT = get_env_int("LOCAL_IMAGE_MAX_COUNT", 500, required=False
 ARCHIVE_HEALTH_REDIS_KEY = get_env("ARCHIVE_HEALTH_REDIS_KEY", "stopsign.archive.health", required=False)
 
 # Pipeline health signals (analyzer/ffmpeg writers -> web reader via Redis).
-# The analyzer writes these on every processed frame / boot / stall trip; ffmpeg_service
-# writes its dup-ratio snapshot every 5s. The web surfaces them on /api/pipeline-health
-# so Sauron can alert when the capture->analyzer->archive chain silently stalls.
+# The analyzer writes these on every processed frame / successful inference /
+# boot / stall trip; ffmpeg_service writes its dup-ratio snapshot every 5s. The
+# web surfaces them on /api/pipeline-health so Sauron can distinguish a fresh
+# forwarded frame from a fresh successful inference.
 ANALYZER_LAST_FRAME_AT_KEY = get_env("ANALYZER_LAST_FRAME_AT_KEY", "stopsign.analyzer.last_frame_at", required=False)
+ANALYZER_LAST_INFERENCE_AT_KEY = get_env(
+    "ANALYZER_LAST_INFERENCE_AT_KEY",
+    "stopsign.analyzer.last_inference_at",
+    required=False,
+)
 ANALYZER_BOOT_TS_KEY = get_env("ANALYZER_BOOT_TS_KEY", "stopsign.analyzer.boot_ts", required=False)
 ANALYZER_STALL_KEY = get_env("ANALYZER_STALL_KEY", "stopsign.analyzer.stall", required=False)
 FFMPEG_HEALTH_KEY = get_env("FFMPEG_HEALTH_KEY", "stopsign.ffmpeg.health", required=False)

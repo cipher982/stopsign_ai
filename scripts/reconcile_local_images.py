@@ -13,7 +13,6 @@ For every ``local://<name>`` pass row:
   object in the archive     -> flip the row to ``bremen://<name>``
   object missing, file here -> re-upload the file, then flip
   object missing, file gone -> unrecoverable; reported, left alone
-
 For every file on disk:
 
   object in the archive     -> delete it. The archive serves it, and for a row
@@ -24,15 +23,17 @@ For every file on disk:
                                (``_read_source_image_bytes``).
   not in the archive        -> keep it: it is the only copy. With
                                ``--release-unreferenced`` a file that no pass row
-                               references *at all* is released too - the row is
-                               written seconds after the capture, so a file this
-                               old with no row is the capture-line image of a car
-                               that never completed a pass, and nothing can serve
-                               it. That is the one irreversible rule here: it needs
-                               ``--analyzer-stopped`` (stop the container first, so
-                               nothing can be mid-upload), waits its own much
-                               longer settle window, and re-checks each candidate
-                               against the live database and the archive
+                               or durable pending-pass record references is
+                               released too. An unreadable durable spool is
+                               uncertainty, so every such candidate is kept.
+                               The row is written seconds after the capture, so a
+                               file this old with no row is the capture-line image
+                               of a car that never completed a pass, and nothing
+                               can serve it. That is the one irreversible rule
+                               here: it needs ``--analyzer-stopped`` (stop the
+                               container first), waits its own much longer settle
+                               window, and re-checks each candidate against the
+                               live database, archive, and durable pass spool
                                immediately before its own unlink.
 
 Deleting the local copy of an image that is still referenced by a row on
@@ -41,8 +42,9 @@ still point at ``/vehicle-images/<name>`` and 404 until it is re-fetched. The li
 pruner has the same effect; it is transient and needs no action.
 
 Nothing is written unless ``--apply`` is passed, and re-running is safe: the plan is
-recomputed from a fresh archive listing and a fresh query immediately before any
-mutation.
+recomputed from a fresh archive listing, fresh database query, and fresh durable
+spool read immediately before any mutation.
+
 
 Run the dry run inside the analyzer container, which has the database URL, the
 archive credentials and the files:
@@ -77,6 +79,7 @@ container.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 import time
@@ -87,6 +90,7 @@ from minio.error import S3Error
 from sqlalchemy import create_engine
 from sqlalchemy import text
 
+from stopsign.pass_spool import pending_pass_image_paths
 from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
 from stopsign.settings import BREMEN_MINIO_BUCKET
 from stopsign.settings import BREMEN_MINIO_ENDPOINT
@@ -163,16 +167,36 @@ def files_on_disk() -> dict[str, float]:
     return found
 
 
-def build_plan(archived, referenced, names_on_local, on_disk, now, settle, orphan_settle, release_unreferenced):
+def build_plan(
+    archived,
+    referenced,
+    names_on_local,
+    on_disk,
+    now,
+    settle,
+    orphan_settle,
+    release_unreferenced,
+    pending_spool: set[str] | None = None,
+):
     settled = {n for n, mtime in on_disk.items() if now - mtime > settle}
     flippable = sorted(n for n in names_on_local if n in archived)
     recoverable = sorted(n for n in (names_on_local - archived) & settled)
     unrecoverable = sorted(names_on_local - archived - set(on_disk))
     redundant = sorted(n for n in settled if n in archived)
+    spool_complete = pending_spool is not None
+    spool_names = pending_spool or set()
     orphan = sorted(
-        n for n, mtime in on_disk.items() if now - mtime > orphan_settle and n not in archived and n not in referenced
+        n
+        for n, mtime in on_disk.items()
+        if now - mtime > orphan_settle
+        and n not in archived
+        and n not in referenced
+        and spool_complete
+        and n not in spool_names
     )
-    keep_only_copy = sorted(n for n in settled if n not in archived and n in referenced)
+    keep_only_copy = sorted(
+        n for n in settled if n not in archived and (n in referenced or not spool_complete or n in spool_names)
+    )
     return {
         "flippable": flippable,
         "recoverable": recoverable,
@@ -181,6 +205,8 @@ def build_plan(archived, referenced, names_on_local, on_disk, now, settle, orpha
         "orphan": orphan,
         "orphan_released": orphan if release_unreferenced else [],
         "keep_only_copy": keep_only_copy,
+        "pending_spool_complete": spool_complete,
+        "pending_spool_count": len(spool_names),
         "archived_count": len(archived),
         "local_rows": len(names_on_local),
         "on_disk": len(on_disk),
@@ -193,6 +219,8 @@ def print_plan(plan, release_unreferenced) -> None:
     print(f"archive objects                    {plan['archived_count']}")
     print(f"pass rows on local://              {plan['local_rows']}")
     print(f"files on disk                      {plan['on_disk']}   ({plan['settled']} settled)")
+    spool_state = "complete" if plan["pending_spool_complete"] else "UNREADABLE"
+    print(f"durable pending-pass spool         {plan['pending_spool_count']} ({spool_state})")
     print()
     print(f"flip rows (object archived)        {len(plan['flippable'])}")
     print(f"re-upload then flip                {len(plan['recoverable'])}")
@@ -233,6 +261,66 @@ def flip_rows(engine, names: list[str], apply: bool) -> int:
     return flipped
 
 
+def _remote_object_digest(client: Minio, name: str) -> tuple[int, str, str | None] | None:
+    """Read the object and prove it stayed the same while it was read."""
+    try:
+        before = client.stat_object(BREMEN_MINIO_BUCKET, name)
+        response = client.get_object(BREMEN_MINIO_BUCKET, name)
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            while chunk := response.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+        finally:
+            response.close()
+            response.release_conn()
+        after = client.stat_object(BREMEN_MINIO_BUCKET, name)
+        if size != before.size or after.size != before.size or after.etag != before.etag:
+            return None
+        return size, digest.hexdigest(), before.etag
+    except Exception as exc:  # noqa: BLE001 - uncertainty must preserve the local copy
+        print(f"  archive readback for {name} failed ({exc}); keeping the file", file=sys.stderr)
+        return None
+
+
+def archive_copy_matches_local(client: Minio, name: str) -> bool:
+    """Require a remote readback with matching length and SHA-256 before unlinking."""
+    path = os.path.join(LOCAL_IMAGE_DIR, name)
+    try:
+        local_size = os.stat(path).st_size
+        local_digest = hashlib.sha256()
+        with open(path, "rb") as local_file:
+            while chunk := local_file.read(1024 * 1024):
+                local_digest.update(chunk)
+    except OSError as exc:
+        print(f"  local readback for {name} failed ({exc}); keeping the file", file=sys.stderr)
+        return False
+    remote = _remote_object_digest(client, name)
+    return remote is not None and remote[0] == local_size and remote[1] == local_digest.hexdigest()
+
+
+def delete_local(client: Minio, names: list[str], apply: bool) -> tuple[int, list[str]]:
+    """Remove local copies only after remote length and digest readback."""
+    if not names:
+        return 0, []
+    if not apply:
+        return len(names), []
+    removed = 0
+    failed: list[str] = []
+    for name in names:
+        if not archive_copy_matches_local(client, name):
+            failed.append(name)
+            continue
+        try:
+            os.unlink(os.path.join(LOCAL_IMAGE_DIR, name))
+            removed += 1
+        except OSError as exc:
+            failed.append(name)
+            print(f"  delete failed for {name}: {exc}", file=sys.stderr)
+    return removed, failed
+
+
 def reupload(client: Minio, names: list[str], apply: bool) -> tuple[list[str], list[str]]:
     """Restore objects that never made it to the archive, from their local copy."""
     if not names:
@@ -251,24 +339,6 @@ def reupload(client: Minio, names: list[str], apply: bool) -> tuple[list[str], l
             failed.append(name)
             print(f"  re-upload failed for {name}: {exc}", file=sys.stderr)
     return uploaded, failed
-
-
-def delete_local(names: list[str], apply: bool) -> tuple[int, list[str]]:
-    """Remove local copies the archive already serves. Safe by construction."""
-    if not names:
-        return 0, []
-    if not apply:
-        return len(names), []
-    removed = 0
-    failed: list[str] = []
-    for name in names:
-        try:
-            os.unlink(os.path.join(LOCAL_IMAGE_DIR, name))
-            removed += 1
-        except OSError as exc:
-            failed.append(name)
-            print(f"  delete failed for {name}: {exc}", file=sys.stderr)
-    return removed, failed
 
 
 def object_referenced(engine, name: str) -> bool:
@@ -306,14 +376,14 @@ def archived_now(client: Minio, name: str) -> bool:
         return True
 
 
-def release_unreferenced(client: Minio, engine, names: list[str], apply: bool) -> tuple[int, list[str], list[str]]:
-    """Delete the only copy of a file nothing references.
-
-    The one irreversible rule in this script, so every candidate is re-checked
-    against the live database and the archive immediately before its own unlink -
-    not against the plan's snapshot. A file that turned out to be referenced, or
-    to have reached the archive since the listing, is kept.
-    """
+def release_unreferenced(
+    client: Minio,
+    engine,
+    names: list[str],
+    apply: bool,
+    pending_spool_names: set[str] | None,
+) -> tuple[int, list[str], list[str]]:
+    """Delete only files absent from the database, archive, and durable spool."""
     if not names:
         return 0, [], []
     if not apply:
@@ -322,7 +392,12 @@ def release_unreferenced(client: Minio, engine, names: list[str], apply: bool) -
     kept: list[str] = []
     failed: list[str] = []
     for name in names:
-        if object_referenced(engine, name) or archived_now(client, name):
+        if (
+            pending_spool_names is None
+            or name in pending_spool_names
+            or object_referenced(engine, name)
+            or archived_now(client, name)
+        ):
             kept.append(name)
             continue
         try:
@@ -381,6 +456,10 @@ def main() -> int:
     engine = create_engine(DB_URL)
     client = get_archive_client()
 
+    pending_spool_names = pending_pass_image_paths()
+    if pending_spool_names is None:
+        print("durable pass spool is unreadable; orphan release candidates will be kept", file=sys.stderr)
+
     print("listing the archive ...", flush=True)
     plan = build_plan(
         list_archived(client),
@@ -391,6 +470,7 @@ def main() -> int:
         args.settle_seconds,
         args.orphan_settle_seconds,
         args.release_unreferenced,
+        pending_spool_names,
     )
     print_plan(plan, args.release_unreferenced)
 
@@ -402,7 +482,11 @@ def main() -> int:
     # snapshot, the analyzer is live, and the unreferenced rule destroys the only
     # copy of a file.
     print()
-    print("re-reading the archive and the database before applying ...", flush=True)
+    print("re-reading the archive, database, and durable pass spool before applying ...", flush=True)
+    pending_spool_names = pending_pass_image_paths()
+    if args.release_unreferenced and pending_spool_names is None:
+        print("refusing orphan release: durable pass spool is unreadable", file=sys.stderr)
+        return 1
     plan = build_plan(
         list_archived(client),
         referenced_names(engine),
@@ -412,6 +496,7 @@ def main() -> int:
         args.settle_seconds,
         args.orphan_settle_seconds,
         args.release_unreferenced,
+        pending_spool_names,
     )
 
     flipped = flip_rows(engine, plan["flippable"], True)
@@ -421,13 +506,19 @@ def main() -> int:
     flipped += flip_rows(engine, uploaded, True)
     print(f"flipped rows (after upload) {flipped}")
 
-    removed, delete_failed = delete_local(sorted(set(plan["redundant"]) | set(uploaded)), True)
-    orphans_removed, orphans_kept, orphan_failed = release_unreferenced(client, engine, plan["orphan_released"], True)
+    removed, delete_failed = delete_local(client, sorted(set(plan["redundant"]) | set(uploaded)), True)
+    orphans_removed, orphans_kept, orphan_failed = release_unreferenced(
+        client,
+        engine,
+        plan["orphan_released"],
+        True,
+        pending_spool_names,
+    )
     removed += orphans_removed
     delete_failed += orphan_failed
     print(f"deleted local copies        {removed}")
     if orphans_kept:
-        print(f"orphans kept (referenced or archived since the listing) {len(orphans_kept)}")
+        print(f"orphans kept (referenced, pending, or archived since the listing) {len(orphans_kept)}")
     print(f"left on disk                {len(files_on_disk())}")
 
     # Count what is actually left, not what the pre-mutation plan expected, and split

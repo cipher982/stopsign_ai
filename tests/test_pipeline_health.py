@@ -244,6 +244,7 @@ def test_pipeline_health_response_shape(monkeypatch):
         {
             "stopsign.archive.health": json.dumps({"upload_healthy": True, "local_save_healthy": True}),
             "stopsign.analyzer.last_frame_at": str(now - 4),
+            "stopsign.analyzer.last_inference_at": str(now - 5),
             "stopsign.analyzer.boot_ts": str(now - 3600),
             "stopsign.ffmpeg.health": json.dumps({"fps": 15.0, "new_fps": 14.8, "dup_pct": 1.3, "ts": now}),
         }
@@ -257,6 +258,8 @@ def test_pipeline_health_response_shape(monkeypatch):
     assert payload["available"] is True
     assert payload["archive"]["upload_healthy"] is True
     assert payload["analyzer"]["available"] is True
+    assert payload["analyzer"]["inference_available"] is True
+    assert payload["analyzer"]["inference_age_seconds"] == 5.0
     assert payload["analyzer"]["frame_age_seconds"] == 4.0
     assert isinstance(payload["analyzer"]["uptime_seconds"], float)
     assert payload["ffmpeg"]["dup_pct"] == 1.3

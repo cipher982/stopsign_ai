@@ -16,6 +16,7 @@ from stopsign.database import Database
 from stopsign.hls_health import parse_hls_playlist
 from stopsign.settings import ANALYZER_BOOT_TS_KEY
 from stopsign.settings import ANALYZER_LAST_FRAME_AT_KEY
+from stopsign.settings import ANALYZER_LAST_INFERENCE_AT_KEY
 from stopsign.settings import ANALYZER_STALL_KEY
 from stopsign.settings import ARCHIVE_HEALTH_REDIS_KEY
 from stopsign.settings import DB_URL
@@ -198,13 +199,20 @@ async def pipeline_health():
     analyzer: dict = {}
     try:
         last_frame_raw = r.get(ANALYZER_LAST_FRAME_AT_KEY)
+        last_inference_raw = r.get(ANALYZER_LAST_INFERENCE_AT_KEY)
         boot_raw = r.get(ANALYZER_BOOT_TS_KEY)
         stall_raw = r.get(ANALYZER_STALL_KEY)
         analyzer["available"] = bool(last_frame_raw or boot_raw)
+        analyzer["inference_available"] = False
         if last_frame_raw:
             last_frame_at = float(last_frame_raw)
             analyzer["last_frame_at"] = last_frame_at
             analyzer["frame_age_seconds"] = round(now - last_frame_at, 1)
+        if last_inference_raw:
+            last_inference_at = float(last_inference_raw)
+            analyzer["last_inference_at"] = last_inference_at
+            analyzer["inference_age_seconds"] = round(now - last_inference_at, 1)
+            analyzer["inference_available"] = True
         if boot_raw:
             boot_ts = float(boot_raw)
             analyzer["started_at"] = boot_ts
@@ -215,7 +223,7 @@ async def pipeline_health():
             except Exception:
                 analyzer["last_stall"] = None
     except Exception as e:
-        analyzer = {"available": False, "error": str(e)}
+        analyzer = {"available": False, "inference_available": False, "error": str(e)}
     payload["analyzer"] = analyzer
 
     # FFmpeg: fresh-vs-starved snapshot written every 5s (key name is historical).
