@@ -25,12 +25,30 @@ logger = logging.getLogger(__name__)
 SPOOL_DIR = os.getenv("PASS_SPOOL_DIR", "/app/data/pending-passes")
 RETRY_INTERVAL_SECONDS = float(os.getenv("PASS_SPOOL_RETRY_SECONDS", "60"))
 RETRY_BATCH = 20
+MAX_SWEEP_ROWS = RETRY_BATCH * 5
+RETRY_BACKOFF_BASE_SECONDS = 60.0
+RETRY_BACKOFF_MAX_SECONDS = 3600.0
 
 _lock = threading.Lock()
 
 
 def _database_path() -> Path:
     return Path(SPOOL_DIR) / "passes.sqlite3"
+
+
+def _retry_delay(attempts: int) -> float:
+    """Move rejected rows out of the hot path without losing their evidence."""
+    return min(
+        RETRY_BACKOFF_MAX_SECONDS,
+        RETRY_BACKOFF_BASE_SECONDS * (2 ** min(max(attempts, 0), 6)),
+    )
+
+
+def _ensure_schema(connection: sqlite3.Connection) -> None:
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(pending_passes)").fetchall()}
+    if "next_attempt_at" not in columns:
+        connection.execute("ALTER TABLE pending_passes ADD COLUMN next_attempt_at REAL NOT NULL DEFAULT 0")
+        connection.commit()
 
 
 _retry_lock = threading.Lock()
@@ -44,7 +62,8 @@ CREATE TABLE IF NOT EXISTS pending_passes (
     created_at REAL NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    next_attempt_at REAL NOT NULL DEFAULT 0
 )
 """
 
@@ -61,6 +80,7 @@ def _open_database(*, read_only: bool = False) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA synchronous=FULL")
     connection.execute(_CREATE_TABLE)
+    _ensure_schema(connection)
     connection.commit()
     return connection
 
@@ -236,9 +256,14 @@ def enqueue_pass(kwargs: dict[str, Any]) -> str:
 
 
 def _record_attempt_failure(connection: sqlite3.Connection, pass_key: str, error: str) -> None:
+    now = time.time()
+    row = connection.execute("SELECT attempts FROM pending_passes WHERE pass_key = ?", (pass_key,)).fetchone()
+    attempts = int(row[0]) if row else 0
+    next_attempt_at = now + _retry_delay(attempts)
     connection.execute(
-        "UPDATE pending_passes SET attempts = attempts + 1, last_error = ?, updated_at = ? WHERE pass_key = ?",
-        (error[:2000], time.time(), pass_key),
+        "UPDATE pending_passes SET attempts = attempts + 1, last_error = ?, "
+        "updated_at = ?, next_attempt_at = ? WHERE pass_key = ?",
+        (error[:2000], now, next_attempt_at, pass_key),
     )
     connection.commit()
 
@@ -253,34 +278,50 @@ def retry_pending_passes(db: Any) -> int:
             return 0
 
         landed = 0
+        processed = 0
         try:
             _migrate_legacy_files(connection)
-            rows = connection.execute(
-                "SELECT pass_key, payload_json FROM pending_passes ORDER BY created_at, pass_key LIMIT ?",
-                (RETRY_BATCH,),
-            ).fetchall()
-            for pass_key, payload_json in rows:
-                try:
-                    kwargs = json.loads(payload_json)
-                    if not isinstance(kwargs, dict):
-                        raise ValueError("payload is not an object")
-                except (TypeError, ValueError) as exc:
-                    _record_attempt_failure(connection, pass_key, f"invalid payload: {exc}")
-                    continue
+            while processed < MAX_SWEEP_ROWS:
+                rows = connection.execute(
+                    "SELECT pass_key, payload_json FROM pending_passes "
+                    "WHERE next_attempt_at <= ? "
+                    "ORDER BY next_attempt_at, created_at, pass_key LIMIT ?",
+                    (time.time(), min(RETRY_BATCH, MAX_SWEEP_ROWS - processed)),
+                ).fetchall()
+                if not rows:
+                    break
+                for pass_key, payload_json in rows:
+                    processed += 1
+                    try:
+                        kwargs = json.loads(payload_json)
+                        if not isinstance(kwargs, dict):
+                            raise ValueError("payload is not an object")
+                    except (TypeError, ValueError) as exc:
+                        _record_attempt_failure(connection, pass_key, f"invalid payload: {exc}")
+                        continue
 
-                try:
-                    if db.has_vehicle_pass(kwargs.get("vehicle_id"), kwargs.get("exit_time")):
-                        logger.info("Pending pass %s was already written; dropping the acknowledged copy", pass_key)
-                    else:
-                        db.add_vehicle_pass(**kwargs)
-                        landed += 1
-                        logger.info("Recovered pending pass for vehicle %s", kwargs.get("vehicle_id"))
-                    with connection:
-                        connection.execute("DELETE FROM pending_passes WHERE pass_key = ?", (pass_key,))
-                except Exception as exc:  # noqa: BLE001 - the database is the retry boundary
-                    logger.warning("Pending pass %s still cannot be written: %s", pass_key, exc)
-                    _record_attempt_failure(connection, pass_key, str(exc))
-                    continue
+                    try:
+                        if db.has_vehicle_pass(kwargs.get("vehicle_id"), kwargs.get("exit_time")):
+                            logger.info(
+                                "Pending pass %s was already written; dropping the acknowledged copy",
+                                pass_key,
+                            )
+                        else:
+                            inserted_id = db.add_vehicle_pass(**kwargs)
+                            if inserted_id is None:
+                                raise RuntimeError("database insert was not acknowledged")
+                            landed += 1
+                            logger.info(
+                                "Recovered pending pass %s for vehicle %s",
+                                pass_key,
+                                kwargs.get("vehicle_id"),
+                            )
+                        with connection:
+                            connection.execute("DELETE FROM pending_passes WHERE pass_key = ?", (pass_key,))
+                    except Exception as exc:  # noqa: BLE001 - the database is the retry boundary
+                        logger.warning("Pending pass %s still cannot be written: %s", pass_key, exc)
+                        _record_attempt_failure(connection, pass_key, str(exc))
+                        continue
         finally:
             connection.close()
         return landed

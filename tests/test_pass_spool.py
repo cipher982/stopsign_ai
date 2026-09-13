@@ -85,6 +85,10 @@ def test_pending_pass_is_replayed_when_database_returns():
     assert retry_pending_passes(db) == 0, "still down: durable row remains"
     assert _pending_count() == 1
 
+    with sqlite3.connect(Path(pass_spool.SPOOL_DIR) / "passes.sqlite3") as connection:
+        connection.execute("UPDATE pending_passes SET next_attempt_at = 0")
+        connection.commit()
+
     db.failing = False
     assert retry_pending_passes(db) == 1
     assert db.inserted[0]["vehicle_id"] == 7
@@ -178,6 +182,38 @@ def test_one_rejected_pass_does_not_block_later_durable_passes():
     assert retry_pending_passes(db) == 1
     assert [payload["vehicle_id"] for payload in db.inserted] == [2]
     assert _pending_count() == 1
+
+
+def test_batch_of_rejected_passes_does_not_starve_later_valid_pass():
+    class SelectiveDatabase(FakeDatabase):
+        def add_vehicle_pass(self, **kwargs):
+            if kwargs["vehicle_id"] <= 20:
+                raise RuntimeError("permanently rejected row")
+            return super().add_vehicle_pass(**kwargs)
+
+    db = SelectiveDatabase()
+    for vehicle_id in range(1, 22):
+        enqueue_pass(_pass_kwargs(vehicle_id=vehicle_id))
+
+    assert retry_pending_passes(db) == 1
+    assert [payload["vehicle_id"] for payload in db.inserted] == [21]
+    assert _pending_count() == 20
+
+
+def test_read_only_database_noop_is_not_treated_as_acknowledgement():
+    class ReadOnlyDatabase(FakeDatabase):
+        def add_vehicle_pass(self, **kwargs):
+            return None
+
+    db = ReadOnlyDatabase()
+    enqueue_pass(_pass_kwargs())
+
+    assert retry_pending_passes(db) == 0
+    assert _pending_count() == 1
+    with sqlite3.connect(Path(pass_spool.SPOOL_DIR) / "passes.sqlite3") as connection:
+        attempts, error = connection.execute("SELECT attempts, last_error FROM pending_passes").fetchone()
+    assert attempts == 1
+    assert "not acknowledged" in error
 
 
 def test_legacy_pass_migration_preserves_exit_time_as_event_time():
