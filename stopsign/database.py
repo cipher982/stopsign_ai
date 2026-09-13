@@ -83,6 +83,7 @@ class VehiclePass(Base):
     stop_duration = Column(Float)
     min_speed = Column(Float)
     image_path = Column(String)
+    capture_reason = Column(String)
     entry_time = Column(Float)
     exit_time = Column(Float)
     clip_path = Column(String)
@@ -96,7 +97,7 @@ class VehiclePass(Base):
     stop_pos_y = Column(Float)  # image-y where vehicle first hit stop threshold
     # Stream alignment instrumentation (Method B, Phase 0)
     stream_queue_depth_exit = Column(Integer)  # processed queue depth at pass exit
-    stream_lag_est_sec = Column(Float)  # estimated FIFO lag at pass exit (depth/fps)
+    stream_lag_est_sec = Column(Float)  # estimated FIFO lag at pass exit
 
 
 class VehiclePassRaw(Base):
@@ -189,6 +190,7 @@ class Database:
             "clip_path": "TEXT",
             "clip_status": "TEXT",
             "clip_error": "TEXT",
+            "capture_reason": "TEXT",
             "entry_speed": "DOUBLE PRECISION",
             "decel_score": "DOUBLE PRECISION",
             "track_quality": "DOUBLE PRECISION",
@@ -236,6 +238,7 @@ class Database:
         stop_duration: float,
         min_speed: float,
         image_path: str,
+        capture_reason: str | None = None,
         entry_time: float | None = None,
         exit_time: float | None = None,
         entry_speed: float | None = None,
@@ -261,6 +264,7 @@ class Database:
                 stop_duration=stop_duration,
                 min_speed=min_speed,
                 image_path=image_path,
+                capture_reason=capture_reason or ("captured" if image_path else "legacy_unknown"),
                 entry_time=entry_time,
                 exit_time=exit_time,
                 entry_speed=entry_speed,
@@ -276,7 +280,6 @@ class Database:
             session.add(vehicle_pass)
             session.flush()
             pass_id = vehicle_pass.id
-
             if raw_payload is not None:
                 session.add(
                     VehiclePassRaw(
@@ -286,7 +289,6 @@ class Database:
                         raw_complete=raw_complete,
                     )
                 )
-
             session.commit()
             return pass_id
 

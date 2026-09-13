@@ -66,9 +66,12 @@ class ZoneState:
 class CaptureState:
     image_captured: bool = False
     image_path: str = ""
+    # Why the pass does or does not have an image. This is persisted with the pass
+    # so no-image alerts identify a failure mode instead of only a count.
+    capture_reason: str = "not_attempted"
     # Set once a photograph has been taken for this tracked vehicle and deliberately
     # carried across _reset_car_state: one picture per track, however many times the
-    # zone state is reset underneath it.
+    # zone state resets underneath it.
     latched: bool = False
     # Geometry at capture (processed coordinate space): the detection bbox and the
     # padded/clamped rect actually saved, so offline passes can re-crop tighter.
@@ -441,6 +444,9 @@ class StopDetector:
 
     def _build_raw_payload(self, car: Car) -> dict:
         samples = [list(sample) for sample in car.state.samples]
+        capture_reason = car.state.capture.capture_reason
+        if not car.state.capture.image_path and capture_reason == "not_attempted":
+            capture_reason = "not_triggered"
         summary = {
             "entry_time": car.state.zone.entry_time,
             "exit_time": car.state.zone.exit_time,
@@ -449,6 +455,7 @@ class StopDetector:
             "min_speed": car.state.zone.min_speed,
             "stop_position": [float(car.state.zone.stop_position[0]), float(car.state.zone.stop_position[1])],
             "image_path": car.state.capture.image_path,
+            "capture_reason": capture_reason,
             "clip_path": None,
         }
 
@@ -456,6 +463,7 @@ class StopDetector:
             "bbox": list(car.state.capture.bbox) if car.state.capture.bbox else None,
             "crop_rect": list(car.state.capture.crop_rect) if car.state.capture.crop_rect else None,
             "padding_factor": CROP_PADDING_FACTOR,
+            "reason": capture_reason,
         }
 
         config_snapshot = self.config.get_snapshot()
@@ -959,9 +967,6 @@ class StopDetector:
                     # Detection hit-rate: actual samples vs expected at 15 fps
                     expected = max(car.state.zone.time_in_zone * 15.0, 1.0)
                     track_quality = float(min(1.0, len(samples) / expected))
-
-                # Save data to the database. Images are only captured at the configured
-                # capture line; a recovered late track should not save an exit-angle crop.
                 stream_queue_depth_exit, stream_lag_est_sec = self._estimate_stream_lag_at_exit()
                 raw_payload = None
                 sample_count = 0
@@ -970,12 +975,19 @@ class StopDetector:
                     sample_count = len(car.state.samples)
                 except Exception as e:
                     logger.error("Failed to build raw payload for car_id=%s: %s", car.id, e)
+
+                # Save data to the database. Images are only captured at the configured
+                # capture line; a recovered late track should not save an exit-angle crop.
+                capture_reason = car.state.capture.capture_reason
+                if not car.state.capture.image_path and capture_reason == "not_attempted":
+                    capture_reason = "not_triggered"
                 pass_kwargs = {
                     "vehicle_id": car.id,
                     "time_in_zone": car.state.zone.time_in_zone,
                     "stop_duration": car.state.zone.stop_duration,
                     "min_speed": car.state.zone.min_speed,
                     "image_path": car.state.capture.image_path,
+                    "capture_reason": capture_reason,
                     "entry_time": car.state.zone.entry_time,
                     "exit_time": car.state.zone.exit_time,
                     "entry_speed": entry_speed,
@@ -1052,6 +1064,7 @@ class StopDetector:
         return self._polygon_crosses_line(car_polygon, self.capture_line_proc)
 
     def capture_car_image(self, car: Car, timestamp: float, frame: np.ndarray) -> None:
+        car.state.capture.capture_reason = "capture_attempted"
         image_path = save_vehicle_image(
             frame=frame,
             timestamp=timestamp,
@@ -1063,6 +1076,7 @@ class StopDetector:
             # real local path so the pass is honest and visible in live stats.
             car.state.capture.image_captured = True
             car.state.capture.latched = True
+            car.state.capture.capture_reason = "captured"
             car.state.capture.image_path = image_path
             car.state.capture.bbox = tuple(float(v) for v in car.state.bbox)
             car.state.capture.crop_rect = compute_crop_rect(car.state.bbox, frame.shape[1], frame.shape[0])
@@ -1070,6 +1084,7 @@ class StopDetector:
             # Local save failed. Do NOT masquerade as a successful capture: leave the
             # path empty (the pass is recorded without an image) and surface the
             # failure loudly via the health signal so the next hardening pass can alert.
+            car.state.capture.capture_reason = "local_save_failed"
             logger.error(
                 "Vehicle image LOCAL save failed for car_id=%s; pass recorded without image",
                 car.id,

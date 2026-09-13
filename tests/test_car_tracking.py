@@ -667,6 +667,7 @@ class TestLatePreStopRecovery:
         # it gets the first usable view instead of no picture at all.
         assert saved, "a late-acquired track must still be photographed"
         assert kwargs["image_path"] == "local://vehicle_late_42.jpg"
+        assert kwargs["capture_reason"] == "captured"
         assert not mock_database.save_vehicle_pass_raw.called
 
     def test_parked_jitter_in_zone_does_not_recover_pre_stop(self, mock_config, mock_database):
@@ -1033,6 +1034,7 @@ class TestCaptureCarImage:
 
         assert car.state.capture.image_captured is True
         assert car.state.capture.image_path == "local://vehicle_abc_123.jpg"
+        assert car.state.capture.capture_reason == "captured"
 
     def test_capture_does_not_masquerade_failure_as_success(self, monkeypatch, mock_config, mock_database):
         """A failed local save must NOT set image_captured or store an empty path as success."""
@@ -1044,6 +1046,6 @@ class TestCaptureCarImage:
         frame = np.zeros((100, 100, 3), dtype=np.uint8)
 
         detector.capture_car_image(car, 1000.0, frame)
-
         assert car.state.capture.image_captured is False
         assert car.state.capture.image_path == ""
+        assert car.state.capture.capture_reason == "local_save_failed"
