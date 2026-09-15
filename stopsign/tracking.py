@@ -102,6 +102,7 @@ class Car:
     RAW_SPEED_HISTORY_POINTS = 6
     # 10-minute sliding window for samples (bounds memory for long-lived cars)
     SAMPLE_WINDOW_SECONDS = 600.0
+    MAX_INTERPOLATION_SECONDS = 0.5
 
     def __init__(self, id: int, config: Config):
         self.id = id
@@ -288,7 +289,7 @@ class Car:
         """
         dt = current_ts - self.state.last_update_time
         # Don't extrapolate if no time has passed, or too far into future
-        if dt <= 0 or dt > 0.5:
+        if dt <= 0 or dt > self.MAX_INTERPOLATION_SECONDS:
             return self.state.bbox
 
         vx, vy = self.state.velocity

@@ -889,8 +889,16 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         timestamp: float,
     ) -> np.ndarray:
         overlay = frame.copy()
+        # Retain lost tracks for reacquisition, not for display. Between inference
+        # frames, keep only recent detections within the bbox prediction horizon.
+        visible_cars = [
+            car
+            for car_id, car in cars.items()
+            if car_id in self.car_tracker.current_frame_car_ids
+            and 0 <= timestamp - car.state.last_update_time <= Car.MAX_INTERPOLATION_SECONDS
+        ]
 
-        car_in_stop_zone = any(car.state.zone.in_zone for car in cars.values() if not car.state.motion.is_parked)
+        car_in_stop_zone = any(car.state.zone.in_zone for car in visible_cars if not car.state.motion.is_parked)
 
         # draw stop zone
         if stop_detector.stop_zone is not None:
@@ -905,8 +913,8 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             bottom_mid = (stop_box_corners[2] + stop_box_corners[3]) // 2
             cv2.line(frame, tuple(top_mid), tuple(bottom_mid), (0, 0, 255), 2)
 
-        # Draw all tracked cars using interpolated boxes (works even when YOLO is skipped)
-        for car_id, car in cars.items():
+        # Interpolation still works on skipped YOLO frames without reviving lost cars.
+        for car in visible_cars:
             try:
                 # Skip cars with no bbox yet (just created)
                 if car.state.bbox == (0.0, 0.0, 0.0, 0.0):
@@ -916,11 +924,11 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 else:
                     self.draw_car_interpolated(frame, car, timestamp, color=(0, 255, 0), thickness=2)
             except Exception as e:
-                logger.error(f"Error drawing car {car_id} in visualize: {str(e)}")
+                logger.error(f"Error drawing car {car.id} in visualize: {str(e)}")
                 self.increment_exception_counter(type(e).__name__, "visualize")
 
         current_time = timestamp
-        for car in cars.values():
+        for car in visible_cars:
             if car.state.motion.is_parked:
                 continue
             recent_locations = [(loc, t) for loc, t in car.state.track if current_time - t <= 30]
