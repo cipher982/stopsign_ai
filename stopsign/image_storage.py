@@ -159,20 +159,57 @@ def _seed_health_from_redis() -> None:
                 _health[key] = value
 
 
-def _durable_pending_local_stats() -> tuple[Optional[int], Optional[float], Optional[float]]:
-    """Count unacknowledged local captures and report their age and timestamp."""
+def _age_stats(paths: list[Path]) -> tuple[int, Optional[float], Optional[float]]:
+    if not paths:
+        return 0, None, None
+    oldest_ts = min(path.stat().st_mtime for path in paths)
+    return len(paths), max(0.0, time.time() - oldest_ts), oldest_ts
+
+
+def _known_archived_names() -> set[str] | None:
+    """Return names proven durable by the upload/flip outbox.
+
+    A pending archive flip is created only after a successful Bremen upload or
+    byte-verified startup reconciliation. It therefore proves the object is in
+    Bremen even while the database path or local marker is still pending.
+    """
+    persisted = pending_archive_flips()
+    with _upload_state_lock:
+        in_memory = set(_flip_pending)
+    if persisted is None:
+        return in_memory or None
+    return set(persisted) | in_memory
+
+
+def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Optional[float]]]:
+    """Separate unverified archive files from proven objects awaiting reconciliation."""
     image_dir = Path(LOCAL_IMAGE_DIR)
     try:
         # A missing outbox is an observation failure, not an empty backlog.
         if not image_dir.is_dir():
-            return None, None, None
+            unknown = (None, None, None)
+            return {"all": unknown, "archive": unknown, "reconciliation": unknown}
         pending = [path for path in image_dir.glob("*.jpg") if not _is_durably_archived(path.name)]
-        if not pending:
-            return 0, None, None
-        oldest_mtime = min(path.stat().st_mtime for path in pending)
-        return len(pending), max(0.0, time.time() - oldest_mtime), oldest_mtime
+        known_archived = _known_archived_names()
+        if known_archived is None:
+            archive_pending = pending
+            reconciliation_pending: list[Path] = []
+        else:
+            archive_pending = [path for path in pending if path.name not in known_archived]
+            reconciliation_pending = [path for path in pending if path.name in known_archived]
+        return {
+            "all": _age_stats(pending),
+            "archive": _age_stats(archive_pending),
+            "reconciliation": _age_stats(reconciliation_pending),
+        }
     except OSError:
-        return None, None, None
+        unknown = (None, None, None)
+        return {"all": unknown, "archive": unknown, "reconciliation": unknown}
+
+
+def _durable_pending_local_stats() -> tuple[Optional[int], Optional[float], Optional[float]]:
+    """Count markerless local captures and report their age and timestamp."""
+    return _durable_local_stats()["all"]
 
 
 def _durable_pending_local_file_count() -> Optional[int]:
@@ -185,20 +222,29 @@ def _health_snapshot() -> dict:
     _seed_health_from_redis()
     with _health_lock:
         h = dict(_health)
-    pending_local_files, oldest_pending_age, oldest_pending_ts = _durable_pending_local_stats()
+    local_stats = _durable_local_stats()
+    pending_local_files, oldest_pending_age, oldest_pending_ts = local_stats["all"]
+    pending_archive_files, oldest_archive_age, oldest_archive_ts = local_stats["archive"]
+    pending_reconciliation_files, oldest_reconciliation_age, oldest_reconciliation_ts = local_stats["reconciliation"]
     with _upload_state_lock:
         pending_worker_names = [
             object_name for object_name, state in _upload_state.items() if state in ("pending", "failed")
         ]
     # A restart can leave an old failed/pending memory entry behind after the
-    # durable marker was written.  Count only work that still lacks that marker;
+    # durable marker was written. Count only work that still lacks that marker;
     # the disk outbox is the recovery authority.
     in_memory_pending = sum(1 for object_name in pending_worker_names if not _is_durably_archived(object_name))
     h["pending_local_files"] = pending_local_files
+    h["pending_archive_files"] = pending_archive_files
+    h["pending_reconciliation_files"] = pending_reconciliation_files
     h["worker_pending_files"] = in_memory_pending
     h["archive_outbox_observed"] = pending_local_files is not None
     h["oldest_pending_local_age_seconds"] = oldest_pending_age
     h["oldest_pending_local_ts"] = oldest_pending_ts
+    h["oldest_pending_archive_age_seconds"] = oldest_archive_age
+    h["oldest_pending_archive_ts"] = oldest_archive_ts
+    h["oldest_pending_reconciliation_age_seconds"] = oldest_reconciliation_age
+    h["oldest_pending_reconciliation_ts"] = oldest_reconciliation_ts
     h["archive_health_observed_at"] = time.time()
     h["upload_transport_healthy"] = pending_local_files is not None and (
         h["upload_failures"] == 0

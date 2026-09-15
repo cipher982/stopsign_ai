@@ -242,13 +242,38 @@ def test_archive_health_counts_disk_outbox_after_restart(monkeypatch, tmp_path):
     health = image_storage._health_snapshot()
 
     assert health["pending_local_files"] == 1
+    assert health["pending_archive_files"] == 1
+    assert health["pending_reconciliation_files"] == 0
     assert health["oldest_pending_local_age_seconds"] == 100.0
     assert health["oldest_pending_local_ts"] == 100.0
+    assert health["oldest_pending_archive_age_seconds"] == 100.0
+    assert health["oldest_pending_archive_ts"] == 100.0
     assert health["archive_health_observed_at"] == 200.0
     assert health["archive_outbox_observed"] is True
     assert health["upload_transport_healthy"] is True
     assert health["archive_reconciliation_healthy"] is False
     assert health["upload_healthy"] is True
+
+
+def test_archive_health_separates_proven_archive_from_unverified_capture(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    archived = tmp_path / "vehicle_reconciled.jpg"
+    archived.write_bytes(b"jpg")
+    os.utime(archived, (100.0, 100.0))
+    monkeypatch.setattr(image_storage.time, "time", lambda: 200.0)
+    monkeypatch.setattr(
+        image_storage,
+        "pending_archive_flips",
+        lambda: {"vehicle_reconciled.jpg": 100.0},
+    )
+
+    health = image_storage._health_snapshot()
+
+    assert health["pending_local_files"] == 1
+    assert health["pending_archive_files"] == 0
+    assert health["oldest_pending_archive_age_seconds"] is None
+    assert health["pending_reconciliation_files"] == 1
+    assert health["oldest_pending_reconciliation_age_seconds"] == 100.0
 
 
 def test_archive_health_reports_unknown_when_local_outbox_is_missing(monkeypatch, tmp_path):

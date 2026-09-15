@@ -158,6 +158,8 @@ def test_archive_health_response_shape(monkeypatch):
         "upload_healthy": True,
         "local_save_healthy": True,
         "pending_local_files": 3,
+        "pending_archive_files": 2,
+        "pending_reconciliation_files": 1,
     }
     fake = _FakeRedis({"stopsign.archive.health": json.dumps(signature)})
     monkeypatch.setattr("stopsign.web.routes.health.redis_lib.from_url", lambda url, **kw: fake)
@@ -180,6 +182,8 @@ def test_archive_health_response_shape(monkeypatch):
         "upload_healthy",
         "local_save_healthy",
         "pending_local_files",
+        "pending_archive_files",
+        "pending_reconciliation_files",
     ):
         assert key in payload, f"missing key {key}"
     assert payload["upload_successes"] == 11
@@ -192,6 +196,10 @@ def test_archive_health_recomputes_pending_age_from_persisted_timestamp(monkeypa
         "pending_local_files": 1,
         "oldest_pending_local_ts": observed_at,
         "oldest_pending_local_age_seconds": 1.0,
+        "oldest_pending_archive_ts": observed_at,
+        "oldest_pending_archive_age_seconds": 1.0,
+        "oldest_pending_reconciliation_ts": observed_at,
+        "oldest_pending_reconciliation_age_seconds": 1.0,
         "archive_health_observed_at": observed_at,
     }
     fake = _FakeRedis({"stopsign.archive.health": json.dumps(signature)})
@@ -202,6 +210,8 @@ def test_archive_health_recomputes_pending_age_from_persisted_timestamp(monkeypa
     payload = json.loads(response.body)
 
     assert payload["oldest_pending_local_age_seconds"] == 900.0
+    assert payload["oldest_pending_archive_age_seconds"] == 900.0
+    assert payload["oldest_pending_reconciliation_age_seconds"] == 900.0
     assert payload["archive_health_age_seconds"] == 900.0
 
 

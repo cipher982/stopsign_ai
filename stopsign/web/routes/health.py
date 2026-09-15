@@ -64,9 +64,14 @@ def _parse_hls_playlist(path: str) -> dict:
 def _refresh_archive_health(payload: dict) -> dict:
     """Recompute age-bearing archive fields from persisted timestamps on read."""
     now = time.time()
-    oldest_pending_ts = payload.get("oldest_pending_local_ts")
-    if isinstance(oldest_pending_ts, (int, float)) and not isinstance(oldest_pending_ts, bool):
-        payload["oldest_pending_local_age_seconds"] = now - oldest_pending_ts
+    for timestamp_key, age_key in (
+        ("oldest_pending_local_ts", "oldest_pending_local_age_seconds"),
+        ("oldest_pending_archive_ts", "oldest_pending_archive_age_seconds"),
+        ("oldest_pending_reconciliation_ts", "oldest_pending_reconciliation_age_seconds"),
+    ):
+        timestamp = payload.get(timestamp_key)
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+            payload[age_key] = now - timestamp
     observed_at = payload.get("archive_health_observed_at")
     if isinstance(observed_at, (int, float)) and not isinstance(observed_at, bool):
         # Preserve negative ages: a future-dated observation is invalid evidence,
