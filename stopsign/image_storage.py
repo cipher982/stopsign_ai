@@ -329,9 +329,9 @@ def _mark_durably_archived(object_name: str) -> bool:
         return False
 
 
-def _enqueue_flip_retry(object_name: str) -> None:
+def _enqueue_flip_retry(object_name: str, enqueued_at: Optional[float] = None) -> None:
     """Persist an archived object whose database path flip still needs to land."""
-    enqueued_at = time.time()
+    enqueued_at = time.time() if enqueued_at is None else enqueued_at
     with _upload_state_lock:
         if len(_flip_pending) >= _FLIP_PENDING_MAX:
             _flip_pending.pop(next(iter(_flip_pending)))
@@ -517,7 +517,11 @@ def _reconcile_local_archive_on_startup(db: Optional[Database]) -> None:
             continue
         result = _archive_copy_matches_local(client, path)
         if result is True:
-            _enqueue_flip_retry(path.name)
+            try:
+                capture_mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            _enqueue_flip_retry(path.name, capture_mtime)
             reconciled += 1
             continue
         if result is None:

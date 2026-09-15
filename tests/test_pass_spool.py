@@ -80,7 +80,9 @@ def test_completed_pass_is_durable_in_sqlite_outbox():
 
 def test_archive_flip_outbox_survives_process_state_loss():
     assert pass_spool.enqueue_archive_flip("vehicle_archived.jpg", 123.5)
-    assert pass_spool.pending_archive_flips() == {"vehicle_archived.jpg": 123.5}
+    assert pass_spool.enqueue_archive_flip("vehicle_archived.jpg", 200.0)
+    assert pass_spool.enqueue_archive_flip("vehicle_archived.jpg", 100.0)
+    assert pass_spool.pending_archive_flips() == {"vehicle_archived.jpg": 100.0}
 
     assert pass_spool.forget_archive_flip("vehicle_archived.jpg")
     assert pass_spool.pending_archive_flips() == {}

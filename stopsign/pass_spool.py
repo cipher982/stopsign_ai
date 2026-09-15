@@ -100,7 +100,9 @@ def enqueue_archive_flip(object_name: str, enqueued_at: float | None = None) -> 
         try:
             with connection:
                 connection.execute(
-                    "INSERT OR IGNORE INTO pending_archive_flips (object_name, enqueued_at) VALUES (?, ?)",
+                    "INSERT INTO pending_archive_flips (object_name, enqueued_at) VALUES (?, ?) "
+                    "ON CONFLICT(object_name) DO UPDATE SET enqueued_at = "
+                    "MIN(pending_archive_flips.enqueued_at, excluded.enqueued_at)",
                     (object_name, enqueued_at if enqueued_at is not None else time.time()),
                 )
         finally:
