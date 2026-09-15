@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import uuid
+from hashlib import sha256
 from pathlib import Path
 from typing import Optional
 from typing import Tuple
@@ -13,8 +14,12 @@ import cv2
 import numpy as np
 import urllib3
 from minio import Minio
+from minio.error import S3Error
 
 from stopsign.database import Database
+from stopsign.pass_spool import enqueue_archive_flip
+from stopsign.pass_spool import forget_archive_flip
+from stopsign.pass_spool import pending_archive_flips
 from stopsign.pass_spool import pending_pass_image_paths
 from stopsign.settings import ARCHIVE_HEALTH_REDIS_KEY
 from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
@@ -68,11 +73,13 @@ _upload_state: dict[str, str] = {}
 _UPLOAD_STATE_MAX = 20000
 _upload_state_lock = threading.Lock()
 
-# Objects already archived in Bremen whose DB path flip has not landed yet. The pass
-# row is written when the vehicle leaves the zone, which can be a minute after the
-# image was captured, so the upload worker's inline retry window can expire first.
-# Keep the durable outbox for a full day; a database outage can leave the pass spool
-# waiting much longer than the ordinary zone-exit window.
+# Objects already archived in Bremen whose DB path flip has not landed yet. The
+# durable archive-flip outbox is the recovery authority; this in-memory map is a
+# bounded cache used by the worker's next sweep.
+# The pass row is written when the vehicle leaves the zone, which can be a minute
+# after the image was captured, so the upload worker's inline retry window can
+# expire first. Keep the durable outbox for a full day; a database outage can
+# leave the pass spool waiting much longer than the ordinary zone-exit window.
 _flip_pending: dict[str, float] = {}
 _FLIP_PENDING_MAX = 5000
 _FLIP_RETRY_MAX_AGE_SEC = 24 * 60 * 60
@@ -323,15 +330,14 @@ def _mark_durably_archived(object_name: str) -> bool:
 
 
 def _enqueue_flip_retry(object_name: str) -> None:
-    """Queue an archived object whose DB path flip did not land inside the worker.
-
-    Bounded: when full the oldest entry is dropped, which only means that object
-    stays local. That is the pruner's conservative direction, never a deleted file.
-    """
+    """Persist an archived object whose database path flip still needs to land."""
+    enqueued_at = time.time()
     with _upload_state_lock:
         if len(_flip_pending) >= _FLIP_PENDING_MAX:
             _flip_pending.pop(next(iter(_flip_pending)))
-        _flip_pending.setdefault(object_name, time.time())
+        _flip_pending.setdefault(object_name, enqueued_at)
+    if not enqueue_archive_flip(object_name, enqueued_at):
+        logger.warning("Archive flip for %s is only in memory; durable outbox is unavailable", object_name)
 
 
 def _maybe_retry_pending_flips(now: Optional[float] = None) -> None:
@@ -348,12 +354,23 @@ def _maybe_retry_pending_flips(now: Optional[float] = None) -> None:
 def _forget_pending_flip(object_name: str) -> None:
     with _upload_state_lock:
         _flip_pending.pop(object_name, None)
+    forget_archive_flip(object_name)
 
 
 def _is_flip_pending(object_name: str) -> bool:
     """Is this object already archived, with only its database path left to flip?"""
     with _upload_state_lock:
         return object_name in _flip_pending
+
+
+def _load_persisted_flip_retries() -> None:
+    """Restore archive flips lost from memory by an analyzer restart."""
+    persisted = pending_archive_flips()
+    if persisted is None:
+        return
+    with _upload_state_lock:
+        for object_name, enqueued_at in sorted(persisted.items(), key=lambda item: item[1])[:_FLIP_PENDING_MAX]:
+            _flip_pending.setdefault(object_name, enqueued_at)
 
 
 def _retry_pending_flips(db: Optional[Database]) -> None:
@@ -363,13 +380,16 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
     runs on the capture path. A durable failed-pass spool reference keeps an
     uploaded object alive until the pass can be inserted after a long DB outage.
     """
-    if db is None or not _flip_pending:
+    if db is None:
         return
-
+    _load_persisted_flip_retries()
+    with _upload_state_lock:
+        if not _flip_pending:
+            return
+    pending_pass_images = pending_pass_image_paths()
     now = time.time()
     with _upload_state_lock:
-        batch = sorted(_flip_pending.items(), key=lambda kv: kv[1])[:_FLIP_RETRY_BATCH]
-    pending_pass_images = pending_pass_image_paths()
+        batch = sorted(_flip_pending.items(), key=lambda item: item[1])[:_FLIP_RETRY_BATCH]
 
     for object_name, enqueued_at in batch:
         if _get_upload_state(object_name) == "uploaded":
@@ -408,6 +428,119 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
                 object_name,
                 now - enqueued_at,
             )
+
+
+def _archive_client() -> Minio:
+    return Minio(
+        BREMEN_MINIO_ENDPOINT,
+        access_key=BREMEN_MINIO_ACCESS_KEY,
+        secret_key=BREMEN_MINIO_SECRET_KEY,
+        secure=False,
+        http_client=urllib3.PoolManager(timeout=BREMEN_MINIO_TIMEOUT_SECONDS),
+    )
+
+
+def _archive_copy_matches_local(client: Minio, local_path: Path) -> Optional[bool]:
+    """Prove a local image is the same bytes as its Bremen object.
+
+    ``False`` means the object is absent or differs and a normal upload may repair it.
+    ``None`` means the archive could not be observed, so the local copy must remain
+    untouched until a later retry.
+    """
+    try:
+        local_size = local_path.stat().st_size
+        before = client.stat_object(BREMEN_MINIO_BUCKET, local_path.name)
+    except S3Error as exc:
+        if exc.code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+            return False
+        logger.warning("Could not inspect Bremen object %s: %s", local_path.name, exc)
+        return None
+    except Exception as exc:
+        logger.warning("Could not inspect Bremen object %s: %s", local_path.name, exc)
+        return None
+
+    if before.size != local_size:
+        return False
+
+    response = None
+    try:
+        local_digest = sha256()
+        with local_path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                local_digest.update(chunk)
+
+        response = client.get_object(BREMEN_MINIO_BUCKET, local_path.name)
+        remote_digest = sha256()
+        remote_size = 0
+        while chunk := response.read(1024 * 1024):
+            remote_digest.update(chunk)
+            remote_size += len(chunk)
+        after = client.stat_object(BREMEN_MINIO_BUCKET, local_path.name)
+        if remote_size != before.size or after.size != before.size or after.etag != before.etag:
+            return None
+        return remote_digest.digest() == local_digest.digest()
+    except S3Error as exc:
+        if exc.code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+            return False
+        logger.warning("Could not verify Bremen object %s: %s", local_path.name, exc)
+        return None
+    except Exception as exc:
+        logger.warning("Could not verify Bremen object %s: %s", local_path.name, exc)
+        return None
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+
+def _reconcile_local_archive_on_startup(db: Optional[Database]) -> None:
+    """Recover archive state that was lost with the previous analyzer process."""
+    if not BREMEN_MINIO_SECRET_KEY:
+        return
+    image_dir = Path(LOCAL_IMAGE_DIR)
+    try:
+        paths = sorted(image_dir.glob("*.jpg"), key=lambda path: path.stat().st_mtime)
+    except OSError as exc:
+        logger.warning("Could not enumerate local archive outbox at startup: %s", exc)
+        return
+    try:
+        client = _archive_client()
+    except Exception as exc:
+        logger.warning("Could not create Bremen archive client at startup: %s", exc)
+        return
+
+    reconciled = 0
+    queued = 0
+    uncertain = 0
+    for path in paths:
+        if _is_durably_archived(path.name):
+            continue
+        result = _archive_copy_matches_local(client, path)
+        if result is True:
+            _enqueue_flip_retry(path.name)
+            reconciled += 1
+            continue
+        if result is None:
+            uncertain += 1
+            continue
+        if _get_upload_state(path.name) == "pending":
+            continue
+        _mark_upload_state(path.name, "pending")
+        try:
+            _upload_queue.put_nowait((str(path), path.name, db))
+            queued += 1
+        except queue.Full:
+            _mark_upload_state(path.name, "failed")
+
+    _retry_pending_flips(db)
+    _write_health_to_redis()
+    logger.info(
+        "Startup archive reconciliation checked %d local capture(s): %d already archived, %d queued, %d uncertain",
+        len(paths),
+        reconciled,
+        queued,
+        uncertain,
+    )
 
 
 def start_upload_worker(db: Optional[Database] = None) -> None:
@@ -573,6 +706,11 @@ def _bremen_upload_worker():
     a flip is still retried when no further image is ever saved - a quiet evening
     must not strand the last capture of the night.
     """
+    try:
+        _reconcile_local_archive_on_startup(_flip_retry_db)
+    except Exception as exc:
+        logger.error("Startup archive reconciliation failed: %s", exc)
+
     while True:
         try:
             try:
@@ -757,6 +895,7 @@ def save_vehicle_image(
         try:
             _upload_queue.put_nowait((str(local_path), filename, db))
         except queue.Full:
+            _mark_upload_state(filename, "failed")
             logger.warning(f"Upload queue full, skipping archive of {filename}")
 
         _maybe_prune_old_images()

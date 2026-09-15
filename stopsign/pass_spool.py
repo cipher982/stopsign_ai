@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS pending_passes (
 )
 """
 
+_CREATE_ARCHIVE_FLIPS_TABLE = """
+CREATE TABLE IF NOT EXISTS pending_archive_flips (
+    object_name TEXT PRIMARY KEY,
+    enqueued_at REAL NOT NULL
+)
+"""
+
 
 def _open_database(*, read_only: bool = False) -> sqlite3.Connection:
     path = _database_path()
@@ -80,9 +87,60 @@ def _open_database(*, read_only: bool = False) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA synchronous=FULL")
     connection.execute(_CREATE_TABLE)
+    connection.execute(_CREATE_ARCHIVE_FLIPS_TABLE)
     _ensure_schema(connection)
     connection.commit()
     return connection
+
+
+def enqueue_archive_flip(object_name: str, enqueued_at: float | None = None) -> bool:
+    """Persist an archived object's pending database path flip."""
+    try:
+        connection = _open_database()
+        try:
+            with connection:
+                connection.execute(
+                    "INSERT OR IGNORE INTO pending_archive_flips (object_name, enqueued_at) VALUES (?, ?)",
+                    (object_name, enqueued_at if enqueued_at is not None else time.time()),
+                )
+        finally:
+            connection.close()
+        return True
+    except (OSError, sqlite3.Error) as exc:
+        logger.error("Could not persist archive flip for %s: %s", object_name, exc)
+        return False
+
+
+def pending_archive_flips() -> dict[str, float] | None:
+    """Return durable archive flips, or None when the outbox is unreadable."""
+    try:
+        connection = _open_database(read_only=True)
+        try:
+            rows = connection.execute("SELECT object_name, enqueued_at FROM pending_archive_flips").fetchall()
+        finally:
+            connection.close()
+        return {str(object_name): float(enqueued_at) for object_name, enqueued_at in rows}
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        logger.error("Could not read archive flip outbox: %s", exc)
+        return None
+
+
+def forget_archive_flip(object_name: str) -> bool:
+    """Remove an archive flip after its database path and marker are durable."""
+    try:
+        connection = _open_database()
+        try:
+            with connection:
+                connection.execute(
+                    "DELETE FROM pending_archive_flips WHERE object_name = ?",
+                    (object_name,),
+                )
+        finally:
+            connection.close()
+        return True
+    except (OSError, sqlite3.Error) as exc:
+        logger.error("Could not remove archive flip for %s: %s", object_name, exc)
+        return False
 
 
 def _encode_payload(kwargs: dict[str, Any]) -> str:

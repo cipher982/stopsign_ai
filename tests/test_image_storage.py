@@ -24,6 +24,9 @@ def isolate_image_storage_state(monkeypatch):
     monkeypatch.setattr(image_storage, "_health_seeded", True)
     monkeypatch.setattr(image_storage, "_redis_attempted", True)
     monkeypatch.setattr(image_storage, "_redis_client", None)
+    monkeypatch.setattr(image_storage, "enqueue_archive_flip", lambda *_args: True)
+    monkeypatch.setattr(image_storage, "forget_archive_flip", lambda *_args: True)
+    monkeypatch.setattr(image_storage, "pending_archive_flips", lambda: {})
 
 
 def test_save_vehicle_image_writes_local_file_without_inline_prune(monkeypatch, tmp_path):
@@ -334,6 +337,75 @@ def _archive_once(monkeypatch, db, object_name="x_123.jpg"):
     image_storage._process_upload_item(f"/tmp/{object_name}", object_name, db)
 
 
+def test_archive_copy_verification_checks_content_not_only_size(tmp_path):
+    from types import SimpleNamespace
+
+    matching = tmp_path / "matching.jpg"
+    matching.write_bytes(b"same bytes")
+    different = tmp_path / "different.jpg"
+    different.write_bytes(b"other data")
+
+    class _Response:
+        def __init__(self, payload):
+            self.payload = payload
+            self.offset = 0
+
+        def read(self, size):
+            chunk = self.payload[self.offset : self.offset + size]
+            self.offset += len(chunk)
+            return chunk
+
+        def close(self):
+            pass
+
+        def release_conn(self):
+            pass
+
+    class _Client:
+        def stat_object(self, _bucket, name):
+            return SimpleNamespace(size=len(b"same bytes"), etag=name)
+
+        def get_object(self, _bucket, _name):
+            return _Response(b"same bytes")
+
+    client = _Client()
+    assert image_storage._archive_copy_matches_local(client, matching) is True
+    assert image_storage._archive_copy_matches_local(client, different) is False
+
+
+def test_startup_reconciliation_flips_archived_files_and_requeues_missing(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+
+    archived = tmp_path / "archived.jpg"
+    archived.write_bytes(b"archived")
+    missing = tmp_path / "missing.jpg"
+    missing.write_bytes(b"missing")
+    upload_queue = queue.Queue()
+    db = MagicMock()
+    db.update_image_path.return_value = 1
+
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_SECRET_KEY", "secret")
+    monkeypatch.setattr(image_storage, "_archive_client", lambda: object())
+    monkeypatch.setattr(
+        image_storage,
+        "_archive_copy_matches_local",
+        lambda _client, path: path.name == archived.name,
+    )
+    monkeypatch.setattr(image_storage, "_upload_queue", upload_queue)
+
+    image_storage._reconcile_local_archive_on_startup(db)
+
+    queued = upload_queue.get_nowait()
+    assert queued[:2] == (str(missing), missing.name)
+    assert db.update_image_path.call_args.args == (
+        "local://archived.jpg",
+        "bremen://archived.jpg",
+    )
+    assert image_storage._get_upload_state(archived.name) == "uploaded"
+    assert (tmp_path / "archived.jpg.uploaded").exists()
+
+
 def test_upload_worker_queues_a_late_flip_instead_of_leaking_the_file(monkeypatch):
     """A pass row that lands after the inline window must not strand the local file.
 
@@ -365,6 +437,23 @@ def test_delayed_flip_retry_marks_uploaded_once_the_pass_row_lands():
     image_storage._retry_pending_flips(db)  # row landed -> file becomes prunable
     assert image_storage._get_upload_state("x_123.jpg") == "uploaded"
     assert "x_123.jpg" not in image_storage._flip_pending
+
+
+def test_delayed_flip_retry_restores_persisted_queue_after_restart(monkeypatch):
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.update_image_path.return_value = 1
+    monkeypatch.setattr(
+        image_storage,
+        "pending_archive_flips",
+        lambda: {"x_after_restart.jpg": time.time()},
+    )
+
+    image_storage._retry_pending_flips(db)
+
+    assert image_storage._get_upload_state("x_after_restart.jpg") == "uploaded"
+    assert "x_after_restart.jpg" not in image_storage._flip_pending
 
 
 def test_expired_flip_with_no_referencing_pass_releases_the_local_copy(monkeypatch):

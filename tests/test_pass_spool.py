@@ -78,6 +78,14 @@ def test_completed_pass_is_durable_in_sqlite_outbox():
     assert pass_spool.pending_pass_image_paths() == {"vehicle_x.jpg"}
 
 
+def test_archive_flip_outbox_survives_process_state_loss():
+    assert pass_spool.enqueue_archive_flip("vehicle_archived.jpg", 123.5)
+    assert pass_spool.pending_archive_flips() == {"vehicle_archived.jpg": 123.5}
+
+    assert pass_spool.forget_archive_flip("vehicle_archived.jpg")
+    assert pass_spool.pending_archive_flips() == {}
+
+
 def test_pending_pass_is_replayed_when_database_returns():
     db = FakeDatabase(failing=True)
     enqueue_pass(_pass_kwargs())
