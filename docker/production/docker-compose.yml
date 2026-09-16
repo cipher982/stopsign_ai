@@ -1,3 +1,6 @@
+# Cube's default docker0 bridge may be unavailable after daemon/network churn,
+# so image builds use host networking rather than that runtime bridge.
+
 name: is844go80k088kcgo88s8cs8
 
 services:
@@ -6,7 +9,11 @@ services:
   # Keep the existing RTSP env file on cube as the secret authority; only the
   # producer image and code are rebuilt from this checkout.
   rtsp_to_redis:
+    # Cube's default Docker bridge can lose its host device after network
+    # churn; host-only build networking keeps release builds independent of
+    # that runtime bridge. Service traffic still uses the explicit networks.
     build:
+      network: host
       context: ../..
       dockerfile: rtsp_to_redis/Dockerfile
     env_file:
@@ -33,6 +40,7 @@ services:
   video_analyzer:
     build:
       context: ../..
+      network: host
       dockerfile: docker/production/Dockerfile.processor
       args:
         YOLO_MODEL_NAME: ${YOLO_MODEL_NAME:-yolo11l.onnx}
@@ -80,6 +88,7 @@ services:
   ffmpeg_service:
     build:
       context: ../..
+      network: host
       dockerfile: docker/production/Dockerfile.ffmpeg
     environment:
       REDIS_URL: ${REDIS_URL}
@@ -116,6 +125,7 @@ services:
   web_server:
     build:
       context: ../..
+      network: host
       dockerfile: docker/production/Dockerfile.web
     dns:
       - 100.100.100.100  # Tailscale MagicDNS for .ts.net names
