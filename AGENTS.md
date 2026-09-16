@@ -1,14 +1,12 @@
 # Stop Sign AI - Deployment & Architecture
 
 ## Deployment Overview
-Production: two Docker tracks on **cube**:
-1. **rtsp_to_redis** Compose at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis` — captures RTSP stream, pushes frames to Redis. Capture runs `restart: always` (both stacks do).
-2. **Main stack** — estate manual-app `stopsign` (manifest `~/git/me/domains/mytech/infrastructure/manual-apps/stopsign/app.json`): checkout `/home/drose/manual-apps/stopsign/repo`, compose `docker/production/docker-compose.yml`, compose project `is844go80k088kcgo88s8cs8` (preserves volumes):
-   - `video_analyzer` - GPU AI detection/tracking
-   - `ffmpeg_service` - HLS segment generation for web
-   - `web_server` - FastAPI web interface + API
-
-Deploy: commit+push, then `~/git/me/domains/mytech/bin/manual-app deploy stopsign --repo-dir ~/git/stopsign_ai` (refuses unpushed/dirty HEAD; verifies remote-local + public `/healthz`). YOLO weights live in `models/` (gitignored); keep them on cube, don't commit.
+Production is one four-service Docker Compose release on **cube**, managed by the estate manual-app `stopsign` (manifest `~/git/me/domains/mytech/infrastructure/manual-apps/stopsign/app.json`):
+1. `rtsp_to_redis` - captures the RTSP stream and pushes frames to Redis.
+2. `video_analyzer` - GPU AI detection/tracking.
+3. `ffmpeg_service` - HLS segment generation for the web stream.
+4. `web_server` - FastAPI web interface + API.
+All four images build from the same Stop Sign checkout and Compose project. The producer's runtime env remains cube-only at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env`; it is referenced by the release Compose file and is not copied into git. Deploy: commit+push, then `~/git/me/domains/mytech/bin/manual-app deploy stopsign --repo-dir ~/git/stopsign_ai` (refuses unpushed/dirty HEAD; verifies remote-local + public `/healthz`). YOLO weights live in `models/` (gitignored); keep them on cube, don't commit.
 
 ## Frontend Design System
 "Field Instrument" (Aug 2026, replaced the win98 theme): dark asphalt ground, verdict semantics green/amber/red (`--ok/--warn/--bad`) as the ONLY data colors, magenta `--accent` as identity-only, Overpass + Overpass Mono type, verdict stamp chips (FULL STOP / ROLLING STOP / NO STOP) site-wide. Tokens in `static/base.css`; page CSS in each template's style block. Rules: evidence images always `object-fit: contain` on `--well` (cover re-crops the tight capture crops); thumbnails served by `/vehicle-thumb/{obj}?v=<variant>` — bump `THUMBNAIL_VARIANT` (stopsign/web/services/images.py) on any rendering change because Cloudflare caches immutably by URL.
@@ -69,7 +67,7 @@ python3 ~/git/me/scripts/infisical-get.py DB_URL --project-id 9c373776-768f-454b
 PGPASSWORD="<above>" psql -h clifford.coin-castor.ts.net -p 5432 -U stopsign_app -d stopsign
 ```
 - MinIO: `mc` client or web console at endpoint
-- Creds are server-side env vars: RTSP at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env`; main stack at `/home/drose/manual-apps/stopsign_ai/docker/production/.env`
+- Creds are server-side env vars: RTSP at `/home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env`; main stack at `/home/drose/manual-apps/stopsign/repo/docker/production/.env`
 
 ## Speed Tracking
 
