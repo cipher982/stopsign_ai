@@ -27,8 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=builder /app /app
-COPY docker/production/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=755 docker/production/entrypoint.sh /entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH"
 

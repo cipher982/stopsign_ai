@@ -32,7 +32,6 @@ COPY stopsign ./stopsign/
 COPY config/config.example.yaml /app/config.example.yaml
 
 ENV PATH="/app/.venv/bin:$PATH"
-COPY docker/production/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=755 docker/production/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "stopsign.video_analyzer"]

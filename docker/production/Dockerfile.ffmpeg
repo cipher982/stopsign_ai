@@ -17,7 +17,6 @@ RUN pip install --no-cache-dir \
 WORKDIR /app
 
 COPY stopsign /app/stopsign
-COPY docker/production/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=755 docker/production/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "stopsign.ffmpeg_service"]
