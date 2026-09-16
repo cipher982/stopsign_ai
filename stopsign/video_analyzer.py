@@ -81,6 +81,10 @@ ANALYZER_STALL_SEC = float(os.getenv("ANALYZER_STALL_SEC", "120"))
 
 RAW_HEADER_MAGIC = LEGACY_MAGIC
 RAW_HEADER_MIN_LEN = HEADER_MIN_LEN
+RELEASE_GENERATION = os.getenv("RELEASE_GENERATION", "unknown")
+PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
+ANALYZER_HEALTH_KEY = os.getenv("ANALYZER_HEALTH_KEY", "stopsign.analyzer.health")
+ANALYZER_HEALTH_TTL_SEC = int(os.getenv("ANALYZER_HEALTH_TTL_SEC", "300"))
 
 
 class VideoAnalyzer(VideoAnalyzerStatusMixin):
@@ -104,6 +108,16 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.last_processed_time = time.time()
         self.last_fps_update = time.time()
         self.stats_update_interval = 300  # Update stats every 5 minutes
+        self.source_generation: Optional[str] = None
+        self.last_consumed_seq: Optional[int] = None
+        self.last_consumed_capture_ts: Optional[float] = None
+        self.last_output_seq: Optional[int] = None
+        self.last_output_capture_ts: Optional[float] = None
+        self.last_inference_seq: Optional[int] = None
+        self.last_inference_capture_ts: Optional[float] = None
+        self.last_inference_at: Optional[float] = None
+        self.stale_dropped_count = 0
+        self.last_stage_reason = "starting"
 
         # Pipeline-health + error-handling state
         self._redis_error_backoff = 0.0  # grows 1s -> 30s while Redis is unreachable
@@ -130,6 +144,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         # Initialize FPS counters for each stage
         self.incoming_fps_count = 0
+
         self.object_detection_fps_count = 0
         self.car_tracking_fps_count = 0
         self.visualization_fps_count = 0
@@ -144,6 +159,57 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         start_http_server(PROMETHEUS_PORT)
         self._start_health_server()
         self._start_stall_watchdog()
+
+    def _publish_health(self, status: Optional[str] = None, reason: Optional[str] = None) -> None:
+        """Publish truthful analyzer stage evidence without replacing legacy keys."""
+        now = time.time()
+        capture_age = max(0.0, now - self.last_output_capture_ts) if self.last_output_capture_ts is not None else None
+        inference_age = max(0.0, now - self.last_inference_at) if self.last_inference_at is not None else None
+        queue_depth = None
+        try:
+            queue_depth = int(self.redis_client.llen(RAW_FRAME_KEY))
+        except Exception:
+            pass
+        if status is None:
+            if self.last_consumed_seq is None or self.source_generation is None:
+                status = "deferred"
+                reason = reason or "waiting for complete source metadata"
+            elif self.last_output_capture_ts is None:
+                status = "deferred"
+                reason = reason or "no processed frame evidence yet"
+            elif capture_age is not None and capture_age > ANALYZER_CATCHUP_SEC:
+                status = "failed"
+                reason = reason or f"processed capture is {capture_age:.1f}s old"
+            elif self.last_inference_at is None or (inference_age is not None and inference_age > ANALYZER_CATCHUP_SEC):
+                status = "degraded"
+                reason = reason or "no fresh successful inference evidence"
+            else:
+                status = "healthy"
+                reason = reason or "processed frame and inference evidence are current"
+        payload = {
+            "schema_version": 2,
+            "status": status,
+            "release_generation": RELEASE_GENERATION,
+            "project_identity": PROJECT_IDENTITY,
+            "source_generation": self.source_generation,
+            "last_consumed_seq": self.last_consumed_seq,
+            "last_consumed_capture_ts": self.last_consumed_capture_ts,
+            "last_output_seq": self.last_output_seq,
+            "last_output_capture_ts": self.last_output_capture_ts,
+            "last_inference_seq": self.last_inference_seq,
+            "last_inference_capture_ts": self.last_inference_capture_ts,
+            "last_inference_at": self.last_inference_at,
+            "capture_age_seconds": capture_age,
+            "inference_age_seconds": inference_age,
+            "queue_depth": queue_depth,
+            "stale_dropped_count": self.stale_dropped_count,
+            "reason": reason or self.last_stage_reason,
+            "updated_at": now,
+        }
+        try:
+            self.redis_client.set(ANALYZER_HEALTH_KEY, json.dumps(payload), ex=ANALYZER_HEALTH_TTL_SEC)
+        except Exception:
+            logger.debug("Could not publish analyzer health heartbeat", exc_info=True)
 
     def _start_stats_update_thread(self):
         def schedule_stats_update():
@@ -308,23 +374,22 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         logger.info("ONNX model ready, providers: %s", detector.session.get_providers())
         return detector
 
-    def _parse_raw_frame(self, data: bytes) -> Tuple[Optional[np.ndarray], Optional[float]]:
-        """Parse packed RAW frame with optional metadata header.
-
-        Returns (frame, capture_ts). If header missing/invalid, returns (frame, None).
-        """
+    def _parse_raw_frame(self, data: bytes, include_metadata: bool = False):
+        """Parse a frame while retaining a legacy two-value return by default."""
         decoded = unpack_frame(data)
         if decoded is None:
-            return None, None
-
+            return (None, None, {}) if include_metadata else (None, None)
+        metadata = dict(decoded.metadata)
+        raw_capture_ts = metadata.get("capture_ts")
+        if raw_capture_ts is None:
+            raw_capture_ts = metadata.get("ts")
         try:
-            capture_ts = float(decoded.metadata["ts"])
-        except (KeyError, TypeError, ValueError):
-            return None, None
-
+            capture_ts = float(raw_capture_ts)
+        except (TypeError, ValueError):
+            return (None, None, metadata) if include_metadata else (None, None)
         nparr = np.frombuffer(decoded.payload, dtype=np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        return frame, capture_ts
+        return (frame, capture_ts, metadata) if include_metadata else (frame, capture_ts)
 
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
         try:
@@ -336,64 +401,79 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 if frame is None:
                     logger.error("Failed to decode frame data")
                 return frame
-            else:
-                return None
         except Exception as e:
             logger.error(f"Error retrieving frame from Redis: {str(e)}")
             return None
 
-    def get_frame_with_meta(self, key: str) -> Optional[Tuple[np.ndarray, float]]:
-        """Pop a frame and return (ndarray, capture_ts).
-
-        An empty BRPOP (no frame in the window) is normal idle and returns None
-        without logging. Redis failures are caught and backed off exponentially
-        (1s -> 30s) instead of crashing or spinning an error loop; the stall
-        watchdog still guards end-to-end freshness if Redis stays down.
-        """
+    def _trim_raw_queue_to_newest(self, key: str) -> int:
+        """Atomically retain only the newest bounded window after a stale pop."""
+        keep_n = max(1, ANALYZER_CATCHUP_KEEP_N)
         try:
-            # Use BRPOP so LPUSH/BRPOP forms a FIFO queue (oldest first)
+            before = int(self.redis_client.llen(key))
+            if before <= keep_n:
+                return 0
+            pipe = self.redis_client.pipeline(transaction=True)
+            pipe.ltrim(key, 0, keep_n - 1)
+            pipe.llen(key)
+            _, kept = pipe.execute()
+            dropped = max(0, before - int(kept))
+            self.stale_dropped_count += dropped
+            return dropped
+        except Exception as exc:
+            logger.warning("Failed to trim stale analyzer queue: %s", exc)
+            return 0
+
+    def get_frame_with_meta(self, key: str) -> Optional[Tuple[np.ndarray, float, Dict[str, Any]]]:
+        """Pop a frame and return (ndarray, capture_ts, source_metadata)."""
+        try:
+            # LPUSH/BRPOP remains FIFO until a stale frame proves catch-up is needed.
             frame_data = self.redis_client.brpop([key], timeout=1)
             if frame_data:
                 _, data = frame_data  # type: ignore
-                frame, capture_ts = self._parse_raw_frame(data)
+                frame, capture_ts, metadata = self._parse_raw_frame(data, include_metadata=True)
                 if frame is None or capture_ts is None:
-                    # Undecodable frame: skip it with a counter, never raise. Log at most
-                    # once per minute so a garbage pipeline cannot spam the log.
                     self.frames_discarded.inc()
                     if time.time() - self._last_discard_log_ts > 60:
                         logger.error("Discarding frame without valid capture timestamp metadata")
                         self._last_discard_log_ts = time.time()
                     return None
-                self._redis_error_backoff = 0.0
 
-                # With decoupled YOLO, we output every frame for smooth video.
-                # Only log high lag for monitoring, but don't skip frames.
-                # YOLO will naturally run on recent frames since it's time-gated.
-                if ANALYZER_CATCHUP_SEC > 0:
-                    try:
-                        lag = time.time() - float(capture_ts)
-                        if lag > ANALYZER_CATCHUP_SEC:
-                            # Log but don't skip - smooth output is more important than freshness
-                            logger.info(
-                                "High pipeline lag: %.2fs (threshold %.2fs), continuing to output for smooth video",
-                                lag,
-                                ANALYZER_CATCHUP_SEC,
-                            )
-                    except Exception as e:
-                        logger.debug(f"Lag check failed: {e}")
-                return frame, capture_ts
+                lag = max(0.0, time.time() - float(capture_ts))
+                if ANALYZER_CATCHUP_SEC > 0 and lag > ANALYZER_CATCHUP_SEC:
+                    self.stale_dropped_count += 1  # the frame already removed by BRPOP
+                    dropped = self._trim_raw_queue_to_newest(key)
+                    if dropped:
+                        # RPOP is the oldest member of the retained newest window.
+                        newest_data = self.redis_client.rpop(key)
+                        if newest_data:
+                            frame, capture_ts, metadata = self._parse_raw_frame(newest_data, include_metadata=True)
+                    if frame is None or capture_ts is None:
+                        self.last_stage_reason = (
+                            f"dropped stale capture ({lag:.1f}s) while waiting for a fresh source frame"
+                        )
+                        self._publish_health("degraded", self.last_stage_reason)
+                        return None
+                    logger.info(
+                        "Analyzer catch-up dropped %d stale frame(s); retaining newest window of %d",
+                        dropped + 1,
+                        max(1, ANALYZER_CATCHUP_KEEP_N),
+                    )
+
+                self._redis_error_backoff = 0.0
+                return frame, capture_ts, metadata
             self._redis_error_backoff = 0.0
             return None
         except redis_exceptions.RedisError as e:
-            # Redis unreachable: back off instead of tight-looping. The watchdog
-            # terminates the container if freshness is not restored within its window.
             self._redis_error_backoff = min(30.0, (self._redis_error_backoff or 1.0) * 2)
+            self.last_stage_reason = f"Redis frame read failed: {e}"
             logger.warning(
                 "Redis error retrieving frame from Redis: %s (backing off %.0fs)", e, self._redis_error_backoff
             )
             time.sleep(self._redis_error_backoff)
+            self._publish_health("unavailable", self.last_stage_reason)
             return None
         except Exception as e:
+            self.last_stage_reason = f"Frame decode failed: {e}"
             logger.error(f"Error retrieving frame+meta from Redis: {str(e)}")
             return None
 
@@ -416,6 +496,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 self.redis_client.set(ANALYZER_BOOT_TS_KEY, time.time())
             except Exception as boot_err:
                 logger.warning(f"Failed to record analyzer boot_ts: {boot_err}")
+            self._publish_health("deferred", "Redis connected; waiting for source frame evidence")
         except redis_exceptions.ConnectionError as e:
             logger.error(f"Failed to connect to Redis: {str(e)}")
             return
@@ -430,7 +511,15 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                     logger.warning("No frame available in Redis. Waiting...")
                     time.sleep(1)
                     continue
-                frame, capture_ts = item
+                frame, capture_ts, source_metadata = item
+                source_seq = source_metadata.get("source_seq")
+                try:
+                    source_seq = int(source_seq) if source_seq is not None else None
+                except (TypeError, ValueError):
+                    source_seq = None
+                self.last_consumed_seq = source_seq
+                self.last_consumed_capture_ts = capture_ts
+                self.source_generation = source_metadata.get("source_generation") or self.source_generation
 
                 frame_start_time = time.time()
 
@@ -439,10 +528,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
                 # Timing for frame processing
                 start_time = time.time()
-                processed_frame, metadata = self.process_frame(frame, capture_ts=capture_ts)
+                processed_frame, metadata = self.process_frame(
+                    frame, capture_ts=capture_ts, source_metadata=source_metadata
+                )
                 processing_time = time.time() - start_time
                 self.frame_processing_time.observe(processing_time)
 
+                self.last_output_seq = source_seq
+                self.last_output_capture_ts = capture_ts
                 self.store_frame_data(processed_frame, metadata)
                 now_ts = time.time()
                 self.last_processed_time = now_ts
@@ -468,6 +561,8 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                 self.frame_count += 1
                 self.fps_frame_count += 1
                 self.frames_processed.inc()
+                self.last_stage_reason = "processed frame published"
+                self._publish_health()
 
                 capture_lag = max(0.0, now_ts - float(capture_ts))
                 self.capture_lag_seconds.set(capture_lag)
@@ -507,24 +602,56 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
                     self.end_headers()
                     self.wfile.write(b'{"status":"ok"}')
                 elif self.path == "/ready":
-                    lag = time.time() - analyzer.last_processed_time
-                    ready = lag <= ANALYZER_STALL_SEC
-                    # Reflect any recorded stall reason (written by the watchdog before
-                    # exiting) so readiness shows WHY the analyzer is not ready.
-                    stall_reason = None
-                    try:
-                        raw_stall = analyzer.redis_client.get(ANALYZER_STALL_KEY)
-                        if raw_stall:
-                            stall_reason = json.loads(raw_stall)
-                    except Exception:
-                        stall_reason = None
+                    now = time.time()
+                    frame_lag = max(0.0, now - analyzer.last_processed_time)
+                    capture_age = (
+                        max(0.0, now - analyzer.last_output_capture_ts)
+                        if analyzer.last_output_capture_ts is not None
+                        else None
+                    )
+                    inference_age = (
+                        max(0.0, now - analyzer.last_inference_at) if analyzer.last_inference_at is not None else None
+                    )
+                    reasons = []
+                    if analyzer.last_consumed_seq is None or analyzer.source_generation is None:
+                        reasons.append("complete source sequence metadata is unavailable")
+                    if frame_lag > ANALYZER_STALL_SEC:
+                        reasons.append(f"no output for {frame_lag:.1f}s")
+                    if capture_age is None:
+                        reasons.append("no processed capture evidence")
+                    elif capture_age > ANALYZER_CATCHUP_SEC:
+                        reasons.append(f"processed capture is {capture_age:.1f}s old")
+                    if analyzer.last_inference_at is None:
+                        reasons.append("no successful inference evidence")
+                    elif inference_age is not None and inference_age > ANALYZER_CATCHUP_SEC:
+                        reasons.append(f"successful inference is {inference_age:.1f}s old")
+                    ready = not reasons
+                    stage_status = (
+                        "healthy"
+                        if ready
+                        else (
+                            "deferred"
+                            if analyzer.last_consumed_seq is None or analyzer.source_generation is None
+                            else "failed"
+                        )
+                    )
+                    reason = "analyzer output and inference are current" if ready else "; ".join(reasons)
+                    analyzer._publish_health(stage_status, reason)
                     status_code = 200 if ready else 503
                     payload = json.dumps(
                         {
                             "ready": ready,
-                            "frame_lag_seconds": lag,
+                            "status": stage_status,
+                            "reason": reason,
+                            "frame_lag_seconds": frame_lag,
+                            "capture_age_seconds": capture_age,
+                            "inference_age_seconds": inference_age,
                             "stall_threshold_seconds": ANALYZER_STALL_SEC,
-                            "stall_reason": stall_reason,
+                            "source_generation": analyzer.source_generation,
+                            "last_consumed_seq": analyzer.last_consumed_seq,
+                            "last_output_seq": analyzer.last_output_seq,
+                            "last_inference_seq": analyzer.last_inference_seq,
+                            "stale_dropped_count": analyzer.stale_dropped_count,
                         }
                     ).encode()
                     self.send_response(status_code)
@@ -628,7 +755,13 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         thread = threading.Thread(target=watchdog_loop, daemon=True)
         thread.start()
 
-    def process_frame(self, frame: np.ndarray, capture_ts: float) -> Tuple[np.ndarray, Dict]:
+    def process_frame(
+        self,
+        frame: np.ndarray,
+        capture_ts: float,
+        source_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[np.ndarray, Dict]:
+        source_metadata = dict(source_metadata or {})
         start_time = time.time()
         ts_for_logic = capture_ts
 
@@ -667,6 +800,14 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             # pipeline health can then distinguish forwarding from inference.
             object_detection_start = time.time()
             processed_frame, boxes = self.detect_objects(frame)
+            inference_at = time.time()
+            self.last_inference_seq = source_metadata.get("source_seq")
+            try:
+                self.last_inference_seq = int(self.last_inference_seq) if self.last_inference_seq is not None else None
+            except (TypeError, ValueError):
+                self.last_inference_seq = None
+            self.last_inference_capture_ts = capture_ts
+            self.last_inference_at = inference_at
             try:
                 self.redis_client.set(ANALYZER_LAST_INFERENCE_AT_KEY, time.time())
             except Exception:
@@ -765,7 +906,7 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         # Metadata
         metadata_start = time.time()
-        metadata = self.create_metadata(capture_ts=capture_ts)
+        metadata = self.create_metadata(capture_ts=capture_ts, source_metadata=source_metadata)
         self.metadata_creation_time.observe(time.time() - metadata_start)
 
         self.cars_tracked.set(len(self.car_tracker.get_cars()))
@@ -1051,10 +1192,18 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         for y in range(0, height, self.config.grid_size):
             cv2.line(frame, (0, y), (width, y), (128, 128, 128), 1)
 
-    def create_metadata(self, capture_ts: float) -> Dict:
+    def create_metadata(self, capture_ts: float, source_metadata: Optional[Dict[str, Any]] = None) -> Dict:
         now_ts = time.time()
+        source = dict(source_metadata or {})
         return {
+            "schema_version": 2,
             "capture_timestamp": capture_ts,
+            "capture_ts": capture_ts,
+            "arrival_ts": source.get("arrival_ts"),
+            "source_seq": source.get("source_seq"),
+            "source_generation": source.get("source_generation"),
+            "content_hash": source.get("content_hash"),
+            "processed_ts": now_ts,
             "latency_sec": max(0.0, now_ts - capture_ts),
             "frame_count": self.frame_count,
             "cars": [
@@ -1080,12 +1229,20 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         frame_height, frame_width = frame.shape[:2]
         shape_payload = json.dumps({"width": frame_width, "height": frame_height, "format": "raw"})
+        capture_ts = float(metadata.get("capture_timestamp", time.time())) if metadata else time.time()
         frame_metadata = {
+            "schema_version": 2,
             "format": "bgr24",
             "width": frame_width,
             "height": frame_height,
             "channels": 3,
-            "ts": float(metadata.get("capture_timestamp", time.time())) if metadata else time.time(),
+            "ts": capture_ts,
+            "capture_ts": capture_ts,
+            "arrival_ts": metadata.get("arrival_ts") if metadata else None,
+            "source_seq": metadata.get("source_seq") if metadata else None,
+            "source_generation": metadata.get("source_generation") if metadata else None,
+            "content_hash": metadata.get("content_hash") if metadata else None,
+            "processed_ts": metadata.get("processed_ts", time.time()) if metadata else time.time(),
             "src": "video_analyzer",
         }
         frame_data = pack_frame(frame.tobytes(), frame_metadata)

@@ -16,7 +16,6 @@ from stopsign.frame_codec import unpack_frame
 from stopsign.hls_health import parse_hls_playlist
 from stopsign.service_status import FFmpegServiceStatusMixin
 from stopsign.settings import FFMPEG_HEALTH_KEY
-from stopsign.settings import GRACE_STARTUP_SEC
 from stopsign.settings import PROCESSED_FRAME_SHAPE_KEY
 from stopsign.telemetry import get_tracer
 from stopsign.telemetry import setup_ffmpeg_service_telemetry
@@ -42,6 +41,10 @@ def get_env(key: str) -> str:
 REDIS_URL = get_env("REDIS_URL")
 PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
 HEALTH_PORT = int(os.getenv("FFMPEG_HEALTH_PORT", "8080"))
+RELEASE_GENERATION = os.getenv("RELEASE_GENERATION", "unknown")
+PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
+RTSP_HEALTH_KEY = os.getenv("RTSP_HEALTH_KEY", "stopsign.rtsp.health")
+FFMPEG_HEALTH_TTL_SEC = int(os.getenv("FFMPEG_HEALTH_TTL_SEC", "300"))
 
 STREAM_DIR = "/app/data/stream"
 FRAME_RATE = "15"
@@ -86,6 +89,18 @@ CONSEC_EMPTY_POLLS = 0
 REDIS_CLIENT: redis.Redis | None = None
 
 # Runtime status (human/debug domain)
+LAST_CONSUMED_METADATA: dict = {}
+LAST_CONSUMED_CAPTURE_TS: float | None = None
+LAST_CONSUMED_SEQ: int | None = None
+LAST_CONSUMED_SOURCE_GENERATION: str | None = None
+LAST_ENCODED_CAPTURE_TS: float | None = None
+LAST_ENCODED_SEQ: int | None = None
+LAST_ENCODED_SOURCE_GENERATION: str | None = None
+LAST_ENCODED_AT: float | None = None
+LAST_HLS_MTIME: float | None = None
+SOURCE_GENERATION_REJECTION_REASON: str | None = None
+SOURCE_GENERATION_REJECTION_COUNT = 0
+LAST_GENERATION_REJECTION_HEALTH_TS = 0.0
 status = FFmpegServiceStatusMixin()
 status.update_status_metric("service_name", "FFmpegService")
 
@@ -109,92 +124,220 @@ def get_hls_freshness() -> dict:
     return info
 
 
+def _update_encoded_evidence() -> dict:
+    """Associate a newly written HLS playlist with the newest consumed source frame.
+
+    Playlist mtime alone is not enough: a wedged encoder can keep touching files
+    while the source frame is old.  We only advance encoded evidence when both a
+    new playlist mtime and complete source metadata are present.
+    """
+    global LAST_HLS_MTIME, LAST_ENCODED_CAPTURE_TS, LAST_ENCODED_SEQ
+    global LAST_ENCODED_SOURCE_GENERATION, LAST_ENCODED_AT
+    info = get_hls_freshness()
+    mtime = info.get("playlist_mtime")
+    if mtime is not None and (LAST_HLS_MTIME is None or float(mtime) > LAST_HLS_MTIME):
+        LAST_HLS_MTIME = float(mtime)
+        if LAST_CONSUMED_CAPTURE_TS is not None and LAST_CONSUMED_SEQ is not None:
+            LAST_ENCODED_CAPTURE_TS = LAST_CONSUMED_CAPTURE_TS
+            LAST_ENCODED_SEQ = LAST_CONSUMED_SEQ
+            LAST_ENCODED_SOURCE_GENERATION = LAST_CONSUMED_SOURCE_GENERATION
+            LAST_ENCODED_AT = time.time()
+    return info
+
+
+def _live_rtsp_health() -> dict | None:
+    """Read the capture heartbeat used to fence pre-restart frames."""
+    if REDIS_CLIENT is None:
+        return None
+    try:
+        raw = REDIS_CLIENT.get(RTSP_HEALTH_KEY)
+        if not raw:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else None
+    except (redis_exceptions.RedisError, UnicodeDecodeError, TypeError, ValueError):
+        return None
+
+
+def _accept_processed_frame(metadata: dict) -> bool:
+    """Reject envelopes from a prior capture generation.
+
+    Older analyzer envelopes may omit generation metadata; those remain
+    accepted for compatibility.  Once an envelope identifies its source, the
+    RTSP heartbeat is authoritative for the currently active generation.
+    """
+    global SOURCE_GENERATION_REJECTION_REASON, SOURCE_GENERATION_REJECTION_COUNT
+
+    source_generation = metadata.get("source_generation")
+    release_generation = metadata.get("release_generation")
+    if release_generation and RELEASE_GENERATION not in {"", "unknown"}:
+        if release_generation != RELEASE_GENERATION:
+            SOURCE_GENERATION_REJECTION_REASON = (
+                f"discarded frame from release generation {release_generation!r}; "
+                f"current release is {RELEASE_GENERATION!r}"
+            )
+            SOURCE_GENERATION_REJECTION_COUNT += 1
+            status.update_custom_metric("stale_generation_drops", SOURCE_GENERATION_REJECTION_COUNT)
+            return False
+
+    # Legacy envelopes carry no source identity and cannot be fenced without
+    # inventing evidence, so preserve their historical compatibility.
+    if not source_generation:
+        SOURCE_GENERATION_REJECTION_REASON = None
+        return True
+
+    heartbeat = _live_rtsp_health()
+    live_generation = heartbeat.get("source_generation") if heartbeat else None
+    if not live_generation:
+        SOURCE_GENERATION_REJECTION_REASON = "waiting for current RTSP source-generation heartbeat"
+        SOURCE_GENERATION_REJECTION_COUNT += 1
+        status.update_custom_metric("stale_generation_drops", SOURCE_GENERATION_REJECTION_COUNT)
+        return False
+    if live_generation != source_generation:
+        SOURCE_GENERATION_REJECTION_REASON = (
+            f"discarded frame from source generation {source_generation!r}; "
+            f"current generation is {live_generation!r}"
+        )
+        SOURCE_GENERATION_REJECTION_COUNT += 1
+        status.update_custom_metric("stale_generation_drops", SOURCE_GENERATION_REJECTION_COUNT)
+        return False
+
+    SOURCE_GENERATION_REJECTION_REASON = None
+    return True
+
+
+def _readiness_snapshot(info: dict | None = None) -> dict:
+    info = info if info is not None else _update_encoded_evidence()
+    now = time.time()
+    hls_age = info.get("age_seconds")
+    hls_threshold = float(info.get("threshold_sec", 60.0))
+    hls_fresh = bool(info.get("exists")) and hls_age is not None and hls_age <= hls_threshold
+    encoded_age = max(0.0, now - LAST_ENCODED_CAPTURE_TS) if LAST_ENCODED_CAPTURE_TS is not None else None
+    encoded_threshold = max(10.0, FRAME_STALL_SEC)
+    encoded_fresh = LAST_ENCODED_SEQ is not None and encoded_age is not None and encoded_age <= encoded_threshold
+    redis_ok = bool(status.get_status_snapshot().get("redis_connected", False))
+    consumed_age = max(0.0, now - LAST_CONSUMED_CAPTURE_TS) if LAST_CONSUMED_CAPTURE_TS is not None else None
+    recent_frame_ok = LAST_CONSUMED_SEQ is not None and consumed_age is not None and consumed_age <= encoded_threshold
+    reasons = []
+    if not redis_ok:
+        reasons.append("Redis is unavailable")
+    if not recent_frame_ok:
+        reasons.append("no fresh consumed capture evidence")
+    if not hls_fresh:
+        reasons.append("HLS playlist is missing or stale")
+    if not encoded_fresh:
+        reasons.append("no fresh encoded capture evidence")
+    if SOURCE_GENERATION_REJECTION_REASON:
+        reasons.append(SOURCE_GENERATION_REJECTION_REASON)
+    ready = bool(
+        redis_ok and recent_frame_ok and hls_fresh and encoded_fresh and not SOURCE_GENERATION_REJECTION_REASON
+    )
+    if ready:
+        stage_status = "healthy"
+        reason = "Redis, source capture, and encoded HLS evidence are current"
+    elif SOURCE_GENERATION_REJECTION_REASON:
+        stage_status = "deferred"
+        reason = "; ".join(reasons)
+    elif LAST_CONSUMED_SEQ is None or LAST_ENCODED_SEQ is None:
+        stage_status = "deferred"
+        reason = "; ".join(reasons) or "waiting for encoded evidence"
+    elif not redis_ok:
+        stage_status = "unavailable"
+        reason = "; ".join(reasons)
+    else:
+        stage_status = "failed"
+        reason = "; ".join(reasons) or "FFmpeg is not ready"
+    return {
+        "ready": ready,
+        "status": stage_status,
+        "reason": reason,
+        "hls_fresh": hls_fresh,
+        "hls_age_seconds": hls_age,
+        "hls_threshold_seconds": hls_threshold,
+        "encoded_capture_age_seconds": encoded_age,
+        "encoded_capture_threshold_seconds": encoded_threshold,
+        "encoded_fresh": encoded_fresh,
+        "recent_frame_ok": recent_frame_ok,
+        "redis_ok": redis_ok,
+        "last_consumed_seq": LAST_CONSUMED_SEQ,
+        "last_consumed_capture_ts": LAST_CONSUMED_CAPTURE_TS,
+        "last_encoded_seq": LAST_ENCODED_SEQ,
+        "last_encoded_capture_ts": LAST_ENCODED_CAPTURE_TS,
+        "source_generation": LAST_ENCODED_SOURCE_GENERATION or LAST_CONSUMED_SOURCE_GENERATION,
+        "segments_count": info.get("segments_count", 0),
+    }
+
+
+def _publish_generation_deferred() -> None:
+    """Publish a throttled deferred heartbeat while draining stale frames."""
+    global LAST_GENERATION_REJECTION_HEALTH_TS
+    now = time.time()
+    if now - LAST_GENERATION_REJECTION_HEALTH_TS < 5.0:
+        return
+    LAST_GENERATION_REJECTION_HEALTH_TS = now
+    readiness = _readiness_snapshot()
+    redis_set(
+        FFMPEG_HEALTH_KEY,
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "deferred",
+                "release_generation": RELEASE_GENERATION,
+                "project_identity": PROJECT_IDENTITY,
+                "source_generation": readiness["source_generation"],
+                "last_consumed_seq": readiness["last_consumed_seq"],
+                "last_encoded_seq": readiness["last_encoded_seq"],
+                "reason": readiness["reason"],
+                "ts": now,
+            }
+        ),
+        ex=FFMPEG_HEALTH_TTL_SEC,
+    )
+
+
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/health":
-            info = get_hls_freshness()
-            # Healthy only if playlist exists and is fresh (or during startup grace)
-            now = time.time()
-            warming_up = (now - START_TIME) <= GRACE_STARTUP_SEC
-            age = info.get("age_seconds")
-            threshold = info.get("threshold_sec", 60.0)
-            fresh = bool(info.get("exists")) and (age is not None and age <= threshold)
-            fresh = fresh or warming_up
-
-            body = (
-                f"status={'ok' if fresh else 'stale'}\n"
-                f"playlist_exists={info.get('exists')}\n"
-                f"age_seconds={info.get('age_seconds')}\n"
-                f"threshold_sec={info.get('threshold_sec')}\n"
-                f"segments_count={info.get('segments_count')}\n"
-            ).encode()
-
-            self.send_response(200 if fresh else 503)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            try:
-                import json
-
-                payload = {
-                    "status": "ok" if fresh else "stale",
-                    "exists": bool(info.get("exists")),
-                    "age_seconds": info.get("age_seconds"),
-                    "threshold_sec": info.get("threshold_sec"),
-                    "segments_count": info.get("segments_count"),
-                    "redis_connected": status.get_status_snapshot().get("redis_connected", False),
-                    "last_frame_age_sec": max(0.0, time.monotonic() - LAST_FRAME_TS),
-                    "note": "readiness-like; use /healthz for liveness; /ready for composite readiness",
-                }
-                self.wfile.write(json.dumps(payload).encode())
-            except Exception:
-                self.wfile.write(body)
-        elif self.path == "/healthz":
-            # Simple liveness probe
-            # Consider process live if the thread is running. We do NOT
-            # gate liveness on HLS freshness. Watchdog handles hard restarts.
+        if self.path == "/healthz":
+            # Liveness is intentionally independent of Redis, HLS, or source freshness.
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(b"OK")
-        elif self.path == "/ready":
-            # Composite readiness: HLS fresh AND recent frame processing AND Redis connected
-            info = get_hls_freshness()
-            age = info.get("age_seconds")
-            threshold = info.get("threshold_sec", 60.0)
-            hls_ok = bool(info.get("exists")) and (age is not None and age <= threshold)
-            redis_ok = status.get_status_snapshot().get("redis_connected", False)
-            recent_frame_ok = (time.monotonic() - LAST_FRAME_TS) <= FRAME_STALL_SEC
+            return
 
-            ready = hls_ok and redis_ok and recent_frame_ok
-
-            self.send_response(200 if ready else 503)
+        if self.path in ("/health", "/ready"):
+            info = _update_encoded_evidence()
+            snapshot = _readiness_snapshot(info)
+            payload = {
+                **snapshot,
+                "schema_version": 2,
+                "release_generation": RELEASE_GENERATION,
+                "project_identity": PROJECT_IDENTITY,
+                "status": snapshot["status"],
+                # Legacy fields retained for existing probes.
+                "exists": bool(info.get("exists")),
+                "age_seconds": info.get("age_seconds"),
+                "threshold_sec": info.get("threshold_sec"),
+                "segments_count": info.get("segments_count"),
+                "redis_connected": snapshot["redis_ok"],
+                "hls_ok": snapshot["hls_fresh"],
+                "encoded_fresh": snapshot["encoded_fresh"],
+                "last_frame_age_seconds": max(0.0, time.monotonic() - LAST_FRAME_TS),
+                "consec_empty_polls": CONSEC_EMPTY_POLLS,
+                "note": "readiness-like; use /healthz for liveness",
+            }
+            self.send_response(200 if snapshot["ready"] else 503)
             self.send_header("Content-type", "application/json")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            try:
-                import json
+            self.wfile.write(json.dumps(payload).encode())
+            return
 
-                self.wfile.write(
-                    json.dumps(
-                        {
-                            "ready": ready,
-                            "hls_ok": hls_ok,
-                            "redis_ok": redis_ok,
-                            "recent_frame_ok": recent_frame_ok,
-                            "hls_age_seconds": age,
-                            "hls_threshold_seconds": threshold,
-                            "last_frame_age_seconds": max(0.0, time.monotonic() - LAST_FRAME_TS),
-                            "consec_empty_polls": CONSEC_EMPTY_POLLS,
-                        }
-                    ).encode()
-                )
-            except Exception:
-                self.wfile.write(b"ready check error")
-        else:
-            self.send_response(404)
-            self.end_headers()
+        self.send_response(404)
+        self.end_headers()
 
 
 def start_health_server():
@@ -216,22 +359,20 @@ def start_watchdog_thread():
         last_fresh_ts = time.monotonic()
         while True:
             try:
-                info = get_hls_freshness()
-                age = info.get("age_seconds")
-                threshold = info.get("threshold_sec", 60.0)
-                fresh = bool(info.get("exists")) and (age is not None and age <= threshold)
-                if fresh:
+                info = _update_encoded_evidence()
+                readiness = _readiness_snapshot(info)
+                if readiness["ready"]:
                     last_fresh_ts = time.monotonic()
                 else:
                     stalled_for = time.monotonic() - last_fresh_ts
                     if stalled_for > PIPELINE_WATCHDOG_SEC:
                         logger.error(
-                            "Watchdog trip: age=%.1fs threshold=%.1fs stalled_for=%.1fs segments=%s target_dur=%s",
-                            (age or -1),
-                            threshold,
+                            "Watchdog trip: status=%s reason=%s hls_age=%.1fs encoded_age=%s stalled_for=%.1fs",
+                            readiness["status"],
+                            readiness["reason"],
+                            info.get("age_seconds") or -1,
+                            readiness["encoded_capture_age_seconds"],
                             stalled_for,
-                            info.get("segments_count"),
-                            info.get("target_duration_sec"),
                         )
                         os._exit(1)  # ensure container restart
                 time.sleep(10)
@@ -329,11 +470,11 @@ def get_frame_shape(r: redis.Redis) -> tuple[int, int] | None:
         time.sleep(0.5)
 
 
-def decode_processed_frame(data: bytes) -> tuple[bytes, tuple[int, int] | None]:
-    """Return raw BGR bytes and optional (width, height) from either queue format."""
+def decode_processed_frame(data: bytes, include_metadata: bool = False):
+    """Decode processed bytes while retaining the legacy two-value API by default."""
     decoded = unpack_frame(data)
     if decoded is None:
-        return data, None
+        return (data, None, {}) if include_metadata else (data, None)
 
     try:
         width = int(decoded.metadata.get("width", 0))
@@ -341,6 +482,8 @@ def decode_processed_frame(data: bytes) -> tuple[bytes, tuple[int, int] | None]:
         shape = (width, height) if width > 0 and height > 0 else None
     except Exception:
         shape = None
+    if include_metadata:
+        return decoded.payload, shape, dict(decoded.metadata)
     return decoded.payload, shape
 
 
@@ -368,17 +511,18 @@ def connect_redis_with_backoff(url: str) -> redis.Redis:
             backoff = min(REDIS_MAX_BACKOFF_SEC, backoff * 2)
 
 
-def safe_brpop(key: str, timeout: int = 5):
-    """BRPOP wrapper with reconnect/backoff and empty poll tracking.
+def safe_brpop(key: str, timeout: float = 5, pop_left: bool = False):
+    """Reconnect-aware queue pop.
 
-    Returns (key, data) on success or None on timeout.
+    ``pop_left`` selects newest-first for LPUSH queues; FIFO remains the
+    historical BRPOP behavior.
     """
     global CONSEC_EMPTY_POLLS
     global REDIS_CLIENT
     try:
         if REDIS_CLIENT is None:
             REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
-        item = REDIS_CLIENT.brpop([key], timeout=timeout)
+        item = REDIS_CLIENT.blpop([key], timeout=timeout) if pop_left else REDIS_CLIENT.brpop([key], timeout=timeout)
         metrics_obj = globals().get("metrics")
 
         if item is None:
@@ -396,8 +540,6 @@ def safe_brpop(key: str, timeout: int = 5):
                 metrics_obj.queue_depth.record(queue_depth, {"queue": key})
         return item
     except redis_exceptions.TimeoutError:
-        # Idle queues trigger TimeoutError when socket_timeout is set. Treat this
-        # as an empty poll instead of a connection failure so the service stays up.
         CONSEC_EMPTY_POLLS += 1
         status.update_custom_metric("consec_empty_polls", CONSEC_EMPTY_POLLS)
         metrics_obj = globals().get("metrics")
@@ -406,11 +548,38 @@ def safe_brpop(key: str, timeout: int = 5):
             metrics_obj.queue_depth.record(0, {"queue": key})
         return None
     except redis_exceptions.RedisError as e:
-        logger.warning("Redis BRPOP error: %s", e)
+        logger.warning("Redis queue pop error: %s", e)
         status.update_status_metric("redis_connected", False)
-        # Attempt reconnect
         REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
         return None
+
+
+def redis_queue_depth(key: str) -> int | None:
+    """Read queue depth through the same reconnecting client path as pops."""
+    global REDIS_CLIENT
+    try:
+        if REDIS_CLIENT is None:
+            REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
+        return int(REDIS_CLIENT.llen(key))
+    except redis_exceptions.RedisError as exc:
+        logger.warning("Redis queue depth read failed: %s", exc)
+        status.update_status_metric("redis_connected", False)
+        REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
+        return None
+
+
+def redis_trim_queue(key: str, start: int, end: int) -> bool:
+    global REDIS_CLIENT
+    try:
+        if REDIS_CLIENT is None:
+            REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
+        REDIS_CLIENT.ltrim(key, start, end)
+        return True
+    except redis_exceptions.RedisError as exc:
+        logger.warning("Redis queue trim failed: %s", exc)
+        status.update_status_metric("redis_connected", False)
+        REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
+        return False
 
 
 def start_ffmpeg_process(frame_shape):
@@ -425,7 +594,22 @@ def start_ffmpeg_process(frame_shape):
     # bufsize=0: unbuffered stdin — frames go directly to OS pipe, no Python
     # buffering layer. Eliminates flush() overhead and per-frame buffer latency.
     process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, bufsize=0)
+
     return process
+
+
+def redis_set(key: str, value: str, ex: int | None = None) -> bool:
+    global REDIS_CLIENT
+    try:
+        if REDIS_CLIENT is None:
+            REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
+        REDIS_CLIENT.set(key, value, ex=ex)
+        return True
+    except redis_exceptions.RedisError as exc:
+        logger.warning("Redis health write failed: %s", exc)
+        status.update_status_metric("redis_connected", False)
+        REDIS_CLIENT = connect_redis_with_backoff(REDIS_URL)
+        return False
 
 
 def log_stream_files():
@@ -474,6 +658,25 @@ def main():
     if ffmpeg_process is None or ffmpeg_process.stdin is None:
         logger.error("Failed to start FFmpeg process")
         return
+    global LAST_HLS_MTIME, LAST_CONSUMED_METADATA, LAST_CONSUMED_CAPTURE_TS
+    global LAST_CONSUMED_SEQ, LAST_CONSUMED_SOURCE_GENERATION
+    global LAST_ENCODED_CAPTURE_TS, LAST_ENCODED_SEQ, LAST_ENCODED_SOURCE_GENERATION, LAST_ENCODED_AT
+    baseline_info = get_hls_freshness()
+    LAST_HLS_MTIME = baseline_info.get("playlist_mtime")
+    redis_set(
+        FFMPEG_HEALTH_KEY,
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "deferred",
+                "release_generation": RELEASE_GENERATION,
+                "project_identity": PROJECT_IDENTITY,
+                "reason": "FFmpeg started; waiting for encoded capture evidence",
+                "ts": time.time(),
+            }
+        ),
+        ex=FFMPEG_HEALTH_TTL_SEC,
+    )
 
     # Accumulating-deadline paced loop (Codex-reviewed, three failure modes addressed):
     #
@@ -490,8 +693,7 @@ def main():
     #   3. Startup (no frame yet):
     #      Advance deadline but skip write. No write(None) crash.
     target_fps = float(FRAME_RATE)
-    frame_interval = 1.0 / target_fps  # ~66.7ms at 15 FPS
-    expected_frame_bytes = frame_shape[0] * frame_shape[1] * 3
+    frame_interval = 1.0 / target_fps
     last_raw_frame = None
     next_write_t = time.monotonic()
 
@@ -516,21 +718,25 @@ def main():
         global frames_processed
         stale_drop_count = 0
         while True:
-            # Fetch next frame; timeout = 2× interval so stalls dup twice before
-            # Redis pop itself becomes the bottleneck.
             try:
-                if FFMPEG_POP_MODE == "fifo":
-                    task = REDIS_CLIENT.brpop([PROCESSED_FRAME_KEY], timeout=frame_interval * 2)
-                else:
-                    # Low-latency mode: consume newest frame first.
-                    task = REDIS_CLIENT.blpop([PROCESSED_FRAME_KEY], timeout=frame_interval * 2)
+                task = safe_brpop(
+                    PROCESSED_FRAME_KEY,
+                    timeout=frame_interval * 2,
+                    pop_left=FFMPEG_POP_MODE == "latest",
+                )
             except Exception as e:
                 logger.warning("Redis pop error: %s", e)
                 task = None
 
             if task:
                 _, data = task
-                frame_bytes, envelope_shape = decode_processed_frame(data)
+                frame_bytes, envelope_shape, frame_metadata = decode_processed_frame(data, include_metadata=True)
+                if not _accept_processed_frame(frame_metadata):
+                    # Do not keep writing the previous generation while waiting
+                    # for a frame from the current RTSP process.
+                    last_raw_frame = None
+                    _publish_generation_deferred()
+                    continue
                 if envelope_shape is not None and envelope_shape != frame_shape:
                     logger.warning(
                         "Processed frame shape changed (got %s, expected %s); restarting ffmpeg",
@@ -556,13 +762,23 @@ def main():
                     )
                 else:
                     last_raw_frame = frame_bytes
+                    LAST_CONSUMED_METADATA = dict(frame_metadata)
+                    try:
+                        LAST_CONSUMED_CAPTURE_TS = float(frame_metadata.get("capture_ts", frame_metadata.get("ts")))
+                    except (TypeError, ValueError):
+                        LAST_CONSUMED_CAPTURE_TS = None
+                    try:
+                        LAST_CONSUMED_SEQ = int(frame_metadata.get("source_seq"))
+                    except (TypeError, ValueError):
+                        LAST_CONSUMED_SEQ = None
+                    LAST_CONSUMED_SOURCE_GENERATION = frame_metadata.get("source_generation")
                     new_frame_count += 1
                     if FFMPEG_POP_MODE == "latest":
                         # Keep only a tiny backlog so stream time tracks capture time.
                         try:
-                            queue_depth = REDIS_CLIENT.llen(PROCESSED_FRAME_KEY)
+                            queue_depth = redis_queue_depth(PROCESSED_FRAME_KEY) or 0
                             if queue_depth > FFMPEG_LIVE_QUEUE_TARGET:
-                                REDIS_CLIENT.ltrim(PROCESSED_FRAME_KEY, 0, FFMPEG_LIVE_QUEUE_TARGET - 1)
+                                redis_trim_queue(PROCESSED_FRAME_KEY, 0, FFMPEG_LIVE_QUEUE_TARGET - 1)
                                 stale_drop_count += queue_depth - FFMPEG_LIVE_QUEUE_TARGET
                             status.update_custom_metric(
                                 "queue_depth",
@@ -574,9 +790,9 @@ def main():
                         # FIFO mode keeps strict ordering, but if backlog grows too large
                         # we cap it to prevent multi-second stale-video drift.
                         try:
-                            queue_depth = REDIS_CLIENT.llen(PROCESSED_FRAME_KEY)
+                            queue_depth = redis_queue_depth(PROCESSED_FRAME_KEY) or 0
                             if queue_depth > FFMPEG_FIFO_MAX_BACKLOG:
-                                REDIS_CLIENT.ltrim(PROCESSED_FRAME_KEY, 0, FFMPEG_FIFO_MAX_BACKLOG - 1)
+                                redis_trim_queue(PROCESSED_FRAME_KEY, 0, FFMPEG_FIFO_MAX_BACKLOG - 1)
                                 stale_drop_count += queue_depth - FFMPEG_FIFO_MAX_BACKLOG
                                 logger.warning(
                                     "FIFO backlog too deep (%d); dropped %d stale frame(s), keeping newest %d",
@@ -652,27 +868,37 @@ def main():
                 # evidence of a frozen picture - a live camera whose WiFi link is
                 # dropping frames produces exactly this signature. `dup_pct`/
                 # `dup_count` keep their published names for compatibility.
-                if REDIS_CLIENT is not None:
-                    try:
-                        REDIS_CLIENT.set(
-                            FFMPEG_HEALTH_KEY,
-                            json.dumps(
-                                {
-                                    "fps": round(actual_fps, 2),
-                                    "new_fps": round(new_fps, 2),
-                                    "dup_pct": round(starved_pct, 1),
-                                    "dup_count": starved_frame_count,
-                                    "new_count": new_frame_count,
-                                    "snaps": snap_count,
-                                    "dropped_stale": stale_drop_count,
-                                    "last_frame_age_sec": round(max(0.0, time.monotonic() - LAST_FRAME_TS), 1),
-                                    "ts": time.time(),
-                                }
-                            ),
-                            ex=300,
-                        )
-                    except Exception as e:
-                        logger.debug("Failed to persist ffmpeg health snapshot: %s", e)
+                hls_info = _update_encoded_evidence()
+                readiness = _readiness_snapshot(hls_info)
+                payload = {
+                    "schema_version": 2,
+                    "status": readiness["status"],
+                    "release_generation": RELEASE_GENERATION,
+                    "project_identity": PROJECT_IDENTITY,
+                    "source_generation": readiness["source_generation"],
+                    "last_consumed_seq": readiness["last_consumed_seq"],
+                    "last_consumed_capture_ts": readiness["last_consumed_capture_ts"],
+                    "last_encoded_seq": readiness["last_encoded_seq"],
+                    "last_encoded_capture_ts": readiness["last_encoded_capture_ts"],
+                    "encoded_capture_age_seconds": readiness["encoded_capture_age_seconds"],
+                    "hls_age_seconds": readiness["hls_age_seconds"],
+                    "hls_fresh": readiness["hls_fresh"],
+                    "output_fps": round(actual_fps, 2),
+                    "fps": round(actual_fps, 2),
+                    "new_fps": round(new_fps, 2),
+                    "starved_slot_ratio": round(starved_pct / 100.0, 4),
+                    "dup_pct": round(starved_pct, 1),
+                    "dup_count": starved_frame_count,
+                    "new_count": new_frame_count,
+                    "snaps": snap_count,
+                    "dropped_stale": stale_drop_count,
+                    "queue_depth": redis_queue_depth(PROCESSED_FRAME_KEY),
+                    "redis_connected": readiness["redis_ok"],
+                    "last_frame_age_sec": round(max(0.0, time.monotonic() - LAST_FRAME_TS), 1),
+                    "reason": readiness["reason"],
+                    "ts": time.time(),
+                }
+                redis_set(FFMPEG_HEALTH_KEY, json.dumps(payload), ex=FFMPEG_HEALTH_TTL_SEC)
                 fps_frame_count = 0
                 new_frame_count = 0
                 starved_frame_count = 0

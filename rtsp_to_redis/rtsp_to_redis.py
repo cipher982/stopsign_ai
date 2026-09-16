@@ -18,23 +18,24 @@ from __future__ import annotations
 # ----------------- standard library -----------------
 from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import hashlib
 import logging
 import os
 from queue import Empty, Queue
 import threading
 import time
 from typing import Optional
+import uuid
 import json
 
 # ------------------ third-party ---------------------
 import cv2
 import redis
 from redis.exceptions import RedisError
-from stopsign.frame_codec import pack_legacy_jpeg_frame
+from stopsign.frame_codec import pack_frame
 from stopsign.freeze_detector import FrameFreezeDetector
 from stopsign.telemetry import setup_rtsp_service_telemetry, get_tracer
 from stopsign.service_status import RTSPServiceStatusMixin
-
 
 # ----------------- logging setup --------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -85,6 +86,12 @@ RTSP_LOW_FPS_EXIT_SEC: float = float(os.getenv("RTSP_LOW_FPS_EXIT_SEC", "900"))
 # Readiness tolerance for a below-floor input rate, so one quiet second does not
 # flap the probe.
 READY_LOW_INPUT_FPS_SEC: float = 30.0
+# Stage-truth metadata and heartbeat keys.  Legacy frame consumers still receive
+# ``ts``/``w``/``h`` aliases, while new consumers can require the complete schema.
+RELEASE_GENERATION = os.getenv("RELEASE_GENERATION", "unknown")
+PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
+RTSP_HEALTH_KEY = os.getenv("RTSP_HEALTH_KEY", "stopsign.rtsp.health")
+RTSP_HEALTH_TTL_SEC = int(os.getenv("RTSP_HEALTH_TTL_SEC", "300"))
 
 
 class RTSPToRedis(RTSPServiceStatusMixin):
@@ -106,6 +113,15 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.processing_thread = None
         self.should_stop = threading.Event()
         self.last_push_ts: Optional[float] = None  # wall-clock time of last successful Redis push
+        self.last_capture_seq: Optional[int] = None
+        self.source_generation = os.getenv("SOURCE_GENERATION") or (
+            f"{RELEASE_GENERATION}:rtsp:{os.getpid()}:{uuid.uuid4().hex[:12]}"
+        )
+        self.source_seq = 0
+        self.last_capture_ts: Optional[float] = None
+        self.last_publish_ts: Optional[float] = None
+        self.redis_write_latency_ms: Optional[float] = None
+        self.last_stage_reason = "starting"
 
         # Freeze detection and remediation state
         self.freeze_detector = (
@@ -154,14 +170,68 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.metrics = metrics
         self.tracer = tracer
 
+    def _publish_health(self, status: Optional[str] = None, reason: Optional[str] = None) -> None:
+        """Publish a bounded, stage-specific ingest heartbeat.
+
+        The key is deliberately best-effort: inability to write it must not turn
+        the capture loop into a second failure.  Readers treat an absent/expired
+        key as unavailable rather than healthy.
+        """
+        if self.redis_client is None:
+            return
+        now = time.time()
+        capture_age = None
+        if self.last_capture_ts is not None:
+            capture_age = max(0.0, now - self.last_capture_ts)
+        if status is None:
+            if not self.last_publish_ts:
+                status = "deferred"
+                reason = reason or "no frame has been published"
+            elif capture_age is not None and capture_age > 10.0:
+                status = "failed"
+                reason = reason or f"last capture is {capture_age:.1f}s old"
+            else:
+                status = "healthy"
+        payload = {
+            "schema_version": 2,
+            "status": status,
+            "release_generation": RELEASE_GENERATION,
+            "project_identity": PROJECT_IDENTITY,
+            "source_generation": self.source_generation,
+            "last_capture_seq": self.last_capture_seq,
+            "last_capture_ts": self.last_capture_ts,
+            "last_publish_ts": self.last_publish_ts,
+            "input_fps": round(self.last_input_fps, 2),
+            "queue_depth": self.frame_queue.qsize(),
+            "redis_write_latency_ms": self.redis_write_latency_ms,
+            "reconnect_count": int(self.get_status_snapshot().get("custom_metrics", {}).get("rtsp_reconnects", 0)),
+            "reason": reason or self.last_stage_reason,
+            "updated_at": now,
+        }
+        try:
+            self.redis_client.set(RTSP_HEALTH_KEY, json.dumps(payload), ex=RTSP_HEALTH_TTL_SEC)
+        except Exception:
+            logger.debug("Could not publish RTSP health heartbeat", exc_info=True)
+
     def initialize_redis(self):
         logger.info("Attempting to connect to Redis")
         try:
             self.redis_client = redis.from_url(self.redis_url, socket_timeout=5)
             self.redis_client.ping()
-            logger.info("Successfully connected to Redis")
+            # A new process owns a new source generation. Drop frames emitted by
+            # the previous process before publishing the new generation heartbeat;
+            # downstream stages must not mistake them for current capture. Some
+            # compatibility Redis fakes omit ``delete``; the generation fence
+            # remains authoritative in that case.
+            delete = getattr(self.redis_client, "delete", None)
+            if callable(delete):
+                delete(RAW_FRAME_KEY)
+                logger.info("Successfully connected to Redis and cleared stale capture frames")
+            else:
+                logger.debug("Redis client has no delete primitive; relying on generation fencing")
             # Update connection status
             self.update_status_metric("redis_connected", True)
+            self._publish_health("deferred", "Redis connected; waiting for capture evidence")
         except RedisError as e:
             logger.error(f"Failed to connect to Redis: {str(e)}")
             self.update_status_metric("redis_connected", False)
@@ -211,8 +281,32 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         # Connection status tracked in OpenTelemetry
         raise ValueError("Failed to initialize video capture after multiple attempts")
 
-    def _pack_frame(self, jpeg_bytes: bytes, capture_ts: float, width: int, height: int) -> bytes:
-        return pack_legacy_jpeg_frame(jpeg_bytes, capture_ts=capture_ts, width=width, height=height)
+    def _pack_frame(
+        self,
+        jpeg_bytes: bytes,
+        capture_ts: float,
+        arrival_ts: float,
+        source_seq: Optional[int],
+        width: int,
+        height: int,
+    ) -> bytes:
+        metadata = {
+            "schema_version": 2,
+            # Legacy aliases retained for old analyzer/diagnostic consumers.
+            "ts": float(capture_ts),
+            "w": int(width),
+            "h": int(height),
+            "capture_ts": float(capture_ts),
+            "arrival_ts": float(arrival_ts),
+            "source_seq": int(source_seq) if source_seq is not None else None,
+            "source_generation": self.source_generation,
+            "release_generation": RELEASE_GENERATION,
+            "content_hash": hashlib.sha256(jpeg_bytes).hexdigest(),
+            "width": int(width),
+            "height": int(height),
+            "src": "rtsp_to_redis",
+        }
+        return pack_frame(jpeg_bytes, metadata)
 
     def process_frames(self):
         frames_processed = 0
@@ -220,17 +314,38 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
         while not self.should_stop.is_set():
             try:
-                item = self.frame_queue.get(timeout=1)
+                item = self.frame_queue.get(timeout=1.0)
+            except Empty:
+                continue
+
+            try:
                 if isinstance(item, tuple):
-                    frame, capture_ts = item
+                    frame = item[0]
+                    capture_ts = item[1] if len(item) > 1 else time.time()
+                    arrival_ts = item[2] if len(item) > 2 else capture_ts
+                    source_seq = item[3] if len(item) > 3 else None
+                    queued_source_generation = item[4] if len(item) > 4 else None
+                    queued_release_generation = item[5] if len(item) > 5 else None
                 else:
-                    frame, capture_ts = item, time.time()  # backward safety
+                    frame, capture_ts, arrival_ts, source_seq = item, time.time(), time.time(), None
+                    queued_source_generation = None
+                    queued_release_generation = None
+                if (queued_source_generation is not None and queued_source_generation != self.source_generation) or (
+                    queued_release_generation is not None and queued_release_generation != RELEASE_GENERATION
+                ):
+                    self.last_stage_reason = "deferred stale-generation frame"
+                    self._publish_health("deferred", self.last_stage_reason)
+                    logger.info(
+                        "Dropping queued frame from stale generation source=%s release=%s",
+                        queued_source_generation,
+                        queued_release_generation,
+                    )
+                    continue
                 with self.tracer.start_as_current_span("store_frame") as span:
                     span.set_attribute("frame.height", frame.shape[0])
                     span.set_attribute("frame.width", frame.shape[1])
                     span.set_attribute("frame.channels", frame.shape[2])
-                    self.store_frame(frame, capture_ts)
-                self.frame_queue.task_done()
+                    self.store_frame(frame, capture_ts, arrival_ts, source_seq)
 
                 # Update runtime status
                 self.update_status_metric("queue_size", self.frame_queue.qsize())
@@ -246,15 +361,20 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                     # Update processed fps tracking
                     frames_processed = 0
                     last_fps_update = current_time
-
-            except Empty:
-                continue
             except Exception as e:
                 logger.error(f"Error processing frame: {str(e)}")
                 if self.metrics:
                     self.metrics.redis_operations.add(1, {"operation": "error", "service": "rtsp"})
+            finally:
+                self.frame_queue.task_done()
 
-    def store_frame(self, frame, capture_ts: float):
+    def store_frame(
+        self,
+        frame,
+        capture_ts: float,
+        arrival_ts: Optional[float] = None,
+        source_seq: Optional[int] = None,
+    ):
         with self.tracer.start_as_current_span("encode_frame") as span:
             _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
             span.set_attribute("jpeg.quality", self.jpeg_quality)
@@ -262,6 +382,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
         if self.redis_client is None:
             logger.error("Redis client is not initialized")
+            self.last_stage_reason = "Redis client is not initialized"
             return
 
         try:
@@ -269,29 +390,43 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                 redis_start_time = time.time()
                 pipeline = self.redis_client.pipeline()
                 packed = self._pack_frame(
-                    buffer.tobytes(), capture_ts=capture_ts, width=frame.shape[1], height=frame.shape[0]
+                    buffer.tobytes(),
+                    capture_ts=capture_ts,
+                    arrival_ts=arrival_ts if arrival_ts is not None else capture_ts,
+                    source_seq=source_seq,
+                    width=frame.shape[1],
+                    height=frame.shape[0],
                 )
                 pipeline.lpush(RAW_FRAME_KEY, packed)
                 pipeline.ltrim(RAW_FRAME_KEY, 0, self.frame_buffer_size - 1)
                 pipeline.llen(RAW_FRAME_KEY)
                 _, _, current_buffer_size = pipeline.execute()
                 self.last_push_ts = time.time()
+                self.last_publish_ts = self.last_push_ts
+                self.last_capture_ts = capture_ts
+                if source_seq is not None:
+                    self.source_seq = max(self.source_seq, int(source_seq))
                 redis_duration = time.time() - redis_start_time
+                self.redis_write_latency_ms = round(redis_duration * 1000.0, 2)
+                self.last_stage_reason = "capture published to Redis"
 
                 span.set_attribute("redis.operation", "pipeline_publish")
                 span.set_attribute("redis.buffer_size", current_buffer_size)
                 span.set_attribute("redis.duration_seconds", redis_duration)
                 span.set_attribute("frame.buffer_size_bytes", len(buffer))
+            publish_status = "healthy"
+            publish_reason = self.last_stage_reason
+            if self.freeze_detector is not None and self.freeze_age_sec >= RTSP_FREEZE_DETECT_SEC:
+                publish_status = "failed"
+                publish_reason = "capture picture is frozen"
+            elif (
+                self.low_input_fps_since is not None
+                and time.time() - self.low_input_fps_since >= READY_LOW_INPUT_FPS_SEC
+            ):
+                publish_status = "degraded"
+                publish_reason = "input FPS is below the readiness floor"
+            self._publish_health(publish_status, publish_reason)
 
-                # Redis latency now tracked in OpenTelemetry spans
-
-            # A push that just succeeded is the only live proof that Redis is up.
-            # Without this the flag would keep its startup value forever and the
-            # ingest guard would act on a stale "connected" (see
-            # _exit_if_ingest_degraded).
-            self.update_status_metric("redis_connected", True)
-
-            # Record OpenTelemetry metrics
             if self.metrics:
                 self.metrics.frames_processed.add(1, {"service": "rtsp"})
                 self.metrics.redis_operations.add(1, {"operation": "frame_publish", "service": "rtsp"})
@@ -300,12 +435,12 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         except RedisError as e:
             logger.error(f"Redis operation failed: {str(e)}")
             self.update_status_metric("redis_connected", False)
+            self.last_stage_reason = f"Redis publish failed: {e}"
+            self._publish_health("unavailable", self.last_stage_reason)
             self.record_redis_error()
             if self.metrics:
                 self.metrics.redis_operations.add(1, {"operation": "error", "service": "rtsp"})
             raise
-
-        # Frame processing time tracked in OpenTelemetry spans
 
     def _increment_custom_metric(self, key: str, amount: int = 1) -> None:
         custom = self.get_status_snapshot().get("custom_metrics", {})
@@ -356,6 +491,13 @@ class RTSPToRedis(RTSPServiceStatusMixin):
     def _record_rtsp_reconnect(self) -> None:
         self._increment_custom_metric("rtsp_reconnects", 1)
         self.last_reconnect_ts = time.time()
+        previous_generation = self.source_generation
+        self.source_generation = f"{RELEASE_GENERATION}:rtsp:{os.getpid()}:{uuid.uuid4().hex[:12]}"
+        self.last_stage_reason = "capture source generation changed; queued frames deferred"
+        self._publish_health(
+            "deferred",
+            f"capture source generation changed from {previous_generation}",
+        )
 
     def _record_arrival(self, now_ts: float) -> None:
         """Record one camera frame arrival and re-score the windowed rate.
@@ -534,8 +676,10 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                         # recovered clears the degraded state before the guard acts.
                         self._record_arrival(frame_ts)
 
-                        # Stamp capture moment as close to cap.read() as possible
                         capture_ts = frame_ts
+                        self.source_seq += 1
+                        self.last_capture_seq = self.source_seq
+                        self.last_capture_ts = capture_ts
                         self._update_freeze_state(frame, capture_ts)
                         self._exit_if_ingest_degraded(capture_ts)
 
@@ -552,7 +696,16 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                             break
 
                         if not self.frame_queue.full():
-                            self.frame_queue.put((frame, capture_ts))
+                            self.frame_queue.put(
+                                (
+                                    frame,
+                                    capture_ts,
+                                    frame_ts,
+                                    self.source_seq,
+                                    self.source_generation,
+                                    RELEASE_GENERATION,
+                                )
+                            )
                         else:
                             logger.warning("Frame queue is full. Dropping frame.")
                             self.record_frame_drop()
@@ -596,11 +749,9 @@ class RTSPToRedis(RTSPServiceStatusMixin):
 
     def get_readiness_report(self):
         """Composite readiness snapshot for RTSP ingest."""
-        # Update buffer utilization
         buffer_util = (self.frame_queue.qsize() / 1000.0) * 100
         self.update_status_metric("buffer_utilization_percent", buffer_util)
 
-        # Basic connectivity checks
         redis_ok = self._redis_reachable()
         thread_ok = self.processing_thread and self.processing_thread.is_alive() if self.processing_thread else False
         self.update_status_metric("redis_connected", bool(redis_ok))
@@ -609,35 +760,60 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         uptime = self.get_uptime_seconds()
         grace_sec = float(os.environ.get("GRACE_STARTUP_SEC", "120"))
         warming_up = uptime <= grace_sec
-
         frame_stale_sec = 10.0
-        push_age = None
-        push_ok = True
-        if not warming_up:
-            if self.last_push_ts is None:
-                push_ok = False
-            else:
-                push_age = time.time() - self.last_push_ts
-                push_ok = push_age <= frame_stale_sec
-
+        now = time.time()
+        push_age = max(0.0, now - self.last_push_ts) if self.last_push_ts is not None else None
+        push_ok = self.last_push_ts is not None and push_age is not None and push_age <= frame_stale_sec
         freeze_enabled = self.freeze_detector is not None and RTSP_FREEZE_DETECT_SEC > 0
-        freeze_ok = True
-        if freeze_enabled and not warming_up:
-            freeze_ok = self.freeze_age_sec < RTSP_FREEZE_DETECT_SEC
+        freeze_ok = not freeze_enabled or self.freeze_age_sec < RTSP_FREEZE_DETECT_SEC
 
-        # Ingest rate, independent of push_ok: a link that drops most frames still
-        # delivers one every few seconds, which keeps push_age under its stale
-        # threshold while every downstream stage starves.
         input_fps_ok = True
         low_input_fps_sec = 0.0
         if RTSP_MIN_INPUT_FPS > 0 and self.low_input_fps_since is not None:
-            low_input_fps_sec = max(0.0, time.time() - self.low_input_fps_since)
-            if not warming_up:
-                input_fps_ok = low_input_fps_sec < READY_LOW_INPUT_FPS_SEC
+            low_input_fps_sec = max(0.0, now - self.low_input_fps_since)
+            input_fps_ok = low_input_fps_sec < READY_LOW_INPUT_FPS_SEC
 
-        ready = bool(health_status["healthy"] and redis_ok and thread_ok and push_ok and freeze_ok and input_fps_ok)
+        reasons = []
+        if warming_up:
+            reasons.append("startup grace: waiting for capture evidence")
+        if not redis_ok:
+            reasons.append("Redis is unavailable")
+        if not thread_ok:
+            reasons.append("capture publisher thread is not running")
+        if not push_ok:
+            reasons.append("no fresh Redis publish")
+        if not freeze_ok:
+            reasons.append("capture picture is frozen")
+        if not input_fps_ok:
+            reasons.append("input FPS is below the readiness floor")
+
+        ready = bool(
+            not warming_up
+            and health_status["healthy"]
+            and redis_ok
+            and thread_ok
+            and push_ok
+            and freeze_ok
+            and input_fps_ok
+        )
+        if ready:
+            stage_status = "healthy"
+            reason = "capture and Redis publish are current"
+        elif warming_up:
+            stage_status = "deferred"
+            reason = "; ".join(reasons)
+        elif not redis_ok:
+            stage_status = "unavailable"
+            reason = "; ".join(reasons)
+        else:
+            stage_status = "failed" if not push_ok else "degraded"
+            reason = "; ".join(reasons) or "capture is not ready"
+        self.last_stage_reason = reason
+        self._publish_health(stage_status, reason)
         return {
             "ready": ready,
+            "status": stage_status,
+            "reason": reason,
             "warming_up": warming_up,
             "uptime_seconds": round(uptime, 2),
             "grace_startup_seconds": grace_sec,
@@ -657,6 +833,10 @@ class RTSPToRedis(RTSPServiceStatusMixin):
             "input_fps_min": RTSP_MIN_INPUT_FPS,
             "input_fps_ok": input_fps_ok,
             "low_input_fps_seconds": round(low_input_fps_sec, 1),
+            "source_generation": self.source_generation,
+            "last_capture_seq": self.last_capture_seq,
+            "last_capture_ts": self.last_capture_ts,
+            "last_publish_ts": self.last_publish_ts,
         }
 
     def health_check(self):

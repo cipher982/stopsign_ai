@@ -1,5 +1,6 @@
 """Health check routes."""
 
+import asyncio
 import json
 import logging
 import os
@@ -21,12 +22,14 @@ from stopsign.settings import ANALYZER_STALL_KEY
 from stopsign.settings import ARCHIVE_HEALTH_REDIS_KEY
 from stopsign.settings import DB_URL
 from stopsign.settings import FFMPEG_HEALTH_KEY
-from stopsign.settings import GRACE_STARTUP_SEC
 from stopsign.settings import REDIS_URL
 from stopsign.web.app import STREAM_FS_PATH
-from stopsign.web.app import WEB_START_TIME
 
 logger = logging.getLogger(__name__)
+RELEASE_GENERATION = os.getenv("RELEASE_GENERATION", "unknown")
+PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
+RTSP_HEALTH_KEY = os.getenv("RTSP_HEALTH_KEY", "stopsign.rtsp.health")
+ANALYZER_HEALTH_KEY = os.getenv("ANALYZER_HEALTH_KEY", "stopsign.analyzer.health")
 
 router = APIRouter()
 
@@ -80,6 +83,35 @@ def _refresh_archive_health(payload: dict) -> dict:
     return payload
 
 
+ARCHIVE_HEALTH_MAX_AGE_SEC = float(os.getenv("ARCHIVE_HEALTH_MAX_AGE_SEC", "900"))
+
+
+def _classify_archive_health(payload: dict) -> tuple[str, str]:
+    """Classify archive evidence without inventing health from a present key."""
+    failures = []
+    if payload.get("local_save_healthy") is False:
+        failures.append("local capture persistence is unhealthy")
+    if payload.get("upload_healthy") is False:
+        failures.append("archive upload transport is unhealthy")
+    if failures:
+        return "failed", "; ".join(failures)
+
+    if payload.get("archive_reconciliation_healthy") is False:
+        return "degraded", "archive reconciliation has pending unverified captures"
+
+    observed_age = payload.get("archive_health_age_seconds")
+    if not isinstance(observed_age, (int, float)) or isinstance(observed_age, bool):
+        return "deferred", "archive health signal has no valid observation age"
+    if observed_age < 0:
+        return "deferred", "archive health observation is future-dated"
+    if observed_age > ARCHIVE_HEALTH_MAX_AGE_SEC:
+        return "deferred", f"archive health signal is {observed_age:.1f}s old"
+
+    if payload.get("local_save_healthy") is not True or payload.get("upload_healthy") is not True:
+        return "deferred", "archive health signal lacks explicit healthy transport flags"
+    return "healthy", "local capture persistence and archive transport are healthy"
+
+
 class DBHealthTracker:
     def __init__(self):
         self.last_failure_time = None
@@ -105,14 +137,66 @@ class DBHealthTracker:
 db_health_tracker = DBHealthTracker()
 
 
+def _tracker_for(request: Request) -> DBHealthTracker:
+    """Keep DB failure state scoped to the live app instance."""
+    tracker = getattr(request.app.state, "db_health_tracker", None)
+    if tracker is None:
+        tracker = db_health_tracker
+        request.app.state.db_health_tracker = tracker
+    return tracker
+
+
+def _check_database(db: Database, query: str) -> None:
+    """Run one bounded-by-caller synchronous DB probe in its own thread."""
+    with db.Session() as session:
+        session.execute(text(query)).scalar()
+
+
 @router.get("/healthz")
 async def healthz():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "outcome": "healthy",
+        "liveness": "healthy",
+        "release_generation": RELEASE_GENERATION,
+        "project_identity": PROJECT_IDENTITY,
+    }
 
 
 @router.api_route("/readyz", methods=["GET", "HEAD"])
-async def readyz():
-    resp = JSONResponse({"status": "ready"})
+async def readyz(request: Request):
+    """Web-serving readiness, deliberately independent of video freshness."""
+    payload = {
+        "schema_version": 2,
+        "release_generation": RELEASE_GENERATION,
+        "project_identity": PROJECT_IDENTITY,
+        "ready": False,
+        "status": "unavailable",
+        "reason": "database readiness has not been checked",
+        "database": {"status": "unavailable"},
+    }
+    tracker = _tracker_for(request)
+    try:
+        db = getattr(request.app.state, "db", None)
+        if db is None:
+            db = Database(db_url=DB_URL)
+            request.app.state.db = db
+        await asyncio.wait_for(
+            asyncio.to_thread(_check_database, db, "SELECT 1 /* ready check */"),
+            timeout=5.0,
+        )
+        tracker.record_success()
+        payload["ready"] = True
+        payload["status"] = "healthy"
+        payload["reason"] = "web server and database are available"
+        payload["database"] = {"status": "healthy"}
+        status_code = 200
+    except Exception as exc:
+        tracker.record_failure()
+        payload["reason"] = f"database unavailable: {exc}"
+        payload["database"] = {"status": "unavailable", "reason": str(exc)}
+        status_code = 503
+    resp = JSONResponse(payload, status_code=status_code)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -133,10 +217,11 @@ async def archive_health():
             )
         payload = _refresh_archive_health(json.loads(raw))
         payload["available"] = True
-        return JSONResponse(payload)
+        payload["status"], payload["reason"] = _classify_archive_health(payload)
     except Exception as e:
         logger.warning(f"archive_health read failed: {e}")
         return JSONResponse({"available": False, "error": str(e)})
+    return JSONResponse(payload)
 
 
 @router.get("/api/label-health")
@@ -170,109 +255,355 @@ async def label_health(request: Request):
         return JSONResponse({"available": False, "error": str(e)})
 
 
+def _read_stage_health(client, key: str, stage: str, now: float) -> dict:
+    """Read a stage heartbeat and downgrade stale claims instead of trusting labels."""
+    try:
+        raw = client.get(key)
+    except Exception as exc:
+        return {
+            "stage": stage,
+            "available": False,
+            "status": "unavailable",
+            "reason": str(exc),
+            "_heartbeat_present": False,
+            "_redis_error": True,
+        }
+    if not raw:
+        return {
+            "stage": stage,
+            "available": False,
+            "status": "unavailable",
+            "reason": "no stage heartbeat",
+            "_heartbeat_present": False,
+        }
+    try:
+        payload = json.loads(raw)
+    except Exception as exc:
+        return {
+            "stage": stage,
+            "available": False,
+            "status": "unavailable",
+            "reason": f"invalid heartbeat: {exc}",
+            "_heartbeat_present": True,
+        }
+    if not isinstance(payload, dict):
+        return {
+            "stage": stage,
+            "available": False,
+            "status": "unavailable",
+            "reason": "heartbeat is not an object",
+            "_heartbeat_present": True,
+        }
+    payload = dict(payload)
+    payload["stage"] = stage
+    payload["available"] = True
+    payload["_heartbeat_present"] = True
+    observed = payload.get("updated_at", payload.get("ts"))
+    observed_age = None
+    if isinstance(observed, (int, float)):
+        observed_age = now - float(observed)
+        payload["heartbeat_age_seconds"] = round(max(0.0, observed_age), 1)
+        # The Redis key has a TTL, but a mocked/older Redis reader can still
+        # expose a repeated value.  Never call an old heartbeat healthy merely
+        # because its producer labelled it that way.
+        if observed_age < -30:
+            payload["status"] = "failed"
+            payload["reason"] = "stage heartbeat timestamp is in the future"
+        elif observed_age > float(os.getenv("STAGE_HEARTBEAT_STALE_SEC", "300")):
+            payload["status"] = "failed"
+            payload["reason"] = "stage heartbeat is stale"
+    status = payload.get("status")
+    if status is None:
+        # The first FFmpeg health writer emitted fps/duplication fields and a
+        # timestamp but no structured stage status.  Treat a current snapshot
+        # as compatibility evidence, never as a timeless healthy claim.
+        status = "healthy" if stage == "ffmpeg" and observed_age is not None and observed_age <= 300 else "deferred"
+        payload["status"] = status
+    stale_reason = None
+    if stage == "rtsp":
+        reference = payload.get("last_publish_ts")
+        threshold = float(payload.get("push_stale_threshold_seconds", 10.0))
+        stale_reason = (
+            "Redis publish heartbeat is stale"
+            if (
+                isinstance(reference, (int, float))
+                and (now - float(reference) > threshold or float(reference) - now > 30)
+            )
+            else None
+        )
+    elif stage == "analyzer":
+        age = payload.get("capture_age_seconds")
+        threshold = float(os.getenv("ANALYZER_CATCHUP_SEC", "15"))
+        stale_reason = (
+            "processed capture evidence is stale"
+            if (isinstance(age, (int, float)) and (float(age) > threshold or float(age) < -30))
+            else None
+        )
+    elif stage == "ffmpeg":
+        encoded_age = payload.get("encoded_capture_age_seconds")
+        threshold = float(os.getenv("FRAME_STALL_SEC", "120"))
+        stale_reason = (
+            "encoded capture evidence is stale"
+            if (isinstance(encoded_age, (int, float)) and (float(encoded_age) > threshold or float(encoded_age) < -30))
+            else None
+        )
+        if payload.get("hls_fresh") is False:
+            stale_reason = stale_reason or "HLS playlist is stale"
+    if status == "healthy" and stale_reason:
+        payload["status"] = "failed"
+        payload["reason"] = stale_reason
+    payload.setdefault("reason", stale_reason or f"{stage} reported {payload.get('status')}")
+    if observed_age is not None and stage == "ffmpeg":
+        payload.setdefault("snapshot_age_seconds", round(max(0.0, observed_age), 1))
+    return payload
+
+
+def _legacy_float(raw, now: float) -> tuple[float | None, float | None]:
+    """Parse a legacy timestamp and return (timestamp, age)."""
+    if raw in (None, b"", ""):
+        return None, None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None, None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None, None
+    return value, round(now - value, 1)
+
+
+def _apply_legacy_analyzer_evidence(analyzer: dict, legacy: dict, now: float) -> bool:
+    """Attach legacy analyzer keys and synthesize a truthful stage result.
+
+    The timestamp keys predate stage heartbeats and are still written by the
+    analyzer.  They are useful compatibility evidence, but only their age can
+    establish freshness; a persisted stall or timestamp is never silently
+    treated as healthy.
+    """
+    last_frame_at, frame_age = _legacy_float(legacy.get("last_frame"), now)
+    last_inference_at, inference_age = _legacy_float(legacy.get("last_inference"), now)
+    started_at, _ = _legacy_float(legacy.get("boot"), now)
+    stall = legacy.get("stall")
+    analyzer["inference_available"] = last_inference_at is not None
+    if last_inference_at is None and analyzer.get("_heartbeat_present"):
+        heartbeat_inference_age = analyzer.get("inference_age_seconds")
+        analyzer["inference_available"] = (
+            isinstance(heartbeat_inference_age, (int, float))
+            and heartbeat_inference_age >= 0
+            and heartbeat_inference_age <= float(os.getenv("ANALYZER_CATCHUP_SEC", "15"))
+        )
+    if last_frame_at is not None:
+        analyzer["last_frame_at"] = last_frame_at
+        analyzer["frame_age_seconds"] = frame_age
+    if last_inference_at is not None:
+        analyzer["last_inference_at"] = last_inference_at
+        analyzer["inference_age_seconds"] = inference_age
+    if started_at is not None:
+        analyzer["started_at"] = started_at
+        analyzer["uptime_seconds"] = round(now - started_at, 1)
+    if stall not in (None, b"", ""):
+        try:
+            analyzer["last_stall"] = json.loads(stall)
+        except (TypeError, ValueError):
+            analyzer.setdefault("reason", "legacy analyzer stall evidence is invalid")
+
+    has_evidence = any(value not in (None, b"", "") for value in legacy.values())
+    if analyzer.get("_heartbeat_present") or not has_evidence:
+        return has_evidence
+
+    analyzer["available"] = True
+    threshold = float(os.getenv("ANALYZER_CATCHUP_SEC", "15"))
+    last_stall = analyzer.get("last_stall")
+    stall_at = last_stall.get("triggered_at") if isinstance(last_stall, dict) else None
+    unrecovered_stall = isinstance(stall_at, (int, float)) and (
+        last_frame_at is None or last_frame_at <= float(stall_at)
+    )
+    if last_frame_at is None:
+        analyzer["status"] = "deferred"
+        analyzer["reason"] = "legacy analyzer frame evidence is unavailable"
+    elif frame_age is None or frame_age < -30 or frame_age > threshold:
+        analyzer["status"] = "failed"
+        analyzer["reason"] = "legacy analyzer frame evidence is stale"
+    elif unrecovered_stall:
+        analyzer["status"] = "failed"
+        analyzer["reason"] = (
+            last_stall.get("reason", "legacy analyzer stall recorded")
+            if isinstance(last_stall, dict)
+            else "legacy analyzer stall recorded"
+        )
+    elif last_inference_at is None or inference_age is None or inference_age < -30 or inference_age > threshold:
+        analyzer["status"] = "degraded"
+        analyzer["reason"] = "legacy analyzer inference evidence is stale or unavailable"
+    else:
+        analyzer["status"] = "healthy"
+        analyzer["reason"] = "legacy analyzer frame and inference evidence are current"
+    return has_evidence
+
+
+def _mark_missing_legacy_stage(stage: dict, stage_name: str, has_legacy_evidence: bool) -> None:
+    """Keep a Redis-connected legacy response structured without false health."""
+    if has_legacy_evidence and not stage.get("_heartbeat_present") and not stage.get("_redis_error"):
+        stage["status"] = "deferred"
+        stage["reason"] = f"{stage_name} heartbeat unavailable; legacy evidence retained"
+
+
 @router.get("/api/pipeline-health")
 async def pipeline_health():
-    """Aggregated capture->analyzer->archive chain health for alerting.
-
-    Exposes, in one read-only endpoint: archive upload health (same signal as
-    /api/archive-health), analyzer frame age / uptime / last stall reason, the
-    ffmpeg fresh-vs-starved ratio, and HLS playlist freshness. The Sauron
-    stopsign-pipeline-health job polls this so a silent freeze anywhere in the
-    chain pages instead of going unnoticed for days.
-    """
+    """Canonical capture -> analyzer -> FFmpeg -> HLS aggregate."""
+    now = time.time()
     try:
         r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=0.3, socket_timeout=0.3)
-    except Exception as e:
-        return JSONResponse({"available": False, "error": f"redis client error: {e}"})
-
-    now = time.time()
-    payload: dict = {"generated_at": now, "available": True}
-
-    # Archive upload health (mirrors /api/archive-health).
-    try:
-        raw = r.get(ARCHIVE_HEALTH_REDIS_KEY)
-        if raw:
-            archive = _refresh_archive_health(json.loads(raw))
-            archive["available"] = True
-        else:
-            archive = {"available": False, "detail": "No archive health signal yet (analyzer has not recorded one)"}
-    except Exception as e:
-        archive = {"available": False, "error": str(e)}
-    payload["archive"] = archive
-
-    # Analyzer: last-frame time (age grows after death by design), boot time, last stall.
-    analyzer: dict = {}
-    try:
-        last_frame_raw = r.get(ANALYZER_LAST_FRAME_AT_KEY)
-        last_inference_raw = r.get(ANALYZER_LAST_INFERENCE_AT_KEY)
-        boot_raw = r.get(ANALYZER_BOOT_TS_KEY)
-        stall_raw = r.get(ANALYZER_STALL_KEY)
-        analyzer["available"] = bool(last_frame_raw or boot_raw)
-        analyzer["inference_available"] = False
-        if last_frame_raw:
-            last_frame_at = float(last_frame_raw)
-            analyzer["last_frame_at"] = last_frame_at
-            analyzer["frame_age_seconds"] = round(now - last_frame_at, 1)
-        if last_inference_raw:
-            last_inference_at = float(last_inference_raw)
-            analyzer["last_inference_at"] = last_inference_at
-            analyzer["inference_age_seconds"] = round(now - last_inference_at, 1)
-            analyzer["inference_available"] = True
-        if boot_raw:
-            boot_ts = float(boot_raw)
-            analyzer["started_at"] = boot_ts
-            analyzer["uptime_seconds"] = round(now - boot_ts, 1)
-        if stall_raw:
-            try:
-                analyzer["last_stall"] = json.loads(stall_raw)
-            except Exception:
-                analyzer["last_stall"] = None
-    except Exception as e:
-        analyzer = {"available": False, "inference_available": False, "error": str(e)}
-    payload["analyzer"] = analyzer
-
-    # FFmpeg: fresh-vs-starved snapshot written every 5s (key name is historical).
-    # `dup_pct` -> ~100 means no fresh frame reached the encoder, so the chain is
-    # underrun upstream of it: camera link loss, ingest stall, or analyzer stall.
-    # It does not distinguish those, and it is not proof of a frozen picture.
-    try:
-        ff_raw = r.get(FFMPEG_HEALTH_KEY)
-        if ff_raw:
-            ff = json.loads(ff_raw)
-            ff["available"] = True
-            ff_ts = ff.get("ts")
-            ff["snapshot_age_seconds"] = round(now - float(ff_ts), 1) if ff_ts else None
-        else:
-            ff = {"available": False, "detail": "No ffmpeg health snapshot yet (service starting?)"}
-    except Exception as e:
-        ff = {"available": False, "error": str(e)}
-    payload["ffmpeg"] = ff
-
-    # HLS playlist freshness (same source as /health/stream; one-stop for alerting).
-    try:
-        hls = _parse_hls_playlist(STREAM_FS_PATH)
-        age = hls.get("age_seconds")
-        payload["hls"] = {
-            "fresh": bool(hls.get("exists")) and age is not None and age <= hls.get("threshold_sec", 60.0),
-            "age_seconds": age,
-            "segments_count": hls.get("segments_count", 0),
+        # Older Redis fakes/clients used by compatibility consumers do not
+        # expose ping; the stage reads below still prove connectivity there.
+        ping = getattr(r, "ping", None)
+        if ping is not None:
+            ping()
+    except Exception as exc:
+        unavailable = {
+            "available": False,
+            "status": "unavailable",
+            "reason": f"Redis health read unavailable: {exc}",
+            "generated_at": now,
+            "release_generation": RELEASE_GENERATION,
+            "project_identity": PROJECT_IDENTITY,
         }
-    except Exception as e:
-        payload["hls"] = {"available": False, "error": str(e)}
+        return JSONResponse(unavailable)
 
-    return JSONResponse(payload)
+    rtsp = _read_stage_health(r, RTSP_HEALTH_KEY, "rtsp", now)
+    analyzer = _read_stage_health(r, ANALYZER_HEALTH_KEY, "analyzer", now)
+    ffmpeg = _read_stage_health(r, FFMPEG_HEALTH_KEY, "ffmpeg", now)
+
+    # Preserve the older analyzer evidence fields for existing pollers. Read
+    # these independently: one expired/malformed key must not hide the others.
+    legacy = {}
+    for name, key in (
+        ("last_frame", ANALYZER_LAST_FRAME_AT_KEY),
+        ("last_inference", ANALYZER_LAST_INFERENCE_AT_KEY),
+        ("boot", ANALYZER_BOOT_TS_KEY),
+        ("stall", ANALYZER_STALL_KEY),
+    ):
+        try:
+            legacy[name] = r.get(key)
+        except Exception:
+            legacy[name] = None
+    has_legacy_evidence = _apply_legacy_analyzer_evidence(analyzer, legacy, now)
+    _mark_missing_legacy_stage(rtsp, "rtsp", has_legacy_evidence)
+    _mark_missing_legacy_stage(ffmpeg, "ffmpeg", has_legacy_evidence)
+    try:
+        raw_archive = r.get(ARCHIVE_HEALTH_REDIS_KEY)
+        if raw_archive:
+            archive = _refresh_archive_health(json.loads(raw_archive))
+            archive["available"] = True
+            archive["status"], archive["reason"] = _classify_archive_health(archive)
+        else:
+            archive = {
+                "available": False,
+                "status": "deferred",
+                "reason": "no archive health signal yet",
+            }
+    except Exception as exc:
+        archive = {"available": False, "status": "unavailable", "reason": str(exc)}
+
+    info = _parse_hls_playlist(STREAM_FS_PATH)
+    hls_age = info.get("age_seconds")
+    hls_fresh = bool(info.get("exists")) and hls_age is not None and hls_age <= info.get("threshold_sec", 60.0)
+    encoded_fresh = bool(ffmpeg.get("hls_fresh")) and (
+        ffmpeg.get("encoded_capture_age_seconds") is not None
+        and ffmpeg.get("encoded_capture_age_seconds") <= float(os.getenv("FRAME_STALL_SEC", "120"))
+    )
+    hls_status = "healthy" if hls_fresh and encoded_fresh else ("deferred" if not ffmpeg.get("available") else "failed")
+    hls_reason = (
+        "HLS playlist and encoded capture evidence are current"
+        if hls_status == "healthy"
+        else "HLS requires fresh playlist and FFmpeg encoded capture evidence"
+    )
+    hls = {
+        "available": True,
+        "status": hls_status,
+        "reason": hls_reason,
+        "fresh": hls_fresh and encoded_fresh,
+        "playlist_fresh": hls_fresh,
+        "encoded_capture_fresh": encoded_fresh,
+        "age_seconds": hls_age,
+        "segments_count": info.get("segments_count", 0),
+    }
+
+    for stage in (rtsp, analyzer, ffmpeg):
+        stage.pop("_heartbeat_present", None)
+        stage.pop("_redis_error", None)
+
+    stages = {"rtsp": rtsp, "analyzer": analyzer, "ffmpeg": ffmpeg, "hls": hls, "archive": archive}
+    # Archive evidence is exposed above but does not gate live video readiness;
+    # the dedicated archive alert owns that failure domain.
+    statuses = [stage.get("status", "unavailable") for name, stage in stages.items() if name != "archive"]
+    if "unavailable" in statuses:
+        overall_status = "unavailable"
+    elif "failed" in statuses:
+        overall_status = "failed"
+    elif "degraded" in statuses:
+        overall_status = "degraded"
+    elif "deferred" in statuses:
+        overall_status = "deferred"
+    else:
+        overall_status = "healthy"
+    return JSONResponse(
+        {
+            "schema_version": 2,
+            "generated_at": now,
+            "available": True,
+            "ready": overall_status == "healthy",
+            "status": overall_status,
+            "reason": "one or more pipeline stages are not healthy"
+            if overall_status != "healthy"
+            else "all pipeline stages report current evidence",
+            "release_generation": RELEASE_GENERATION,
+            "project_identity": PROJECT_IDENTITY,
+            "stages": stages,
+            # Legacy top-level keys remain available to existing alert jobs.
+            "rtsp": rtsp,
+            "archive": archive,
+            "analyzer": analyzer,
+            "ffmpeg": ffmpeg,
+            "hls": hls,
+        }
+    )
 
 
 @router.get("/health/stream")
 async def health_stream(request: Request):
     tracer = request.app.state.tracer
     with tracer.start_as_current_span("health_stream") as span:
+        now = time.time()
         info = _parse_hls_playlist(STREAM_FS_PATH)
         age = info.get("age_seconds")
         exists = bool(info.get("exists"))
         threshold = info.get("threshold_sec", 60.0)
-        warming_up = (time.time() - WEB_START_TIME) <= GRACE_STARTUP_SEC
-        fresh = (exists and age is not None and age <= threshold) or warming_up
+        playlist_fresh = exists and age is not None and age <= threshold
+        ffmpeg = {"available": False, "status": "unavailable", "reason": "FFmpeg heartbeat unavailable"}
+        try:
+            client = redis_lib.from_url(REDIS_URL, socket_connect_timeout=0.3, socket_timeout=0.3)
+            ffmpeg = _read_stage_health(client, FFMPEG_HEALTH_KEY, "ffmpeg", now)
+        except Exception as exc:
+            ffmpeg["reason"] = str(exc)
+        encoded_age = ffmpeg.get("encoded_capture_age_seconds")
+        encoded_fresh = (
+            ffmpeg.get("available", False)
+            and ffmpeg.get("hls_fresh", False)
+            and isinstance(encoded_age, (int, float))
+            and float(encoded_age) <= float(os.getenv("FRAME_STALL_SEC", "120"))
+        )
+        fresh = bool(playlist_fresh and encoded_fresh)
+        if fresh:
+            stage_status = "healthy"
+            reason = "HLS playlist and FFmpeg encoded capture evidence are current"
+        elif not ffmpeg.get("available"):
+            stage_status = "unavailable"
+            reason = "FFmpeg encoded capture evidence is unavailable"
+        elif not playlist_fresh:
+            stage_status = "failed"
+            reason = "HLS playlist is missing or stale"
+        else:
+            stage_status = "failed"
+            reason = "FFmpeg encoded capture evidence is stale or missing"
 
         span.set_attribute("hls.exists", exists)
         if age is not None:
@@ -281,15 +612,23 @@ async def health_stream(request: Request):
         span.set_attribute("hls.threshold_sec", threshold)
         span.set_attribute("hls.fresh", fresh)
 
-        status = 200 if fresh else 503
         payload = {
-            "fresh": bool(fresh),
-            "exists": bool(exists),
+            "schema_version": 2,
+            "status": stage_status,
+            "reason": reason,
+            "fresh": fresh,
+            "exists": exists,
             "age_seconds": age,
             "threshold_sec": threshold,
+            "playlist_fresh": playlist_fresh,
+            "encoded_capture_fresh": encoded_fresh,
+            "encoded_capture_age_seconds": encoded_age,
             "segments_count": info.get("segments_count", 0),
+            "ffmpeg": ffmpeg,
+            "release_generation": RELEASE_GENERATION,
+            "project_identity": PROJECT_IDENTITY,
         }
-        resp = HTMLResponse(status_code=status, content=json.dumps(payload))
+        resp = HTMLResponse(status_code=200 if fresh else 503, content=json.dumps(payload))
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Content-Type"] = "application/json"
         return resp
@@ -298,17 +637,20 @@ async def health_stream(request: Request):
 @router.get("/health")
 async def health(request: Request):
     tracer = request.app.state.tracer
+    tracker = _tracker_for(request)
     with tracer.start_as_current_span("health_check") as span:
         try:
             if not hasattr(request.app.state, "db"):
                 request.app.state.db = Database(db_url=DB_URL)
 
             db_start = time.time()
-            with request.app.state.db.Session() as session:
-                session.execute(text("SELECT 1 /* health check */"), execution_options={"timeout": 5}).scalar()
+            await asyncio.wait_for(
+                asyncio.to_thread(_check_database, request.app.state.db, "SELECT 1 /* health check */"),
+                timeout=5.0,
+            )
             db_duration = time.time() - db_start
 
-            db_health_tracker.record_success()
+            tracker.record_success()
             span.set_attribute("health.database_ok", True)
             span.set_attribute("health.database_duration_seconds", db_duration)
             span.set_attribute("health.status", "healthy")
@@ -321,16 +663,13 @@ async def health(request: Request):
                 files = [f for f in os.listdir(stream_dir) if f.endswith(".ts")]
                 span.set_attribute("health.hls_segments_count", len(files))
 
-            resp = HTMLResponse(status_code=200, content="Healthy: Database connection verified")
-            resp.headers["Cache-Control"] = "no-store"
-            return resp
         except Exception as e:
             logger.error(f"Health check failed: {e}")
-            db_health_tracker.record_failure()
+            tracker.record_failure()
             span.set_attribute("health.database_ok", False)
             span.set_attribute("health.error", str(e))
 
-            if db_health_tracker.is_failure_persistent():
+            if tracker.is_failure_persistent():
                 span.set_attribute("health.status", "unhealthy")
                 span.set_attribute("health.persistent_failure", True)
                 resp = HTMLResponse(

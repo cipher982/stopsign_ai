@@ -23,6 +23,9 @@ services:
       DB_URL: ${DB_URL}
       ANALYZER_HEALTH_PORT: ${ANALYZER_HEALTH_PORT:-8081}
       ANALYZER_STALL_SEC: ${ANALYZER_STALL_SEC:-120}
+      ANALYZER_HEALTH_KEY: ${ANALYZER_HEALTH_KEY:-stopsign.analyzer.health}
+      RELEASE_GENERATION: ${RELEASE_GENERATION:-unknown}
+      PROJECT_IDENTITY: ${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
       YOLO_DEVICE: ${YOLO_DEVICE:-cuda}
     volumes:
       - config-dir:/app/config
@@ -49,16 +52,17 @@ services:
     build:
       context: ../..
       dockerfile: docker/production/Dockerfile.ffmpeg
-    env_file:
-      - .env
     environment:
       REDIS_URL: ${REDIS_URL}
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
+      FFMPEG_HEALTH_KEY: ${FFMPEG_HEALTH_KEY:-stopsign.ffmpeg.health}
       FFMPEG_ENCODER: ${FFMPEG_ENCODER}
       FFMPEG_PRESET: ${FFMPEG_PRESET}
-      # Restart the encoder when it has produced no fresh HLS for this long; the
-      # freshness threshold itself (~180s, capped in stopsign/hls_health.py) is
-      # separate. Without this a wedged encoder never restarts.
+      FFMPEG_HEALTH_PORT: ${FFMPEG_HEALTH_PORT:-8080}
+      RELEASE_GENERATION: ${RELEASE_GENERATION:-unknown}
+      PROJECT_IDENTITY: ${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
+      # Restart the encoder when it has produced no fresh encoded evidence for
+      # this long; mtime-only HLS checks are intentionally insufficient.
       PIPELINE_WATCHDOG_SEC: ${PIPELINE_WATCHDOG_SEC:-180}
     volumes:
       - storage-dir:/app/data
@@ -71,8 +75,8 @@ services:
       - stopsign-net
     # GPU removed - using libx264 software encoding instead of h264_nvenc
     healthcheck:
-      # Use liveness-only endpoint to avoid flapping on transient HLS staleness
-      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:8080/healthz"]
+      # Probe composite readiness: Redis, source capture, and encoded HLS evidence.
+      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:${FFMPEG_HEALTH_PORT:-8080}/ready"]
       interval: 30s
       timeout: 5s
       retries: 10
@@ -92,8 +96,13 @@ services:
       - .env
     environment:
       DB_URL: ${DB_URL}
+      REDIS_URL: ${REDIS_URL}
+      FFMPEG_HEALTH_KEY: ${FFMPEG_HEALTH_KEY:-stopsign.ffmpeg.health}
+      ANALYZER_HEALTH_KEY: ${ANALYZER_HEALTH_KEY:-stopsign.analyzer.health}
+      RTSP_HEALTH_KEY: ${RTSP_HEALTH_KEY:-stopsign.rtsp.health}
       TZ: America/Chicago
-      # HLS staleness threshold is baked into the service code
+      RELEASE_GENERATION: ${RELEASE_GENERATION:-unknown}
+      PROJECT_IDENTITY: ${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
     depends_on:
       - video_analyzer
     volumes:
@@ -105,7 +114,8 @@ services:
       - monitoring
       - stopsign-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:8000/healthz"]
+      # Web readiness checks the bounded DB dependency, not stream freshness.
+      test: ["CMD", "curl", "-f", "--max-time", "5", "http://localhost:8000/readyz"]
       interval: 60s
       timeout: 5s
       retries: 5
