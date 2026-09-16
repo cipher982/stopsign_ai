@@ -17,14 +17,16 @@ from stopsign.settings import BREMEN_MINIO_ACCESS_KEY
 from stopsign.settings import BREMEN_MINIO_CLIP_BUCKET
 from stopsign.settings import BREMEN_MINIO_ENDPOINT
 from stopsign.settings import BREMEN_MINIO_SECRET_KEY
+from stopsign.settings import CLIP_DIR as DURABLE_CLIP_DIR
 from stopsign.settings import DB_URL
 from stopsign.settings import FRAME_METADATA_KEY
 from stopsign.settings import PROCESSED_FRAME_KEY
 from stopsign.settings import REDIS_URL
+from stopsign.settings import STREAM_DIR
 
 logger = logging.getLogger(__name__)
 
-CLIP_DIR = "/app/data/stream/clips"
+CLIP_DIR = DURABLE_CLIP_DIR
 CLIP_MAX_SEC = float(os.getenv("CLIP_MAX_SEC", "120"))
 CLIP_PREPAD_SEC = float(os.getenv("CLIP_PREPAD_SEC", "2"))
 CLIP_POSTPAD_SEC = float(os.getenv("CLIP_POSTPAD_SEC", "2"))
@@ -50,8 +52,7 @@ CLIP_PASS_LAG_MAX_SEC = 45.0
 CLIP_QUEUE_LAG_ENABLED = os.getenv("CLIP_QUEUE_LAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 CLIP_QUEUE_LAG_FPS = max(1.0, float(os.getenv("CLIP_QUEUE_LAG_FPS", "15")))
 CLIP_QUEUE_LAG_BASE_SEC = float(os.getenv("CLIP_QUEUE_LAG_BASE_SEC", "2.0"))
-
-STREAM_FS_PATH = "/app/data/stream/stream.m3u8"
+STREAM_FS_PATH = os.path.join(STREAM_DIR, "stream.m3u8")
 
 
 def _parse_program_date_time(value: str) -> float | None:

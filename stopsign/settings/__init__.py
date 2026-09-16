@@ -184,6 +184,10 @@ PROMETHEUS_PORT = get_env_int("PROMETHEUS_PORT", 9100, required=False)
 WEB_SERVER_PORT = get_env_int("WEB_SERVER_PORT", 8000, required=False)
 GRACE_STARTUP_SEC = get_env_int("GRACE_STARTUP_SEC", 120, required=False)
 
+# Local media storage. HLS is ephemeral; clips remain on durable storage.
+STREAM_DIR = get_env("STREAM_DIR", "/app/data/stream", required=False)
+CLIP_DIR = get_env("CLIP_DIR", "/app/data/clips", required=False)
+
 # Local image storage (fast homepage)
 LOCAL_IMAGE_DIR = get_env("LOCAL_IMAGE_DIR", "/app/data/vehicle-images", required=False)
 

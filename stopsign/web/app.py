@@ -15,6 +15,7 @@ from sqlalchemy import text
 from stopsign.database import Database
 from stopsign.settings import DB_URL
 from stopsign.settings import LOCAL_IMAGE_DIR
+from stopsign.settings import STREAM_DIR
 from stopsign.telemetry import get_tracer
 from stopsign.telemetry import setup_web_server_telemetry
 from stopsign.web.middleware import add_cache_headers
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Constants
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = REPO_ROOT / "static"
-STREAM_FS_PATH = "/app/data/stream/stream.m3u8"
+STREAM_FS_PATH = os.path.join(STREAM_DIR, "stream.m3u8")
 STREAM_URL = "/stream/stream.m3u8"
 WEB_START_TIME = time.time()
 
@@ -79,7 +80,7 @@ def create_app() -> FastAPI:
 
     # These directories only exist in Docker containers; create if possible, skip if not
     for mount_path, directory, name in [
-        ("/stream", "/app/data/stream", "stream"),
+        ("/stream", STREAM_DIR, "stream"),
         ("/vehicle-images", LOCAL_IMAGE_DIR, "vehicle-images"),
         ("/clips", CLIP_DIR, "clips"),
     ]:

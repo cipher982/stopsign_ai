@@ -96,6 +96,8 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL}
       PROCESSED_FRAME_KEY: ${PROCESSED_FRAME_KEY}
+      STREAM_DIR: /app/data/stream
+      CLIP_DIR: /app/data/clips
       FFMPEG_HEALTH_KEY: ${FFMPEG_HEALTH_KEY:-stopsign.ffmpeg.health}
       FFMPEG_ENCODER: ${FFMPEG_ENCODER}
       FFMPEG_PRESET: ${FFMPEG_PRESET}
@@ -107,8 +109,8 @@ services:
       # this long; mtime-only HLS checks are intentionally insufficient.
       PIPELINE_WATCHDOG_SEC: ${PIPELINE_WATCHDOG_SEC:-180}
     volumes:
-      - storage-dir:/app/data
-      - /mnt/hls-stream:/app/data/stream
+      # HLS is disposable live state; keep segments off the durable 7200rpm volume.
+      - hls-stream:/app/data/stream
     depends_on:
       - video_analyzer
     networks:
@@ -140,6 +142,8 @@ services:
     environment:
       DB_URL: ${DB_URL}
       REDIS_URL: ${REDIS_URL}
+      STREAM_DIR: /app/data/stream
+      CLIP_DIR: /app/data/clips
       FFMPEG_HEALTH_KEY: ${FFMPEG_HEALTH_KEY:-stopsign.ffmpeg.health}
       ANALYZER_HEALTH_KEY: ${ANALYZER_HEALTH_KEY:-stopsign.analyzer.health}
       RTSP_HEALTH_KEY: ${RTSP_HEALTH_KEY:-stopsign.rtsp.health}
@@ -152,7 +156,7 @@ services:
     volumes:
       - storage-dir:/app/data
       - config-dir:/app/config
-      - /mnt/hls-stream:/app/data/stream
+      - hls-stream:/app/data/stream
     networks:
       - default
       - monitoring
@@ -176,5 +180,13 @@ networks:
     external: true
 
 volumes:
+  # Durable state (images, outbox, clips) lives here.
   storage-dir:
   config-dir:
+  # Live HLS segments are disposable and must not consume the durable disk.
+  hls-stream:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: ${HLS_TMPFS_OPTIONS:-size=2g,mode=1777}

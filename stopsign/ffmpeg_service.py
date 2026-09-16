@@ -49,7 +49,7 @@ PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
 RTSP_HEALTH_KEY = os.getenv("RTSP_HEALTH_KEY", "stopsign.rtsp.health")
 FFMPEG_HEALTH_TTL_SEC = int(os.getenv("FFMPEG_HEALTH_TTL_SEC", "300"))
 
-STREAM_DIR = "/app/data/stream"
+STREAM_DIR = os.getenv("STREAM_DIR", "/app/data/stream")
 FRAME_RATE = "15"
 RESOLUTION = "1920x1080"
 HLS_LIST_SIZE = os.getenv("HLS_LIST_SIZE", "450")
