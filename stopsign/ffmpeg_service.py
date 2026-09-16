@@ -653,6 +653,7 @@ def main():
         return
     else:
         logger.info(f"Frame shape: {frame_shape}")
+    expected_frame_bytes = frame_shape[0] * frame_shape[1] * 3
 
     ffmpeg_process = start_ffmpeg_process(frame_shape)
     if ffmpeg_process is None or ffmpeg_process.stdin is None:
