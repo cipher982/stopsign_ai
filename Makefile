@@ -79,16 +79,16 @@ dev-clean:
 	docker system prune -f
 	@echo "✅ Cleanup complete"
 
-# Production Info (keeps existing production setup intact)
+# Production Info (single release stack)
 prod-help:
 	@echo "🏭 Production Deployment"
 	@echo ""
-	@echo "Production uses the existing docker-compose files:"
-	@echo "  docker/production/docker-compose.yml - Main services"
-	@echo "  rtsp_to_redis/docker-compose.yml     - RTSP service"
+	@echo "The manual-app production release uses one Compose file for all pipeline services:"
+	@echo "  docker/production/docker-compose.yml - RTSP, analyzer, ffmpeg, and web"
+	@echo "  /home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env - cube-only RTSP env authority"
 	@echo ""
-	@echo "Production deployment uses environment variables, not .env files"
-	@echo "Refer to existing production documentation for deployment"
+	@echo "Run manual-app deploy stopsign to build/recreate every service from one checkout."
+	@echo "Runtime secrets remain on cube and are never committed."
 
 # Testing
 test:
