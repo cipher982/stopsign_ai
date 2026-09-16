@@ -19,6 +19,9 @@ services:
     env_file:
       - /home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env
     environment:
+      # The camera WiFi link loses UDP packets. Interleaved TCP retransmits
+      # them instead of turning loss into corrupt/starved frames.
+      OPENCV_FFMPEG_CAPTURE_OPTIONS: ${OPENCV_FFMPEG_CAPTURE_OPTIONS:-rtsp_transport;tcp}
       RELEASE_GENERATION: ${RELEASE_GENERATION:-unknown}
       SOURCE_COMMIT: ${SOURCE_COMMIT:-unknown}
       PROJECT_IDENTITY: ${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
