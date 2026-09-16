@@ -37,7 +37,7 @@ ANALYZER_HEALTH_KEY = os.getenv("ANALYZER_HEALTH_KEY", "stopsign.analyzer.health
 router = APIRouter()
 
 _HLS_PARSE_WARN_LAST_TS = 0.0
-TIMESTAMP_FUTURE_TOLERANCE_SEC = float(os.getenv("STOPSIGN_TIMESTAMP_FUTURE_TOLERANCE_SEC", "0"))
+TIMESTAMP_FUTURE_TOLERANCE_SEC = float(os.getenv("STOPSIGN_TIMESTAMP_FUTURE_TOLERANCE_SEC", "2.0"))
 
 
 def _parse_hls_playlist(path: str) -> dict:
@@ -411,6 +411,8 @@ def _apply_legacy_analyzer_evidence(analyzer: dict, legacy: dict, now: float) ->
     last_frame_at, frame_age = _legacy_float(legacy.get("last_frame"), now)
     last_inference_at, inference_age = _legacy_float(legacy.get("last_inference"), now)
     started_at, _ = _legacy_float(legacy.get("boot"), now)
+    if started_at is not None:
+        analyzer["uptime_seconds"] = round(max(0.0, now - started_at), 1)
     stall = legacy.get("stall")
     analyzer["inference_available"] = last_inference_at is not None
     if last_inference_at is None and analyzer.get("_heartbeat_present"):

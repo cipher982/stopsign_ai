@@ -22,6 +22,7 @@ import stopsign.web.app  # noqa: E402,F401
 from stopsign.database import Database
 from stopsign.database import VehiclePass
 from stopsign.web.routes.api import get_live_stats  # noqa: E402
+from stopsign.web.routes.health import _read_stage_health  # noqa: E402
 from stopsign.web.routes.health import archive_health  # noqa: E402
 from stopsign.web.routes.health import pipeline_health  # noqa: E402
 
@@ -274,6 +275,26 @@ def test_pipeline_health_response_shape(monkeypatch):
     assert isinstance(payload["analyzer"]["uptime_seconds"], float)
     assert payload["ffmpeg"]["dup_pct"] == 1.3
     assert "hls" in payload
+
+
+def test_pipeline_health_tolerates_small_stage_clock_skew():
+    now = __import__("time").time()
+    fake = _FakeRedis(
+        {
+            "stopsign.rtsp.health": json.dumps(
+                {
+                    "status": "healthy",
+                    "updated_at": now + 1.0,
+                    "last_publish_ts": now + 1.0,
+                }
+            )
+        }
+    )
+
+    stage = _read_stage_health(fake, "stopsign.rtsp.health", "rtsp", now)
+
+    assert stage["status"] == "healthy"
+    assert "future" not in stage.get("reason", "")
 
 
 def test_pipeline_health_reports_stall_reason(monkeypatch):
