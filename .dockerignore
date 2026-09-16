@@ -8,6 +8,9 @@
 !scripts/
 !rtsp_to_redis/
 !pyproject.toml
+!docker/
+!docker/production/
+!docker/production/entrypoint.sh
 !uv.lock
 
 # Always exclude these even from allowed dirs
