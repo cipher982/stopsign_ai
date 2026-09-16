@@ -38,6 +38,7 @@ from stopsign.coordinate_transform import Resolution
 from stopsign.database import Database
 from stopsign.frame_codec import HEADER_MIN_LEN
 from stopsign.frame_codec import LEGACY_MAGIC
+from stopsign.frame_codec import frame_metadata_error
 from stopsign.frame_codec import pack_frame
 from stopsign.frame_codec import unpack_frame
 from stopsign.image_storage import start_upload_worker
@@ -76,12 +77,15 @@ YOLO_MODEL_PATH = os.path.join("/app/models", YOLO_MODEL_NAME)
 # after upstream stalls.
 ANALYZER_CATCHUP_SEC = float(os.getenv("ANALYZER_CATCHUP_SEC", "15"))
 ANALYZER_CATCHUP_KEEP_N = int(os.getenv("ANALYZER_CATCHUP_KEEP_N", "30"))  # keep last N newest frames
+ANALYZER_INFERENCE_INTERVAL_SEC = float(os.getenv("ANALYZER_INFERENCE_INTERVAL_SEC", "5"))
 ANALYZER_HEALTH_PORT = int(os.getenv("ANALYZER_HEALTH_PORT", "8081"))
 ANALYZER_STALL_SEC = float(os.getenv("ANALYZER_STALL_SEC", "120"))
 
 RAW_HEADER_MAGIC = LEGACY_MAGIC
 RAW_HEADER_MIN_LEN = HEADER_MIN_LEN
-RELEASE_GENERATION = os.getenv("RELEASE_GENERATION", "unknown")
+RELEASE_GENERATION = os.getenv("RELEASE_GENERATION")
+if not RELEASE_GENERATION or RELEASE_GENERATION == "unknown":
+    RELEASE_GENERATION = os.getenv("SOURCE_COMMIT", "unknown")
 PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
 ANALYZER_HEALTH_KEY = os.getenv("ANALYZER_HEALTH_KEY", "stopsign.analyzer.health")
 ANALYZER_HEALTH_TTL_SEC = int(os.getenv("ANALYZER_HEALTH_TTL_SEC", "300"))
@@ -391,6 +395,18 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         return (frame, capture_ts, metadata) if include_metadata else (frame, capture_ts)
 
+    def _discard_frame(self, reason: str) -> None:
+        """Record a rejected source frame without advancing analyzer progress."""
+        self.frames_discarded.inc()
+        self.last_stage_reason = f"source frame contract invalid: {reason}"
+        if time.time() - self._last_discard_log_ts > 60:
+            logger.error("Discarding source frame: %s", reason)
+            self._last_discard_log_ts = time.time()
+        self._publish_health("deferred", self.last_stage_reason)
+
+    def _source_metadata_error(self, metadata: dict[str, Any], now: float) -> str | None:
+        return frame_metadata_error(metadata, now=now)
+
     def get_frame_from_redis(self, key: str) -> Optional[np.ndarray]:
         try:
             # Use BRPOP so LPUSH/BRPOP forms a FIFO queue (oldest first)
@@ -424,45 +440,77 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             return 0
 
     def get_frame_with_meta(self, key: str) -> Optional[Tuple[np.ndarray, float, Dict[str, Any]]]:
-        """Pop a frame and return (ndarray, capture_ts, source_metadata)."""
+        """Pop only frames that carry a current, identifiable source contract."""
         try:
-            # LPUSH/BRPOP remains FIFO until a stale frame proves catch-up is needed.
+            # LPUSH/BRPOP remains FIFO until a stale pop proves catch-up is needed.
             frame_data = self.redis_client.brpop([key], timeout=1)
-            if frame_data:
-                _, data = frame_data  # type: ignore
-                frame, capture_ts, metadata = self._parse_raw_frame(data, include_metadata=True)
-                if frame is None or capture_ts is None:
-                    self.frames_discarded.inc()
-                    if time.time() - self._last_discard_log_ts > 60:
-                        logger.error("Discarding frame without valid capture timestamp metadata")
-                        self._last_discard_log_ts = time.time()
-                    return None
-
-                lag = max(0.0, time.time() - float(capture_ts))
-                if ANALYZER_CATCHUP_SEC > 0 and lag > ANALYZER_CATCHUP_SEC:
-                    self.stale_dropped_count += 1  # the frame already removed by BRPOP
-                    dropped = self._trim_raw_queue_to_newest(key)
-                    if dropped:
-                        # RPOP is the oldest member of the retained newest window.
-                        newest_data = self.redis_client.rpop(key)
-                        if newest_data:
-                            frame, capture_ts, metadata = self._parse_raw_frame(newest_data, include_metadata=True)
-                    if frame is None or capture_ts is None:
-                        self.last_stage_reason = (
-                            f"dropped stale capture ({lag:.1f}s) while waiting for a fresh source frame"
-                        )
-                        self._publish_health("degraded", self.last_stage_reason)
-                        return None
-                    logger.info(
-                        "Analyzer catch-up dropped %d stale frame(s); retaining newest window of %d",
-                        dropped + 1,
-                        max(1, ANALYZER_CATCHUP_KEEP_N),
-                    )
-
+            if not frame_data:
                 self._redis_error_backoff = 0.0
-                return frame, capture_ts, metadata
+                return None
+
+            _, data = frame_data  # type: ignore
+            frame, capture_ts, metadata = self._parse_raw_frame(data, include_metadata=True)
+            now = time.time()
+            if frame is None or capture_ts is None:
+                self._discard_frame("frame payload or capture timestamp is invalid")
+                return None
+            metadata_error = self._source_metadata_error(metadata, now)
+            if metadata_error:
+                self._discard_frame(metadata_error)
+                return None
+            source_seq = int(metadata["source_seq"])
+            source_generation = str(metadata["source_generation"])
+            if (
+                self.source_generation == source_generation
+                and self.last_consumed_seq is not None
+                and source_seq <= self.last_consumed_seq
+            ):
+                self._discard_frame(f"source sequence {source_seq} replayed after {self.last_consumed_seq}")
+                return None
+
+            lag = now - float(capture_ts)
+            dropped = 0
+            if ANALYZER_CATCHUP_SEC > 0 and lag > ANALYZER_CATCHUP_SEC:
+                self.stale_dropped_count += 1  # the frame already removed by BRPOP
+                dropped = self._trim_raw_queue_to_newest(key)
+                if dropped:
+                    # RPOP is the oldest member of the retained newest window.
+                    newest_data = self.redis_client.rpop(key)
+                    if newest_data:
+                        frame, capture_ts, metadata = self._parse_raw_frame(newest_data, include_metadata=True)
+                        now = time.time()
+                        if frame is not None and capture_ts is not None:
+                            metadata_error = self._source_metadata_error(metadata, now)
+                            if metadata_error is None:
+                                source_seq = int(metadata["source_seq"])
+                                source_generation = str(metadata["source_generation"])
+                                if (
+                                    self.source_generation == source_generation
+                                    and self.last_consumed_seq is not None
+                                    and source_seq <= self.last_consumed_seq
+                                ):
+                                    metadata_error = (
+                                        f"source sequence {source_seq} replayed after {self.last_consumed_seq}"
+                                    )
+                                if metadata_error is None:
+                                    lag = now - float(capture_ts)
+            if frame is None or capture_ts is None or metadata_error:
+                reason = metadata_error or f"dropped stale capture ({lag:.1f}s)"
+                self._discard_frame(reason)
+                return None
+            if lag > ANALYZER_CATCHUP_SEC:
+                self.last_stage_reason = f"dropped stale capture ({lag:.1f}s) while waiting for a fresh source frame"
+                self._publish_health("degraded", self.last_stage_reason)
+                return None
+            if dropped:
+                logger.info(
+                    "Analyzer catch-up dropped %d stale frame(s); retaining newest window of %d",
+                    dropped + 1,
+                    max(1, ANALYZER_CATCHUP_KEEP_N),
+                )
+
             self._redis_error_backoff = 0.0
-            return None
+            return frame, capture_ts, metadata
         except redis_exceptions.RedisError as e:
             self._redis_error_backoff = min(30.0, (self._redis_error_backoff or 1.0) * 2)
             self.last_stage_reason = f"Redis frame read failed: {e}"
@@ -491,7 +539,12 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             self.redis_client.ping()
             logger.info("Successfully connected to Redis")
             # Pipeline-health signal: process start time so restarts are observable
-            # (a restart loop shows up as a boot_ts that keeps advancing).
+            # Legacy timestamp keys have no process identity. Clear them before
+            # publishing the new boot so a restart cannot inherit another
+            # process's apparently fresh frame/inference evidence.
+            delete = getattr(self.redis_client, "delete", None)
+            if callable(delete):
+                delete(ANALYZER_LAST_FRAME_AT_KEY, ANALYZER_LAST_INFERENCE_AT_KEY)
             try:
                 self.redis_client.set(ANALYZER_BOOT_TS_KEY, time.time())
             except Exception as boot_err:
@@ -775,21 +828,29 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.avg_brightness.set(float(avg_brightness))
         self.contrast.set(float(contrast))
 
-        # Decoupled YOLO: check FIRST to enable fast path for non-YOLO frames.
-        # Also skip YOLO when the frame is already stale (pipeline behind schedule)
-        # to prevent a slow inference from causing cascading backpressure.
-        # Threshold is derived from the configured frame rate so it scales correctly.
+        # Decoupled YOLO: forwarding and inference are separate progress signals.
+        # A strict one-frame freshness gate can self-starve the analyzer: when
+        # forwarding runs below camera rate every frame is >100ms old, so YOLO is
+        # skipped forever and last_inference_at never advances.  Keep the fast
+        # path, but force an inference at a bounded wall-clock interval so the
+        # health contract observes successful model work even while catching up.
         frame_budget_sec = 1.0 / self.frame_rate
         frame_age_sec = time.time() - float(capture_ts)
         yolo_lag_skip = frame_age_sec > (1.5 * frame_budget_sec)
-        if yolo_lag_skip:
+        inference_due = (
+            self.last_inference_at is None or time.time() - self.last_inference_at >= ANALYZER_INFERENCE_INTERVAL_SEC
+        )
+        if yolo_lag_skip and not inference_due:
             self.yolo_stale_frames.inc()
             logger.debug(
-                "YOLO skipped: frame %.0fms stale (budget %.0fms)",
+                "YOLO skipped: frame %.0fms stale (budget %.0fms; next inference due in %.1fs)",
                 frame_age_sec * 1000,
                 frame_budget_sec * 1000,
+                max(0.0, ANALYZER_INFERENCE_INTERVAL_SEC - (time.time() - (self.last_inference_at or 0))),
             )
-        should_run_yolo = (ts_for_logic - self.last_yolo_ts) >= self.min_yolo_interval and not yolo_lag_skip
+        should_run_yolo = (ts_for_logic - self.last_yolo_ts) >= self.min_yolo_interval and (
+            not yolo_lag_skip or inference_due
+        )
 
         if should_run_yolo:
             # YOLO PATH: Full processing after raw -> processing coordinate setup.

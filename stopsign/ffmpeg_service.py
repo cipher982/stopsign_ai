@@ -12,6 +12,7 @@ from http.server import HTTPServer
 import redis
 from redis import exceptions as redis_exceptions
 
+from stopsign.frame_codec import frame_metadata_error
 from stopsign.frame_codec import unpack_frame
 from stopsign.hls_health import parse_hls_playlist
 from stopsign.service_status import FFmpegServiceStatusMixin
@@ -41,7 +42,9 @@ def get_env(key: str) -> str:
 REDIS_URL = get_env("REDIS_URL")
 PROCESSED_FRAME_KEY = get_env("PROCESSED_FRAME_KEY")
 HEALTH_PORT = int(os.getenv("FFMPEG_HEALTH_PORT", "8080"))
-RELEASE_GENERATION = os.getenv("RELEASE_GENERATION", "unknown")
+RELEASE_GENERATION = os.getenv("RELEASE_GENERATION")
+if not RELEASE_GENERATION or RELEASE_GENERATION == "unknown":
+    RELEASE_GENERATION = os.getenv("SOURCE_COMMIT", "unknown")
 PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
 RTSP_HEALTH_KEY = os.getenv("RTSP_HEALTH_KEY", "stopsign.rtsp.health")
 FFMPEG_HEALTH_TTL_SEC = int(os.getenv("FFMPEG_HEALTH_TTL_SEC", "300"))
@@ -162,15 +165,17 @@ def _live_rtsp_health() -> dict | None:
 
 
 def _accept_processed_frame(metadata: dict) -> bool:
-    """Reject envelopes from a prior capture generation.
-
-    Older analyzer envelopes may omit generation metadata; those remain
-    accepted for compatibility.  Once an envelope identifies its source, the
-    RTSP heartbeat is authoritative for the currently active generation.
-    """
+    """Accept only current processed-frame evidence with a complete identity."""
     global SOURCE_GENERATION_REJECTION_REASON, SOURCE_GENERATION_REJECTION_COUNT
 
-    source_generation = metadata.get("source_generation")
+    metadata_error = frame_metadata_error(metadata)
+    if metadata_error:
+        SOURCE_GENERATION_REJECTION_REASON = f"processed frame contract invalid: {metadata_error}"
+        SOURCE_GENERATION_REJECTION_COUNT += 1
+        status.update_custom_metric("stale_generation_drops", SOURCE_GENERATION_REJECTION_COUNT)
+        return False
+
+    source_generation = metadata["source_generation"]
     release_generation = metadata.get("release_generation")
     if release_generation and RELEASE_GENERATION not in {"", "unknown"}:
         if release_generation != RELEASE_GENERATION:
@@ -181,12 +186,6 @@ def _accept_processed_frame(metadata: dict) -> bool:
             SOURCE_GENERATION_REJECTION_COUNT += 1
             status.update_custom_metric("stale_generation_drops", SOURCE_GENERATION_REJECTION_COUNT)
             return False
-
-    # Legacy envelopes carry no source identity and cannot be fenced without
-    # inventing evidence, so preserve their historical compatibility.
-    if not source_generation:
-        SOURCE_GENERATION_REJECTION_REASON = None
-        return True
 
     heartbeat = _live_rtsp_health()
     live_generation = heartbeat.get("source_generation") if heartbeat else None

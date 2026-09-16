@@ -88,7 +88,9 @@ RTSP_LOW_FPS_EXIT_SEC: float = float(os.getenv("RTSP_LOW_FPS_EXIT_SEC", "900"))
 READY_LOW_INPUT_FPS_SEC: float = 30.0
 # Stage-truth metadata and heartbeat keys.  Legacy frame consumers still receive
 # ``ts``/``w``/``h`` aliases, while new consumers can require the complete schema.
-RELEASE_GENERATION = os.getenv("RELEASE_GENERATION", "unknown")
+RELEASE_GENERATION = os.getenv("RELEASE_GENERATION")
+if not RELEASE_GENERATION or RELEASE_GENERATION == "unknown":
+    RELEASE_GENERATION = os.getenv("SOURCE_COMMIT", "unknown")
 PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
 RTSP_HEALTH_KEY = os.getenv("RTSP_HEALTH_KEY", "stopsign.rtsp.health")
 RTSP_HEALTH_TTL_SEC = int(os.getenv("RTSP_HEALTH_TTL_SEC", "300"))

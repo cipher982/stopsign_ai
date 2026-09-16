@@ -11,6 +11,8 @@ no envelope on the processed-frame queue.
 from __future__ import annotations
 
 import json
+import math
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +26,38 @@ class DecodedFrame:
     metadata: dict[str, Any]
     payload: bytes
     envelope: str
+
+
+def frame_metadata_error(
+    metadata: dict[str, Any],
+    *,
+    now: float | None = None,
+    future_tolerance_seconds: float = 0.0,
+) -> str | None:
+    """Return why metadata cannot prove current pipeline progress.
+
+    Legacy envelopes remain decodable for migrations and offline tooling, but a
+    live stage must not advance its health heartbeat from one.  Capture time,
+    source generation, and sequence are the minimum identity needed to tell a
+    current frame from replayed or pre-restart data.
+    """
+    raw_capture_ts = metadata.get("capture_ts", metadata.get("ts"))
+    if isinstance(raw_capture_ts, bool) or not isinstance(raw_capture_ts, (int, float)):
+        return "capture timestamp is missing or not numeric"
+    capture_ts = float(raw_capture_ts)
+    if not math.isfinite(capture_ts):
+        return "capture timestamp is not finite"
+    current = time.time() if now is None else float(now)
+    if capture_ts > current + max(0.0, future_tolerance_seconds):
+        return f"capture timestamp is {capture_ts - current:.1f}s in the future"
+
+    source_seq = metadata.get("source_seq")
+    if isinstance(source_seq, bool) or not isinstance(source_seq, int) or source_seq <= 0:
+        return "source sequence is missing or invalid"
+    source_generation = metadata.get("source_generation")
+    if not isinstance(source_generation, str) or not source_generation.strip():
+        return "source generation is missing or invalid"
+    return None
 
 
 def pack_frame(payload: bytes, metadata: dict[str, Any]) -> bytes:

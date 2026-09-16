@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 
@@ -26,7 +27,9 @@ from stopsign.settings import REDIS_URL
 from stopsign.web.app import STREAM_FS_PATH
 
 logger = logging.getLogger(__name__)
-RELEASE_GENERATION = os.getenv("RELEASE_GENERATION", "unknown")
+RELEASE_GENERATION = os.getenv("RELEASE_GENERATION")
+if not RELEASE_GENERATION or RELEASE_GENERATION == "unknown":
+    RELEASE_GENERATION = os.getenv("SOURCE_COMMIT", "unknown")
 PROJECT_IDENTITY = os.getenv("PROJECT_IDENTITY", "stopsign")
 RTSP_HEALTH_KEY = os.getenv("RTSP_HEALTH_KEY", "stopsign.rtsp.health")
 ANALYZER_HEALTH_KEY = os.getenv("ANALYZER_HEALTH_KEY", "stopsign.analyzer.health")
@@ -34,6 +37,7 @@ ANALYZER_HEALTH_KEY = os.getenv("ANALYZER_HEALTH_KEY", "stopsign.analyzer.health
 router = APIRouter()
 
 _HLS_PARSE_WARN_LAST_TS = 0.0
+TIMESTAMP_FUTURE_TOLERANCE_SEC = float(os.getenv("STOPSIGN_TIMESTAMP_FUTURE_TOLERANCE_SEC", "0"))
 
 
 def _parse_hls_playlist(path: str) -> dict:
@@ -300,13 +304,13 @@ def _read_stage_health(client, key: str, stage: str, now: float) -> dict:
     payload["_heartbeat_present"] = True
     observed = payload.get("updated_at", payload.get("ts"))
     observed_age = None
-    if isinstance(observed, (int, float)):
+    if isinstance(observed, (int, float)) and not isinstance(observed, bool) and math.isfinite(float(observed)):
         observed_age = now - float(observed)
-        payload["heartbeat_age_seconds"] = round(max(0.0, observed_age), 1)
+        payload["heartbeat_age_seconds"] = round(observed_age, 1)
         # The Redis key has a TTL, but a mocked/older Redis reader can still
-        # expose a repeated value.  Never call an old heartbeat healthy merely
+        # expose a repeated value. Never call an old heartbeat healthy merely
         # because its producer labelled it that way.
-        if observed_age < -30:
+        if observed_age < -TIMESTAMP_FUTURE_TOLERANCE_SEC:
             payload["status"] = "failed"
             payload["reason"] = "stage heartbeat timestamp is in the future"
         elif observed_age > float(os.getenv("STAGE_HEARTBEAT_STALE_SEC", "300")):
@@ -315,41 +319,66 @@ def _read_stage_health(client, key: str, stage: str, now: float) -> dict:
     status = payload.get("status")
     if status is None:
         # The first FFmpeg health writer emitted fps/duplication fields and a
-        # timestamp but no structured stage status.  Treat a current snapshot
+        # timestamp but no structured stage status. Treat a current snapshot
         # as compatibility evidence, never as a timeless healthy claim.
-        status = "healthy" if stage == "ffmpeg" and observed_age is not None and observed_age <= 300 else "deferred"
+        status = (
+            "healthy" if stage == "ffmpeg" and observed_age is not None and 0 <= observed_age <= 300 else "deferred"
+        )
         payload["status"] = status
+
+    def timestamp_age(key: str) -> float | None:
+        value = payload.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            return None
+        return now - float(value)
+
     stale_reason = None
     if stage == "rtsp":
-        reference = payload.get("last_publish_ts")
+        reference_age = timestamp_age("last_publish_ts")
         threshold = float(payload.get("push_stale_threshold_seconds", 10.0))
-        stale_reason = (
-            "Redis publish heartbeat is stale"
-            if (
-                isinstance(reference, (int, float))
-                and (now - float(reference) > threshold or float(reference) - now > 30)
-            )
-            else None
-        )
+        if reference_age is None:
+            stale_reason = "Redis publish timestamp is missing or invalid"
+        elif reference_age < -TIMESTAMP_FUTURE_TOLERANCE_SEC:
+            stale_reason = "Redis publish timestamp is in the future"
+        elif reference_age > threshold:
+            stale_reason = "Redis publish heartbeat is stale"
     elif stage == "analyzer":
-        age = payload.get("capture_age_seconds")
+        reference_age = timestamp_age("last_output_capture_ts")
+        if reference_age is None:
+            reference_age = payload.get("capture_age_seconds")
+            if (
+                isinstance(reference_age, bool)
+                or not isinstance(reference_age, (int, float))
+                or not math.isfinite(float(reference_age))
+            ):
+                reference_age = None
         threshold = float(os.getenv("ANALYZER_CATCHUP_SEC", "15"))
-        stale_reason = (
-            "processed capture evidence is stale"
-            if (isinstance(age, (int, float)) and (float(age) > threshold or float(age) < -30))
-            else None
-        )
+        if reference_age is None:
+            stale_reason = "processed capture timestamp is missing or invalid"
+        elif float(reference_age) < -TIMESTAMP_FUTURE_TOLERANCE_SEC:
+            stale_reason = "processed capture timestamp is in the future"
+        elif float(reference_age) > threshold:
+            stale_reason = "processed capture evidence is stale"
     elif stage == "ffmpeg":
-        encoded_age = payload.get("encoded_capture_age_seconds")
+        reference_age = timestamp_age("last_encoded_capture_ts")
+        if reference_age is None:
+            reference_age = payload.get("encoded_capture_age_seconds")
+            if (
+                isinstance(reference_age, bool)
+                or not isinstance(reference_age, (int, float))
+                or not math.isfinite(float(reference_age))
+            ):
+                reference_age = None
         threshold = float(os.getenv("FRAME_STALL_SEC", "120"))
-        stale_reason = (
-            "encoded capture evidence is stale"
-            if (isinstance(encoded_age, (int, float)) and (float(encoded_age) > threshold or float(encoded_age) < -30))
-            else None
-        )
+        if reference_age is None:
+            stale_reason = "encoded capture timestamp is missing or invalid"
+        elif float(reference_age) < -TIMESTAMP_FUTURE_TOLERANCE_SEC:
+            stale_reason = "encoded capture timestamp is in the future"
+        elif float(reference_age) > threshold:
+            stale_reason = "encoded capture evidence is stale"
         if payload.get("hls_fresh") is False:
             stale_reason = stale_reason or "HLS playlist is stale"
-    if status == "healthy" and stale_reason:
+    if stale_reason and (status == "healthy" or "future" in stale_reason):
         payload["status"] = "failed"
         payload["reason"] = stale_reason
     payload.setdefault("reason", stale_reason or f"{stage} reported {payload.get('status')}")
@@ -364,9 +393,9 @@ def _legacy_float(raw, now: float) -> tuple[float | None, float | None]:
         return None, None
     try:
         value = float(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None, None
-    if value != value or value in (float("inf"), float("-inf")):
+    if not math.isfinite(value):
         return None, None
     return value, round(now - value, 1)
 
@@ -397,9 +426,11 @@ def _apply_legacy_analyzer_evidence(analyzer: dict, legacy: dict, now: float) ->
     if last_inference_at is not None:
         analyzer["last_inference_at"] = last_inference_at
         analyzer["inference_age_seconds"] = inference_age
-    if started_at is not None:
-        analyzer["started_at"] = started_at
-        analyzer["uptime_seconds"] = round(now - started_at, 1)
+    if (frame_age is not None and frame_age < -TIMESTAMP_FUTURE_TOLERANCE_SEC) or (
+        inference_age is not None and inference_age < -TIMESTAMP_FUTURE_TOLERANCE_SEC
+    ):
+        analyzer["status"] = "failed"
+        analyzer["reason"] = "legacy analyzer timestamp is in the future"
     if stall not in (None, b"", ""):
         try:
             analyzer["last_stall"] = json.loads(stall)
@@ -420,7 +451,7 @@ def _apply_legacy_analyzer_evidence(analyzer: dict, legacy: dict, now: float) ->
     if last_frame_at is None:
         analyzer["status"] = "deferred"
         analyzer["reason"] = "legacy analyzer frame evidence is unavailable"
-    elif frame_age is None or frame_age < -30 or frame_age > threshold:
+    elif frame_age is None or frame_age < -TIMESTAMP_FUTURE_TOLERANCE_SEC or frame_age > threshold:
         analyzer["status"] = "failed"
         analyzer["reason"] = "legacy analyzer frame evidence is stale"
     elif unrecovered_stall:
@@ -430,7 +461,12 @@ def _apply_legacy_analyzer_evidence(analyzer: dict, legacy: dict, now: float) ->
             if isinstance(last_stall, dict)
             else "legacy analyzer stall recorded"
         )
-    elif last_inference_at is None or inference_age is None or inference_age < -30 or inference_age > threshold:
+    elif (
+        last_inference_at is None
+        or inference_age is None
+        or inference_age < -TIMESTAMP_FUTURE_TOLERANCE_SEC
+        or inference_age > threshold
+    ):
         analyzer["status"] = "degraded"
         analyzer["reason"] = "legacy analyzer inference evidence is stale or unavailable"
     else:

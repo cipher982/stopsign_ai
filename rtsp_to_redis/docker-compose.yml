@@ -15,6 +15,7 @@ services:
       - FRAME_BUFFER_SIZE=${FRAME_BUFFER_SIZE}
       - RTSP_JPEG_QUALITY=${RTSP_JPEG_QUALITY:-85}
       - RELEASE_GENERATION=${RELEASE_GENERATION:-unknown}
+      - SOURCE_COMMIT=${SOURCE_COMMIT:-unknown}
       - PROJECT_IDENTITY=${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
       # The camera link is WiFi and drops packets. Over UDP that shows up as corrupt
       # slices ("error while decoding MB", "missing reference picture") plus bursty,

@@ -3,6 +3,7 @@ import numpy as np
 
 from stopsign.frame_codec import ENVELOPE_MAGIC
 from stopsign.frame_codec import LEGACY_MAGIC
+from stopsign.frame_codec import frame_metadata_error
 from stopsign.frame_codec import pack_frame
 from stopsign.frame_codec import pack_legacy_jpeg_frame
 from stopsign.frame_codec import unpack_frame
@@ -37,6 +38,18 @@ def test_legacy_jpeg_round_trip():
     assert decoded.metadata["w"] == 20
     assert decoded.metadata["h"] == 10
     assert decoded.payload == jpeg.tobytes()
+
+
+def test_frame_metadata_error_requires_current_source_identity():
+    valid = {
+        "capture_ts": 100.0,
+        "source_seq": 1,
+        "source_generation": "release:rtsp:1",
+    }
+    assert frame_metadata_error(valid, now=100.0) is None
+    assert "source sequence" in frame_metadata_error({**valid, "source_seq": 0}, now=100.0)
+    assert "source generation" in frame_metadata_error({**valid, "source_generation": ""}, now=100.0)
+    assert "future" in frame_metadata_error({**valid, "capture_ts": 101.0}, now=100.0)
 
 
 def test_plain_bytes_are_not_an_envelope():

@@ -25,6 +25,7 @@ services:
       ANALYZER_STALL_SEC: ${ANALYZER_STALL_SEC:-120}
       ANALYZER_HEALTH_KEY: ${ANALYZER_HEALTH_KEY:-stopsign.analyzer.health}
       RELEASE_GENERATION: ${RELEASE_GENERATION:-unknown}
+      SOURCE_COMMIT: ${SOURCE_COMMIT:-unknown}
       PROJECT_IDENTITY: ${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
       YOLO_DEVICE: ${YOLO_DEVICE:-cuda}
     volumes:
@@ -60,6 +61,7 @@ services:
       FFMPEG_PRESET: ${FFMPEG_PRESET}
       FFMPEG_HEALTH_PORT: ${FFMPEG_HEALTH_PORT:-8080}
       RELEASE_GENERATION: ${RELEASE_GENERATION:-unknown}
+      SOURCE_COMMIT: ${SOURCE_COMMIT:-unknown}
       PROJECT_IDENTITY: ${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
       # Restart the encoder when it has produced no fresh encoded evidence for
       # this long; mtime-only HLS checks are intentionally insufficient.
@@ -102,6 +104,7 @@ services:
       RTSP_HEALTH_KEY: ${RTSP_HEALTH_KEY:-stopsign.rtsp.health}
       TZ: America/Chicago
       RELEASE_GENERATION: ${RELEASE_GENERATION:-unknown}
+      SOURCE_COMMIT: ${SOURCE_COMMIT:-unknown}
       PROJECT_IDENTITY: ${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
     depends_on:
       - video_analyzer
