@@ -2,6 +2,34 @@ name: is844go80k088kcgo88s8cs8
 
 services:
 
+  # Capture is part of this release, not a separately managed auxiliary stack.
+  # Keep the existing RTSP env file on cube as the secret authority; only the
+  # producer image and code are rebuilt from this checkout.
+  rtsp_to_redis:
+    build:
+      context: ../..
+      dockerfile: rtsp_to_redis/Dockerfile
+    env_file:
+      - /home/drose/manual-apps/stopsign_ai/rtsp_to_redis/.env
+    environment:
+      RELEASE_GENERATION: ${RELEASE_GENERATION:-unknown}
+      SOURCE_COMMIT: ${SOURCE_COMMIT:-unknown}
+      PROJECT_IDENTITY: ${PROJECT_IDENTITY:-is844go80k088kcgo88s8cs8}
+      RTSP_HEALTH_KEY: ${RTSP_HEALTH_KEY:-stopsign.rtsp.health}
+    command: >
+      sh -c "stdbuf -oL -eL python rtsp_to_redis.py 2>&1 | stdbuf -oL -eL grep -vE '\\[h264 @ 0x[0-9a-f]+\\] SEI type 764 size [0-9]+ truncated at [0-9]+'"
+    healthcheck:
+      # /ready reports capture readiness; /healthz is liveness only.
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    networks:
+      - default
+      - monitoring
+      - stopsign-net
+
   video_analyzer:
     build:
       context: ../..
