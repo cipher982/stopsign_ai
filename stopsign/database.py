@@ -156,6 +156,27 @@ class VehicleAttribute(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
 
+class VehiclePassSchemaError(RuntimeError):
+    """The vehicle_passes table is missing columns required by the application."""
+
+
+_VEHICLE_PASS_COLUMNS = {
+    "entry_time": "DOUBLE PRECISION",
+    "exit_time": "DOUBLE PRECISION",
+    "clip_path": "TEXT",
+    "clip_status": "TEXT",
+    "clip_error": "TEXT",
+    "capture_reason": "TEXT",
+    "entry_speed": "DOUBLE PRECISION",
+    "decel_score": "DOUBLE PRECISION",
+    "track_quality": "DOUBLE PRECISION",
+    "stop_pos_x": "DOUBLE PRECISION",
+    "stop_pos_y": "DOUBLE PRECISION",
+    "stream_queue_depth_exit": "INTEGER",
+    "stream_lag_est_sec": "DOUBLE PRECISION",
+}
+
+
 class Database:
     def __init__(self, db_url: str):
         self.engine = create_engine(
@@ -167,60 +188,75 @@ class Database:
             pool_pre_ping=True,  # Test connections before use
         )
         self.Session = sessionmaker(bind=self.engine)
-        Base.metadata.create_all(self.engine)
         self._score_cache: dict = {"tiz_sorted": [], "expires": 0.0}
 
-        # Check if we're in read-only mode
+        # Check if we're in read-only mode before any schema operation. Read-only
+        # instances may verify schema but must never attempt to create or alter it.
         self.read_only_mode = os.getenv("READ_ONLY_MODE", "false").lower() == "true"
         if self.read_only_mode:
             logger.warning("🔒 DATABASE IN READ-ONLY MODE - All write operations will be blocked")
+        else:
+            Base.metadata.create_all(self.engine)
 
         logger.info("Database connection established")
         self._ensure_vehicle_pass_columns()
         self.log_database_summary()
 
-    def _ensure_vehicle_pass_columns(self) -> None:
-        """Add new columns to vehicle_passes if missing (lightweight migration)."""
-        if self.read_only_mode:
-            return
+    @staticmethod
+    def _existing_vehicle_pass_columns(session) -> set[str]:
+        result = session.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'vehicle_passes'
+                """
+            )
+        )
+        return {row[0] for row in result.fetchall()}
 
-        desired = {
-            "entry_time": "DOUBLE PRECISION",
-            "exit_time": "DOUBLE PRECISION",
-            "clip_path": "TEXT",
-            "clip_status": "TEXT",
-            "clip_error": "TEXT",
-            "capture_reason": "TEXT",
-            "entry_speed": "DOUBLE PRECISION",
-            "decel_score": "DOUBLE PRECISION",
-            "track_quality": "DOUBLE PRECISION",
-            "stop_pos_x": "DOUBLE PRECISION",
-            "stop_pos_y": "DOUBLE PRECISION",
-            "stream_queue_depth_exit": "INTEGER",
-            "stream_lag_est_sec": "DOUBLE PRECISION",
-        }
+    def _ensure_vehicle_pass_columns(self) -> None:
+        """Migrate and verify the columns required by vehicle_passes.
+
+        This is intentionally a small, idempotent migration rather than a general
+        migration framework. Verification also runs in read-only mode, where a
+        missing column is a startup/readiness failure instead of something the
+        process can safely work around.
+        """
+        desired = _VEHICLE_PASS_COLUMNS
         try:
             with self.Session() as session:
-                result = session.execute(
-                    text(
-                        """
-                        SELECT column_name
-                        FROM information_schema.columns
-                        WHERE table_schema = 'public'
-                          AND table_name = 'vehicle_passes'
-                        """
-                    )
-                )
-                existing = {row[0] for row in result.fetchall()}
+                existing = self._existing_vehicle_pass_columns(session)
+                missing = [name for name in desired if name not in existing]
 
-                missing = [name for name in desired.keys() if name not in existing]
-                for name in missing:
-                    session.execute(text(f"ALTER TABLE vehicle_passes ADD COLUMN {name} {desired[name]}"))
+                if missing and not self.read_only_mode:
+                    try:
+                        for name in missing:
+                            session.execute(text(f"ALTER TABLE vehicle_passes ADD COLUMN {name} {desired[name]}"))
+                        session.commit()
+                        logger.info("Added missing columns to vehicle_passes: %s", ", ".join(missing))
+                    except Exception as exc:
+                        session.rollback()
+                        raise VehiclePassSchemaError(
+                            f"Failed to migrate vehicle_passes; missing required columns: {', '.join(missing)}"
+                        ) from exc
+
+                    # ALTER TABLE may have succeeded only partially on a backend
+                    # or through a proxy, so never assume the migration completed.
+                    existing = self._existing_vehicle_pass_columns(session)
+                    missing = [name for name in desired if name not in existing]
+
                 if missing:
-                    session.commit()
-                    logger.info("Added missing columns to vehicle_passes: %s", ", ".join(missing))
-        except Exception as e:
-            logger.warning("Failed to ensure vehicle_passes columns: %s", e)
+                    mode = "read-only mode" if self.read_only_mode else "after migration"
+                    raise VehiclePassSchemaError(
+                        f"vehicle_passes schema is incomplete in {mode}; "
+                        f"missing required columns: {', '.join(missing)}"
+                    )
+        except VehiclePassSchemaError:
+            raise
+        except Exception as exc:
+            raise VehiclePassSchemaError(f"Failed to verify vehicle_passes schema: {exc}") from exc
 
     @log_execution_time
     def log_database_summary(self):
