@@ -77,9 +77,9 @@ _upload_state_lock = threading.Lock()
 # durable archive-flip outbox is the recovery authority; this in-memory map is a
 # bounded cache used by the worker's next sweep.
 # The pass row is written when the vehicle leaves the zone, which can be a minute
-# after the image was captured, so the upload worker's inline retry window can
-# expire first. Keep the durable outbox for a full day; a database outage can
-# leave the pass spool waiting much longer than the ordinary zone-exit window.
+# after the image was captured, so the single upload-worker DB attempt can find
+# no row. Keep the durable outbox for a full day; a database outage can leave the
+# pass spool waiting much longer than the ordinary zone-exit window.
 _flip_pending: dict[str, float] = {}
 _FLIP_PENDING_MAX = 5000
 _FLIP_RETRY_MAX_AGE_SEC = 24 * 60 * 60
@@ -654,29 +654,27 @@ def _start_upload_worker():
 
 
 def _flip_db_path_with_retry(db: Optional[Database], object_name: str) -> bool:
-    """Flip the pass path local:// -> bremen:// once the pass row exists.
+    """Try the DB path flip once after the archive object is durable.
 
-    The archive upload completes asynchronously, usually several seconds BEFORE the
-    pass is recorded (the pass is persisted at zone exit). A single immediate
-    update_image_path therefore finds 0 rows and silently no-ops, leaving the path
-    stuck at local:// forever. Retry briefly so we catch the pass insert; a give-up
-    is not final - the caller queues a delayed retry that the upload worker sweeps.
+    The pass row is normally written at zone exit, after the capture has been
+    uploaded. A zero-row update is therefore expected and is not a reason to
+    block the upload worker: the durable flip outbox carries the retry until
+    the pass row exists. Keeping this attempt single-shot also bounds the
+    amount of time one capture can hold the worker away from the upload queue.
     """
     if db is None:
         return False
     old_path = f"local://{object_name}"
     new_path = f"bremen://{object_name}"
-    for _ in range(20):
-        try:
-            rows = db.update_image_path(old_path, new_path)
-        except Exception as db_err:
-            logger.warning(f"Failed to update DB path for {object_name}: {db_err}")
-            return False
-        if rows:
-            logger.info(f"Updated DB path for {object_name}: local:// -> bremen://")
-            return True
-        time.sleep(1.0)
-    logger.warning(f"Gave up waiting to flip DB path for {object_name} (pass not recorded in time)")
+    try:
+        rows = db.update_image_path(old_path, new_path)
+    except Exception as db_err:
+        logger.warning("Failed to update DB path for %s: %s", object_name, db_err)
+        return False
+    if rows:
+        logger.info("Updated DB path for %s: local:// -> bremen://", object_name)
+        return True
+    logger.debug("DB path for %s is not present yet; queued durable retry", object_name)
     return False
 
 

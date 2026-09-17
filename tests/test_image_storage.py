@@ -376,13 +376,16 @@ def test_archive_health_ignores_failed_memory_state_after_durable_marker(monkeyp
     assert image_storage._get_upload_state(image.name) == "uploaded"
 
 
-def test_upload_worker_flips_db_path_with_retry(monkeypatch):
+def test_upload_worker_attempts_db_flip_once_without_sleeping(monkeypatch):
     from unittest.mock import MagicMock
 
     db = MagicMock()
-    db.update_image_path.side_effect = [0, 0, 1]  # pass row appears on 3rd attempt
+    db.update_image_path.return_value = 0  # pass row is not recorded yet
 
-    monkeypatch.setattr(time, "sleep", lambda _: None)
+    def fail_if_sleeping(_seconds):
+        raise AssertionError("upload path must not sleep while waiting for the pass row")
+
+    monkeypatch.setattr(time, "sleep", fail_if_sleeping)
 
     minio_client = MagicMock()
     minio_client.fput_object = MagicMock()
@@ -394,15 +397,11 @@ def test_upload_worker_flips_db_path_with_retry(monkeypatch):
     monkeypatch.setattr(image_storage, "BREMEN_MINIO_ACCESS_KEY", "root")
     monkeypatch.setattr(image_storage, "BREMEN_MINIO_BUCKET", "vehicle-images")
 
-    q = queue.Queue()
-    q.put(("/tmp/x_123.jpg", "x_123.jpg", db))
-    monkeypatch.setattr(image_storage, "_upload_queue", q)
-
     image_storage._process_upload_item("/tmp/x_123.jpg", "x_123.jpg", db)
 
-    assert image_storage._get_upload_state("x_123.jpg") == "uploaded"
-    # Flip retried until rows>0
-    assert db.update_image_path.call_count == 3
+    assert image_storage._get_upload_state("x_123.jpg") == "failed"
+    assert db.update_image_path.call_count == 1
+    assert "x_123.jpg" in image_storage._flip_pending
     health = image_storage.get_archive_health()
     assert health["upload_successes"] == 1
     assert health["upload_failures"] == 0
@@ -558,18 +557,22 @@ def test_delayed_flip_keeps_retry_state_when_outbox_cleanup_fails(monkeypatch):
     assert "x_cleanup_retry.jpg" in image_storage._flip_pending
 
 
-def test_expired_flip_with_no_referencing_pass_releases_the_local_copy(monkeypatch):
+def test_expired_flip_with_no_referencing_pass_is_forgotten_from_durable_outbox(monkeypatch):
     """An archived capture with no pass reference eventually becomes prune-eligible."""
     from unittest.mock import MagicMock
 
     monkeypatch.setattr(image_storage, "pending_pass_image_paths", lambda: set())
+    persisted = {"x_orphan.jpg": time.time() - image_storage._FLIP_RETRY_MAX_AGE_SEC - 1}
+    monkeypatch.setattr(image_storage, "pending_archive_flips", lambda: persisted)
+    forgotten = []
+    monkeypatch.setattr(image_storage, "forget_archive_flip", lambda name: forgotten.append(name) or True)
     db = MagicMock()
     db.update_image_path.return_value = 0
     image_storage._mark_upload_state("x_orphan.jpg", "failed")
-    image_storage._flip_pending["x_orphan.jpg"] = time.time() - image_storage._FLIP_RETRY_MAX_AGE_SEC - 1
 
     image_storage._retry_pending_flips(db)
 
+    assert forgotten == ["x_orphan.jpg"]
     assert "x_orphan.jpg" not in image_storage._flip_pending
     assert image_storage._get_upload_state("x_orphan.jpg") == "uploaded"
 
