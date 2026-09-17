@@ -91,7 +91,7 @@ ARCHIVE_HEALTH_MAX_AGE_SEC = float(os.getenv("ARCHIVE_HEALTH_MAX_AGE_SEC", "900"
 
 
 def _classify_archive_health(payload: dict) -> tuple[str, str]:
-    """Classify archive evidence without inventing health from a present key."""
+    """Classify producer evidence separately from archive observers."""
     failures = []
     if payload.get("local_save_healthy") is False:
         failures.append("local capture persistence is unhealthy")
@@ -99,8 +99,18 @@ def _classify_archive_health(payload: dict) -> tuple[str, str]:
         failures.append("archive upload transport is unhealthy")
     if failures:
         return "failed", "; ".join(failures)
-    if payload.get("archive_outbox_observed") is False:
-        return "deferred", "archive durable outbox could not be observed"
+
+    # An unreadable local/outbox observer is not evidence that the producer
+    # failed. Keep it visible as deferred so callers do not raise a CRITICAL
+    # producer verdict from an observation gap.
+    observer_available = payload.get("archive_observer_available")
+    if observer_available is False or (observer_available is None and payload.get("archive_outbox_observed") is False):
+        reason = (
+            "archive durable outbox observer is unavailable"
+            if payload.get("archive_outbox_observed") is False
+            else "archive reconciliation observer is unavailable"
+        )
+        return "deferred", reason
 
     observed_age = payload.get("archive_health_age_seconds")
     if not isinstance(observed_age, (int, float)) or isinstance(observed_age, bool):

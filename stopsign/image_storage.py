@@ -78,12 +78,19 @@ _upload_state_lock = threading.Lock()
 # bounded cache used by the worker's next sweep.
 # The pass row is written when the vehicle leaves the zone, which can be a minute
 # after the image was captured, so the single upload-worker DB attempt can find
-# no row. Keep the durable outbox for a full day; a database outage can leave the
-# pass spool waiting much longer than the ordinary zone-exit window.
+# no row. A capture with no eventual pass row is retired after the documented
+# ~15-minute pass-row window. A durable pass-spool reference keeps a capture
+# pending through a longer database outage.
 _flip_pending: dict[str, float] = {}
 _FLIP_PENDING_MAX = 5000
-_FLIP_RETRY_MAX_AGE_SEC = 24 * 60 * 60
+PASS_ROW_WINDOW_SECONDS = float(os.getenv("ARCHIVE_PASS_ROW_WINDOW_SEC", "900"))
+# Kept as the compatibility name used by the worker/tests.
+_FLIP_RETRY_MAX_AGE_SEC = PASS_ROW_WINDOW_SECONDS
 _FLIP_RETRY_BATCH = 50
+
+# An exception from the path-flip probe is different from a successful probe that
+# found no pass row. Suppress no-pass retirement while the database is unavailable.
+_flip_db_unavailable = False
 
 # The sweep runs on the upload worker's idle loop, so it needs its own handle on the
 # Database (recorded on every save) plus a rate limit.
@@ -174,14 +181,13 @@ def _timestamp_stats(timestamps: list[float]) -> tuple[int, Optional[float], Opt
     return len(timestamps), max(0.0, time.time() - oldest_ts), oldest_ts
 
 
-def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Optional[float]] | bool]:
+def _durable_local_stats() -> dict:
     """Separate unverified files from proven objects awaiting reconciliation.
 
-    ``outbox`` is derived from the durable pending-flip table rather than the
-    local directory. A marker may be absent because the process died between
-    uploading and acknowledging the DB flip, and the local file may have since
-    been pruned. Reporting the durable queue directly keeps reconciliation
-    progress observable instead of making it disappear with the file.
+    The archive-flip outbox proves Bremen accepted the object. A flip with no
+    eventual pass row is no longer live reconciliation work after the pass-row
+    window, but remains eligible for the worker's durable cleanup. A missing
+    pass-spool observation never retires anything: it may be a database outage.
     """
     image_dir = Path(LOCAL_IMAGE_DIR)
     try:
@@ -193,8 +199,11 @@ def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Op
                 "archive": unknown,
                 "reconciliation": unknown,
                 "outbox": unknown,
+                "retired": unknown,
                 "outbox_observed": False,
+                "pass_spool_observed": False,
             }
+
         pending = [path for path in image_dir.glob("*.jpg") if not _is_durably_archived(path.name)]
         persisted = pending_archive_flips()
         if persisted is None:
@@ -202,11 +211,15 @@ def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Op
         else:
             with _upload_state_lock:
                 in_memory_archived = set(_flip_pending)
+                db_unavailable = _flip_db_unavailable
             known_archived = set(persisted) | in_memory_archived
+
         if known_archived is None:
             archive_pending = pending
             reconciliation_pending: list[Path] | None = None
             outbox_stats = (None, None, None)
+            retired_stats = (None, None, None)
+            pass_spool_observed = False
         else:
             archive_pending = [path for path in pending if path.name not in known_archived]
             reconciliation_pending = [path for path in pending if path.name in known_archived]
@@ -216,7 +229,40 @@ def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Op
                 pending_timestamps.update(
                     {name: timestamp for name, timestamp in persisted.items() if name not in pending_timestamps}
                 )
-            outbox_stats = _timestamp_stats(list(pending_timestamps.values()))
+
+            # Only a complete pass-spool read can prove that a missing pass row is
+            # intentional. Keep every entry live while that observer is unavailable.
+            pass_spool_observed = True
+            pending_pass_images: set[str] | None = set()
+            if pending_timestamps:
+                try:
+                    pending_pass_images = pending_pass_image_paths()
+                except Exception:
+                    pending_pass_images = None
+                pass_spool_observed = pending_pass_images is not None
+
+            now = time.time()
+            active_timestamps: list[float] = []
+            retired_timestamps: list[float] = []
+            active_names: set[str] = set()
+            for object_name, enqueued_at in pending_timestamps.items():
+                marker_exists = _is_durably_archived(object_name)
+                old_no_pass = (
+                    pending_pass_images is not None
+                    and object_name not in pending_pass_images
+                    and not db_unavailable
+                    and now - enqueued_at >= _FLIP_RETRY_MAX_AGE_SEC
+                )
+                if marker_exists or old_no_pass:
+                    retired_timestamps.append(enqueued_at)
+                else:
+                    active_names.add(object_name)
+                    active_timestamps.append(enqueued_at)
+
+            reconciliation_pending = [path for path in reconciliation_pending if path.name in active_names]
+            outbox_stats = _timestamp_stats(active_timestamps)
+            retired_stats = _timestamp_stats(retired_timestamps)
+
         return {
             "all": _age_stats(pending),
             "archive": _age_stats(archive_pending),
@@ -224,7 +270,9 @@ def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Op
                 _age_stats(reconciliation_pending) if reconciliation_pending is not None else (None, None, None)
             ),
             "outbox": outbox_stats,
+            "retired": retired_stats,
             "outbox_observed": persisted is not None,
+            "pass_spool_observed": pass_spool_observed,
         }
     except OSError:
         unknown = (None, None, None)
@@ -233,7 +281,9 @@ def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Op
             "archive": unknown,
             "reconciliation": unknown,
             "outbox": unknown,
+            "retired": unknown,
             "outbox_observed": False,
+            "pass_spool_observed": False,
         }
 
 
@@ -258,7 +308,10 @@ def _health_snapshot() -> dict:
     # Reconciliation progress belongs to the durable flip outbox, not only to
     # markerless local files. The local copy may have been pruned already.
     pending_reconciliation_files, oldest_reconciliation_age, oldest_reconciliation_ts = local_stats["outbox"]  # type: ignore[assignment]
+    retired_no_pass_files, oldest_retired_age, oldest_retired_ts = local_stats["retired"]  # type: ignore[assignment]
     archive_outbox_observed = bool(local_stats["outbox_observed"])
+    pass_spool_observed = bool(local_stats["pass_spool_observed"])
+    archive_observer_available = archive_outbox_observed and pass_spool_observed
     with _upload_state_lock:
         pending_worker_names = [
             object_name for object_name, state in _upload_state.items() if state in ("pending", "failed")
@@ -270,30 +323,40 @@ def _health_snapshot() -> dict:
     h["pending_local_files"] = pending_local_files
     h["pending_archive_files"] = pending_archive_files
     h["pending_reconciliation_files"] = pending_reconciliation_files
+    h["retired_no_pass_files"] = retired_no_pass_files
     h["worker_pending_files"] = in_memory_pending
     h["archive_outbox_observed"] = archive_outbox_observed
+    h["archive_pass_spool_observed"] = pass_spool_observed
+    h["archive_observer_available"] = archive_observer_available
     h["oldest_pending_local_age_seconds"] = oldest_pending_age
     h["oldest_pending_local_ts"] = oldest_pending_ts
     h["oldest_pending_archive_age_seconds"] = oldest_archive_age
     h["oldest_pending_archive_ts"] = oldest_archive_ts
     h["oldest_pending_reconciliation_age_seconds"] = oldest_reconciliation_age
     h["oldest_pending_reconciliation_ts"] = oldest_reconciliation_ts
+    h["oldest_retired_no_pass_age_seconds"] = oldest_retired_age
+    h["oldest_retired_no_pass_ts"] = oldest_retired_ts
     h["archive_health_observed_at"] = time.time()
-    h["upload_transport_healthy"] = pending_local_files is not None and (
-        h["upload_failures"] == 0
-        or (
-            h["last_upload_success_ts"] is not None
-            and h["last_upload_failure_ts"] is not None
-            and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
-        )
+
+    upload_transport_evidence = h["upload_failures"] == 0 or (
+        h["last_upload_success_ts"] is not None
+        and h["last_upload_failure_ts"] is not None
+        and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
     )
+    # Filesystem/outbox observation is a separate evidence domain. Do not turn
+    # an unreadable observer into a producer failure or a false healthy claim.
+    if not upload_transport_evidence:
+        h["upload_transport_healthy"] = False
+    else:
+        # Keep the legacy transport field conservative for dashboards while the
+        # public upload_healthy field distinguishes an observer gap from failure.
+        h["upload_transport_healthy"] = True if archive_observer_available else False
     h["archive_reconciliation_healthy"] = (
-        archive_outbox_observed and pending_archive_files == 0 and pending_reconciliation_files == 0
+        archive_observer_available and pending_archive_files == 0 and pending_reconciliation_files == 0
+        if archive_observer_available
+        else False
     )
-    # Keep this field as the transport signal. A non-empty outbox can represent
-    # a delayed database reconciliation or a capture with no eventual pass row;
-    # it is not proof that Bremen uploads are failing.
-    h["upload_healthy"] = h["upload_transport_healthy"]
+    h["upload_healthy"] = False if not upload_transport_evidence else (True if archive_observer_available else None)
     h["local_save_healthy"] = h["local_save_failures"] == 0 or (
         h["last_local_save_ts"] is not None
         and h["last_local_save_failure_ts"] is not None
@@ -461,29 +524,45 @@ def _load_persisted_flip_retries() -> None:
 def _retry_pending_flips(db: Optional[Database]) -> None:
     """Retry DB path flips the upload worker gave up on.
 
-    Bounded batch per sweep so a backlog cannot stall the worker, and nothing here
-    runs on the capture path. A durable failed-pass spool reference keeps an
-    uploaded object alive until the pass can be inserted after a long DB outage.
+    A successful probe with zero rows means the pass is not recorded yet and is
+    eligible for no-pass retirement after ``_FLIP_RETRY_MAX_AGE_SEC``. An
+    exception is a database outage, so the outbox remains pending regardless of
+    age until a later successful probe.
     """
+    global _flip_db_unavailable
+
     if db is None:
+        with _upload_state_lock:
+            _flip_db_unavailable = True
         return
+
     _load_persisted_flip_retries()
     with _upload_state_lock:
+        _flip_db_unavailable = False
         if not _flip_pending:
             return
-    pending_pass_images = pending_pass_image_paths()
+    try:
+        pending_pass_images = pending_pass_image_paths()
+    except Exception:
+        pending_pass_images = None
     now = time.time()
     with _upload_state_lock:
         batch = sorted(_flip_pending.items(), key=lambda item: item[1])[:_FLIP_RETRY_BATCH]
 
     for object_name, enqueued_at in batch:
-        if _get_upload_state(object_name) == "uploaded":
+        # A marker is the durable local acknowledgement. Do not trust stale
+        # in-memory state to release an outbox entry without that evidence.
+        if _is_durably_archived(object_name):
             _forget_pending_flip(object_name)
             continue
 
         try:
             rows = db.update_image_path(f"local://{object_name}", f"bremen://{object_name}")
+            with _upload_state_lock:
+                _flip_db_unavailable = False
         except Exception as db_err:
+            with _upload_state_lock:
+                _flip_db_unavailable = True
             logger.warning("Delayed DB path flip failed for %s: %s", object_name, db_err)
             continue
 
@@ -495,23 +574,24 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
                 logger.info("Delayed DB path flip landed for %s: local:// -> bremen://", object_name)
             continue
 
-        if now - enqueued_at > _FLIP_RETRY_MAX_AGE_SEC:
+        if now - enqueued_at >= _FLIP_RETRY_MAX_AGE_SEC:
             if pending_pass_images is None or object_name in pending_pass_images:
                 logger.info(
                     "Keeping %s: durable pass-spool evidence is pending or unreadable",
                     object_name,
                 )
                 continue
-            # Still unreferenced after the retention window. The archive upload
-            # succeeded (the only way an entry gets here), so the object is in
-            # Bremen and this local copy serves no recorded pass.
+            # The outbox entry exists only after a successful Bremen upload (or
+            # byte-verified startup reconciliation), so the remote object is
+            # proven durable. Persist the marker before retiring the no-pass
+            # reconciliation entry; a failed marker write keeps the local copy.
             if not _mark_durably_archived(object_name):
                 continue
             _mark_upload_state(object_name, "uploaded")
             if not _forget_pending_flip(object_name):
                 logger.warning("Released %s locally; durable flip cleanup remains pending", object_name)
             logger.info(
-                "No pass references %s after %.0fs; releasing the local copy (object is in Bremen)",
+                "No pass references %s after %.0fs; retiring reconciliation (object is in Bremen)",
                 object_name,
                 now - enqueued_at,
             )
@@ -835,9 +915,10 @@ def _prune_old_images():
     """Remove oldest locally-captured images that have been safely archived.
 
     Only files whose object was uploaded AND whose DB path was flipped to bremen://
-    are eligible. Files still pending or failed retain a local:// DB reference and
-    must stay on disk so the pass continues to serve; never delete a file its pass
-    still needs.
+    (or retired after the no-pass window) are eligible. Files still pending or
+    failed retain a local:// DB reference and must stay on disk so the pass
+    continues to serve; never delete a file its pass still needs. Keep the
+    ``.uploaded`` marker as durable remote-object evidence even after pruning.
     """
     try:
         image_dir = Path(LOCAL_IMAGE_DIR)
@@ -865,7 +946,8 @@ def _prune_old_images():
         for img_path in prunable[:to_remove]:
             try:
                 img_path.unlink()
-                _archive_marker_path(img_path.name).unlink(missing_ok=True)
+                # The marker is the restart-safe evidence that the remote object
+                # was durable. It must outlive the redundant local image.
                 removed += 1
                 logger.debug(f"Pruned archived image: {img_path.name}")
             except Exception as e:

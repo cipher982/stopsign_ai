@@ -365,3 +365,33 @@ def test_pipeline_health_reports_stall_reason(monkeypatch):
 
     assert payload["analyzer"]["frame_age_seconds"] == 600.0
     assert payload["analyzer"]["last_stall"]["lag_seconds"] == 600.0
+
+
+def test_archive_observer_unavailable_is_not_producer_failure():
+    status, reason = _classify_archive_health(
+        {
+            "archive_observer_available": False,
+            "archive_outbox_observed": False,
+            "upload_healthy": None,
+            "local_save_healthy": True,
+            "archive_health_age_seconds": 0.0,
+        }
+    )
+
+    assert status == "deferred"
+    assert "observer" in reason
+
+
+def test_archive_producer_failure_stays_unhealthy_when_observer_is_available():
+    status, reason = _classify_archive_health(
+        {
+            "archive_observer_available": True,
+            "archive_outbox_observed": True,
+            "upload_healthy": False,
+            "local_save_healthy": True,
+            "archive_health_age_seconds": 0.0,
+        }
+    )
+
+    assert status == "failed"
+    assert "transport" in reason

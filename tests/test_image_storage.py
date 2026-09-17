@@ -18,6 +18,7 @@ def isolate_image_storage_state(monkeypatch):
     monkeypatch.setattr(image_storage, "_upload_state", {})
     monkeypatch.setattr(image_storage, "_flip_pending", {})
     monkeypatch.setattr(image_storage, "_flip_retry_db", None)
+    monkeypatch.setattr(image_storage, "_flip_db_unavailable", False)
     monkeypatch.setattr(image_storage, "_last_flip_sweep_monotonic", 0.0)
     monkeypatch.setattr(image_storage, "_last_requeue_sweep_monotonic", 0.0)
     monkeypatch.setattr(image_storage, "_health", dict(image_storage._health))
@@ -139,6 +140,22 @@ def test_prune_old_images_only_removes_safely_archived_files(monkeypatch, tmp_pa
     remaining = sorted(path.name for path in Path(tmp_path).glob("*.jpg"))
     # Both uploaded files are pruned (5 - 3 = 2 pruned); pending/failed/unknown stay.
     assert remaining == ["vehicle_2.jpg", "vehicle_3.jpg", "vehicle_4.jpg"]
+
+
+def test_pruning_preserves_remote_durability_marker(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_MAX_COUNT", 1)
+    archived = tmp_path / "vehicle_archived.jpg"
+    retained = tmp_path / "vehicle_retained.jpg"
+    archived.write_bytes(b"jpg")
+    retained.write_bytes(b"jpg")
+    image_storage._mark_durably_archived(archived.name)
+    image_storage._mark_upload_state(archived.name, "uploaded")
+
+    image_storage._prune_old_images()
+
+    assert not archived.exists()
+    assert image_storage._archive_marker_path(archived.name).exists()
 
 
 def test_prune_preserves_everything_when_nothing_is_uploaded(monkeypatch, tmp_path):
@@ -324,6 +341,81 @@ def test_archive_health_reports_durable_flip_backlog_without_local_file(monkeypa
     assert health["oldest_pending_reconciliation_age_seconds"] == 100.0
     assert health["archive_outbox_observed"] is True
     assert health["archive_reconciliation_healthy"] is False
+
+
+def test_recent_flip_without_pass_row_remains_live_reconciliation(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    (tmp_path / "vehicle_recent.jpg").write_bytes(b"jpg")
+    monkeypatch.setattr(image_storage.time, "time", lambda: 2_000.0)
+    monkeypatch.setattr(
+        image_storage,
+        "pending_archive_flips",
+        lambda: {"vehicle_recent.jpg": 1_950.0},
+    )
+    monkeypatch.setattr(image_storage, "pending_pass_image_paths", lambda: set())
+
+    health = image_storage._health_snapshot()
+
+    assert health["pending_reconciliation_files"] == 1
+    assert health["retired_no_pass_files"] == 0
+    assert health["archive_reconciliation_healthy"] is False
+
+
+def test_old_no_pass_flip_is_retired_without_live_backlog(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    (tmp_path / "vehicle_orphan.jpg").write_bytes(b"jpg")
+    now = 2_000.0
+    monkeypatch.setattr(image_storage.time, "time", lambda: now)
+    monkeypatch.setattr(
+        image_storage,
+        "pending_archive_flips",
+        lambda: {"vehicle_orphan.jpg": now - image_storage.PASS_ROW_WINDOW_SECONDS - 1},
+    )
+    monkeypatch.setattr(image_storage, "pending_pass_image_paths", lambda: set())
+
+    health = image_storage._health_snapshot()
+
+    assert health["pending_reconciliation_files"] == 0
+    assert health["retired_no_pass_files"] == 1
+    assert health["archive_reconciliation_healthy"] is True
+
+
+def test_db_outage_keeps_old_flip_pending(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    (tmp_path / "vehicle_db_outage.jpg").write_bytes(b"jpg")
+    old = time.time() - image_storage.PASS_ROW_WINDOW_SECONDS - 1
+    image_storage._flip_pending["vehicle_db_outage.jpg"] = old
+    monkeypatch.setattr(image_storage, "pending_pass_image_paths", lambda: set())
+    db = MagicMock()
+    db.update_image_path.side_effect = RuntimeError("database unavailable")
+
+    image_storage._retry_pending_flips(db)
+    health = image_storage._health_snapshot()
+
+    assert health["pending_reconciliation_files"] == 1
+    assert "vehicle_db_outage.jpg" in image_storage._flip_pending
+
+
+def test_no_pass_retirement_keeps_local_copy_when_marker_is_not_durable(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    path = tmp_path / "vehicle_unproven.jpg"
+    path.write_bytes(b"jpg")
+    old = time.time() - image_storage.PASS_ROW_WINDOW_SECONDS - 1
+    image_storage._flip_pending[path.name] = old
+    monkeypatch.setattr(image_storage, "pending_pass_image_paths", lambda: set())
+    monkeypatch.setattr(image_storage, "_mark_durably_archived", lambda _name: False)
+    db = MagicMock()
+    db.update_image_path.return_value = 0
+
+    image_storage._retry_pending_flips(db)
+
+    assert path.exists()
+    assert path.name in image_storage._flip_pending
+    assert image_storage._get_upload_state(path.name) != "uploaded"
 
 
 def test_archive_health_fails_closed_when_flip_outbox_is_unreadable(monkeypatch, tmp_path):
