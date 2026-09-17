@@ -410,7 +410,10 @@ def _legacy_float(raw, now: float) -> tuple[float | None, float | None]:
         return None, None
     if not math.isfinite(value):
         return None, None
-    return value, round(now - value, 1)
+    age = now - value
+    if -TIMESTAMP_FUTURE_TOLERANCE_SEC <= age < 0:
+        age = 0.0
+    return value, round(age, 1)
 
 
 def _apply_legacy_analyzer_evidence(analyzer: dict, legacy: dict, now: float) -> bool:

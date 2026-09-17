@@ -327,6 +327,22 @@ def test_pipeline_health_tolerates_small_stage_clock_skew():
     assert "future" not in stage.get("reason", "")
 
 
+def test_pipeline_health_clamps_subsecond_legacy_clock_skew(monkeypatch):
+    now = __import__("time").time()
+    fake = _FakeRedis(
+        {
+            "stopsign.analyzer.last_frame_at": str(now + 0.1),
+            "stopsign.analyzer.last_inference_at": str(now + 0.1),
+            "stopsign.analyzer.boot_ts": str(now - 60),
+        }
+    )
+    monkeypatch.setattr("stopsign.web.routes.health.redis_lib.from_url", lambda url, **kw: fake)
+    response = asyncio.run(pipeline_health())
+    payload = json.loads(response.body)
+    assert payload["analyzer"]["frame_age_seconds"] == 0.0
+    assert payload["analyzer"]["inference_age_seconds"] == 0.0
+
+
 def test_pipeline_health_reports_stall_reason(monkeypatch):
     now = __import__("time").time()
     fake = _FakeRedis(
