@@ -86,6 +86,12 @@ RTSP_LOW_FPS_EXIT_SEC: float = float(os.getenv("RTSP_LOW_FPS_EXIT_SEC", "900"))
 # Readiness tolerance for a below-floor input rate, so one quiet second does not
 # flap the probe.
 READY_LOW_INPUT_FPS_SEC: float = 30.0
+# During an intentional capture reconnect, keep the stage deferred briefly so
+# one failed read does not become an alert.  Once this grace elapses, the
+# heartbeat must say failed even though the reconnect loop itself is alive.
+RTSP_CAPTURE_HEALTH_GRACE_SEC: float = float(os.getenv("RTSP_CAPTURE_HEALTH_GRACE_SEC", "30"))
+RTSP_PUBLISH_STALE_SEC: float = 10.0
+
 # Stage-truth metadata and heartbeat keys.  Legacy frame consumers still receive
 # ``ts``/``w``/``h`` aliases, while new consumers can require the complete schema.
 RELEASE_GENERATION = os.getenv("RELEASE_GENERATION")
@@ -124,6 +130,10 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         self.last_publish_ts: Optional[float] = None
         self.redis_write_latency_ms: Optional[float] = None
         self.last_stage_reason = "starting"
+        # ``None`` means the last capture attempt produced a frame. A failed
+        # attempt keeps its first timestamp across reconnect-loop iterations so
+        # the health heartbeat cannot stay deferred forever.
+        self._capture_attempt_started_at: Optional[float] = time.time()
 
         # Freeze detection and remediation state
         self.freeze_detector = (
@@ -189,11 +199,30 @@ class RTSPToRedis(RTSPServiceStatusMixin):
             if not self.last_publish_ts:
                 status = "deferred"
                 reason = reason or "no frame has been published"
-            elif capture_age is not None and capture_age > 10.0:
+            elif capture_age is not None and capture_age > RTSP_PUBLISH_STALE_SEC:
                 status = "failed"
                 reason = reason or f"last capture is {capture_age:.1f}s old"
             else:
                 status = "healthy"
+
+        # Reconnects deliberately publish ``deferred`` while they make a new
+        # capture attempt. Do not let that label become a permanent healthy
+        # claim: once the retry grace (or initial startup grace) has elapsed,
+        # Sauron must see an explicit failure even though this process is alive.
+        if status == "deferred":
+            attempt_age = (
+                max(0.0, now - self._capture_attempt_started_at)
+                if self._capture_attempt_started_at is not None
+                else None
+            )
+            if self.last_publish_ts is None:
+                startup_grace = float(os.environ.get("GRACE_STARTUP_SEC", "120"))
+                if self.get_uptime_seconds() > startup_grace:
+                    status = "failed"
+                    reason = "capture has not published a frame after startup grace"
+            elif attempt_age is not None and attempt_age > RTSP_CAPTURE_HEALTH_GRACE_SEC:
+                status = "failed"
+                reason = f"capture has not produced a frame for {attempt_age:.1f}s"
         payload = {
             "schema_version": 2,
             "status": status,
@@ -243,6 +272,8 @@ class RTSPToRedis(RTSPServiceStatusMixin):
             raise
 
     def initialize_capture(self):
+        if self._capture_attempt_started_at is None:
+            self._capture_attempt_started_at = time.time()
         # Check if this is a file:// URL for local development
         if self.rtsp_url.startswith("file://"):
             file_path = self.rtsp_url[len("file://") :]
@@ -405,6 +436,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
                 _, _, current_buffer_size = pipeline.execute()
                 self.last_push_ts = time.time()
                 self.last_publish_ts = self.last_push_ts
+                self._capture_attempt_started_at = None
                 self.last_capture_ts = capture_ts
                 if source_seq is not None:
                     self.source_seq = max(self.source_seq, int(source_seq))
@@ -762,7 +794,7 @@ class RTSPToRedis(RTSPServiceStatusMixin):
         uptime = self.get_uptime_seconds()
         grace_sec = float(os.environ.get("GRACE_STARTUP_SEC", "120"))
         warming_up = uptime <= grace_sec
-        frame_stale_sec = 10.0
+        frame_stale_sec = RTSP_PUBLISH_STALE_SEC
         now = time.time()
         push_age = max(0.0, now - self.last_push_ts) if self.last_push_ts is not None else None
         push_ok = self.last_push_ts is not None and push_age is not None and push_age <= frame_stale_sec

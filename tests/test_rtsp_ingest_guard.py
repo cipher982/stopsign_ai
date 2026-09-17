@@ -7,6 +7,7 @@ signal green. These tests pin the guard that covers it.
 """
 
 import importlib
+import json
 import threading
 import time
 
@@ -81,6 +82,46 @@ def test_readiness_gates_on_the_input_rate(monkeypatch):
 
     # The probe reports the starvation, and does not treat it as healthy.
     assert service.get_readiness_report()["input_fps_ok"] is False
+
+
+def test_no_frame_health_heartbeat_becomes_failure_after_grace(monkeypatch):
+    """A live reconnect loop must not keep Sauron on an eternal deferred signal."""
+    module = _load(monkeypatch, GRACE_STARTUP_SEC="30")
+
+    class _HealthRedis:
+        def __init__(self):
+            self.payload = None
+
+        def set(self, _key, value, **_kwargs):
+            self.payload = json.loads(value)
+            return True
+
+    service = module.RTSPToRedis()
+    service.redis_client = _HealthRedis()
+    started = time.time()
+    service._capture_attempt_started_at = started - 29
+    monkeypatch.setattr(service, "get_uptime_seconds", lambda: 29.0)
+
+    # Reconnect grace keeps a brief failed read from becoming an alert.
+    service._publish_health("deferred", "Redis connected; waiting for capture evidence")
+    assert service.redis_client.payload["status"] == "deferred"
+
+    service._capture_attempt_started_at = started - 31
+    monkeypatch.setattr(service, "get_uptime_seconds", lambda: 31.0)
+
+    # No frame has ever arrived: startup grace eventually becomes an explicit
+    # failure, rather than a heartbeat that looks alive forever.
+    service._publish_health("deferred", "Redis connected; waiting for capture evidence")
+    assert service.redis_client.payload["status"] == "failed"
+    assert "startup grace" in service.redis_client.payload["reason"]
+
+    # The same contract applies after a previously healthy source goes silent.
+    now = time.time()
+    service.last_publish_ts = now - 31
+    service._capture_attempt_started_at = now - 31
+    service._publish_health("deferred", "Redis connected; waiting for capture evidence")
+    assert service.redis_client.payload["status"] == "failed"
+    assert "produced a frame" in service.redis_client.payload["reason"]
 
 
 def test_disabled_guard_leaves_ingest_alone(monkeypatch):
