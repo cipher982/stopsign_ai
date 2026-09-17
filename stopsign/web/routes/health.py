@@ -100,16 +100,18 @@ def _classify_archive_health(payload: dict) -> tuple[str, str]:
     if failures:
         return "failed", "; ".join(failures)
 
-    # An unreadable local/outbox observer is not evidence that the producer
-    # failed. Keep it visible as deferred so callers do not raise a CRITICAL
-    # producer verdict from an observation gap.
+    # A missing observer field is legacy evidence, not proof that the new
+    # durable outbox and pass-spool observers completed successfully. Keep
+    # compatibility payloads deferred until both explicit fields are present.
     observer_available = payload.get("archive_observer_available")
-    if observer_available is False or (observer_available is None and payload.get("archive_outbox_observed") is False):
-        reason = (
-            "archive durable outbox observer is unavailable"
-            if payload.get("archive_outbox_observed") is False
-            else "archive reconciliation observer is unavailable"
-        )
+    pass_spool_observed = payload.get("archive_pass_spool_observed")
+    if observer_available is not True or pass_spool_observed is not True:
+        if observer_available is False or payload.get("archive_outbox_observed") is False:
+            reason = "archive durable outbox observer is unavailable"
+        elif pass_spool_observed is not True:
+            reason = "archive pass-spool observer is unavailable"
+        else:
+            reason = "archive reconciliation observer is unavailable"
         return "deferred", reason
 
     observed_age = payload.get("archive_health_age_seconds")

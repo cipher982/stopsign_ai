@@ -194,6 +194,8 @@ def test_archive_health_response_shape(monkeypatch):
 def test_archive_health_labels_proven_objects_as_reconciling():
     status, reason = _classify_archive_health(
         {
+            "archive_observer_available": True,
+            "archive_pass_spool_observed": True,
             "archive_reconciliation_healthy": False,
             "archive_outbox_observed": True,
             "archive_health_age_seconds": 0.0,
@@ -205,6 +207,21 @@ def test_archive_health_labels_proven_objects_as_reconciling():
     assert status == "reconciling"
     assert "proven archive object" in reason
     assert "database path reconciliation" in reason
+
+
+def test_legacy_archive_health_without_observer_fields_defers():
+    status, reason = _classify_archive_health(
+        {
+            "archive_outbox_observed": True,
+            "archive_reconciliation_healthy": True,
+            "archive_health_age_seconds": 0.0,
+            "local_save_healthy": True,
+            "upload_healthy": True,
+        }
+    )
+
+    assert status == "deferred"
+    assert "pass-spool observer" in reason
 
 
 def test_archive_health_defers_when_durable_outbox_cannot_be_observed():
