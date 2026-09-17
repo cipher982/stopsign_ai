@@ -22,6 +22,7 @@ import stopsign.web.app  # noqa: E402,F401
 from stopsign.database import Database
 from stopsign.database import VehiclePass
 from stopsign.web.routes.api import get_live_stats  # noqa: E402
+from stopsign.web.routes.health import _classify_archive_health  # noqa: E402
 from stopsign.web.routes.health import _read_stage_health  # noqa: E402
 from stopsign.web.routes.health import archive_health  # noqa: E402
 from stopsign.web.routes.health import pipeline_health  # noqa: E402
@@ -188,6 +189,35 @@ def test_archive_health_response_shape(monkeypatch):
     ):
         assert key in payload, f"missing key {key}"
     assert payload["upload_successes"] == 11
+
+
+def test_archive_health_labels_proven_objects_as_reconciling():
+    status, reason = _classify_archive_health(
+        {
+            "archive_reconciliation_healthy": False,
+            "archive_outbox_observed": True,
+            "archive_health_age_seconds": 0.0,
+            "pending_archive_files": 0,
+            "pending_reconciliation_files": 378,
+        }
+    )
+
+    assert status == "reconciling"
+    assert "proven archive object" in reason
+    assert "database path reconciliation" in reason
+
+
+def test_archive_health_defers_when_durable_outbox_cannot_be_observed():
+    status, reason = _classify_archive_health(
+        {
+            "archive_outbox_observed": False,
+            "archive_reconciliation_healthy": False,
+            "pending_archive_files": 378,
+        }
+    )
+
+    assert status == "deferred"
+    assert "outbox" in reason
 
 
 def test_archive_health_recomputes_pending_age_from_persisted_timestamp(monkeypatch):

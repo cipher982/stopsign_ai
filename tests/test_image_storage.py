@@ -188,6 +188,22 @@ def test_archive_outage_captures_are_retried_from_disk(monkeypatch, tmp_path):
     assert queued == {"vehicle_failed.jpg", "vehicle_never_queued.jpg"}
 
 
+def test_archive_requeue_marks_inflight_capture_to_prevent_duplicates(monkeypatch, tmp_path):
+    upload_queue: queue.Queue = queue.Queue()
+    monkeypatch.setattr(image_storage, "_upload_queue", upload_queue)
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_SECRET_KEY", "secret")
+
+    path = tmp_path / "vehicle_retry.jpg"
+    path.write_bytes(b"jpg")
+    os.utime(path, (time.time() - 600, time.time() - 600))
+
+    assert image_storage._maybe_requeue_unarchived_uploads(now=1000.0) == 1
+    assert image_storage._maybe_requeue_unarchived_uploads(now=1121.0) == 0
+    assert upload_queue.qsize() == 1
+    assert image_storage._get_upload_state(path.name) == "pending"
+
+
 def test_a_capture_waiting_on_its_row_is_not_uploaded_twice(monkeypatch, tmp_path):
     """The object is already in the archive; only the database path flip is outstanding."""
     upload_queue: queue.Queue = queue.Queue()
@@ -202,6 +218,21 @@ def test_a_capture_waiting_on_its_row_is_not_uploaded_twice(monkeypatch, tmp_pat
     image_storage._mark_upload_state("vehicle_awaiting_flip.jpg", "failed")
     with image_storage._upload_state_lock:
         image_storage._flip_pending["vehicle_awaiting_flip.jpg"] = old
+
+    assert image_storage._maybe_requeue_unarchived_uploads(now=1000.0) == 0
+    assert upload_queue.empty()
+
+
+def test_archive_requeue_honors_persisted_flip_after_restart(monkeypatch, tmp_path):
+    upload_queue: queue.Queue = queue.Queue()
+    monkeypatch.setattr(image_storage, "_upload_queue", upload_queue)
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(image_storage, "BREMEN_MINIO_SECRET_KEY", "secret")
+    path = tmp_path / "vehicle_persisted_flip.jpg"
+    path.write_bytes(b"jpg")
+    old = time.time() - 600
+    os.utime(path, (old, old))
+    monkeypatch.setattr(image_storage, "pending_archive_flips", lambda: {path.name: old})
 
     assert image_storage._maybe_requeue_unarchived_uploads(now=1000.0) == 0
     assert upload_queue.empty()
@@ -274,6 +305,37 @@ def test_archive_health_separates_proven_archive_from_unverified_capture(monkeyp
     assert health["oldest_pending_archive_age_seconds"] is None
     assert health["pending_reconciliation_files"] == 1
     assert health["oldest_pending_reconciliation_age_seconds"] == 100.0
+
+
+def test_archive_health_reports_durable_flip_backlog_without_local_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        image_storage,
+        "pending_archive_flips",
+        lambda: {"vehicle_pruned.jpg": 100.0},
+    )
+    monkeypatch.setattr(image_storage.time, "time", lambda: 200.0)
+
+    health = image_storage._health_snapshot()
+
+    assert health["pending_local_files"] == 0
+    assert health["pending_archive_files"] == 0
+    assert health["pending_reconciliation_files"] == 1
+    assert health["oldest_pending_reconciliation_age_seconds"] == 100.0
+    assert health["archive_outbox_observed"] is True
+    assert health["archive_reconciliation_healthy"] is False
+
+
+def test_archive_health_fails_closed_when_flip_outbox_is_unreadable(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_storage, "LOCAL_IMAGE_DIR", str(tmp_path))
+    (tmp_path / "vehicle_pending.jpg").write_bytes(b"jpg")
+    monkeypatch.setattr(image_storage, "pending_archive_flips", lambda: None)
+
+    health = image_storage._health_snapshot()
+
+    assert health["archive_outbox_observed"] is False
+    assert health["pending_reconciliation_files"] is None
+    assert health["archive_reconciliation_healthy"] is False
 
 
 def test_archive_health_reports_unknown_when_local_outbox_is_missing(monkeypatch, tmp_path):
@@ -479,6 +541,21 @@ def test_delayed_flip_retry_restores_persisted_queue_after_restart(monkeypatch):
 
     assert image_storage._get_upload_state("x_after_restart.jpg") == "uploaded"
     assert "x_after_restart.jpg" not in image_storage._flip_pending
+
+
+def test_delayed_flip_keeps_retry_state_when_outbox_cleanup_fails(monkeypatch):
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.update_image_path.return_value = 1
+    monkeypatch.setattr(image_storage, "forget_archive_flip", lambda _name: False)
+    image_storage._mark_upload_state("x_cleanup_retry.jpg", "failed")
+    image_storage._enqueue_flip_retry("x_cleanup_retry.jpg")
+
+    image_storage._retry_pending_flips(db)
+
+    assert image_storage._get_upload_state("x_cleanup_retry.jpg") == "uploaded"
+    assert "x_cleanup_retry.jpg" in image_storage._flip_pending
 
 
 def test_expired_flip_with_no_referencing_pass_releases_the_local_copy(monkeypatch):

@@ -99,9 +99,8 @@ def _classify_archive_health(payload: dict) -> tuple[str, str]:
         failures.append("archive upload transport is unhealthy")
     if failures:
         return "failed", "; ".join(failures)
-
-    if payload.get("archive_reconciliation_healthy") is False:
-        return "degraded", "archive reconciliation has pending unverified captures"
+    if payload.get("archive_outbox_observed") is False:
+        return "deferred", "archive durable outbox could not be observed"
 
     observed_age = payload.get("archive_health_age_seconds")
     if not isinstance(observed_age, (int, float)) or isinstance(observed_age, bool):
@@ -111,6 +110,20 @@ def _classify_archive_health(payload: dict) -> tuple[str, str]:
     if observed_age > ARCHIVE_HEALTH_MAX_AGE_SEC:
         return "deferred", f"archive health signal is {observed_age:.1f}s old"
 
+    if payload.get("archive_reconciliation_healthy") is False:
+        pending_archive = payload.get("pending_archive_files")
+        pending_reconciliation = payload.get("pending_reconciliation_files")
+        if (
+            payload.get("archive_outbox_observed") is True
+            and pending_archive == 0
+            and isinstance(pending_reconciliation, int)
+            and pending_reconciliation > 0
+        ):
+            return (
+                "reconciling",
+                f"{pending_reconciliation} proven archive object(s) are awaiting database path reconciliation",
+            )
+        return "degraded", "archive reconciliation has unverified captures"
     if payload.get("local_save_healthy") is not True or payload.get("upload_healthy") is not True:
         return "deferred", "archive health signal lacks explicit healthy transport flags"
     return "healthy", "local capture persistence and archive transport are healthy"

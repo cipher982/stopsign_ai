@@ -166,50 +166,80 @@ def _age_stats(paths: list[Path]) -> tuple[int, Optional[float], Optional[float]
     return len(paths), max(0.0, time.time() - oldest_ts), oldest_ts
 
 
-def _known_archived_names() -> set[str] | None:
-    """Return names proven durable by the upload/flip outbox.
+def _timestamp_stats(timestamps: list[float]) -> tuple[int, Optional[float], Optional[float]]:
+    """Summarize durable outbox timestamps without relying on local files."""
+    if not timestamps:
+        return 0, None, None
+    oldest_ts = min(timestamps)
+    return len(timestamps), max(0.0, time.time() - oldest_ts), oldest_ts
 
-    A pending archive flip is created only after a successful Bremen upload or
-    byte-verified startup reconciliation. It therefore proves the object is in
-    Bremen even while the database path or local marker is still pending.
+
+def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Optional[float]] | bool]:
+    """Separate unverified files from proven objects awaiting reconciliation.
+
+    ``outbox`` is derived from the durable pending-flip table rather than the
+    local directory. A marker may be absent because the process died between
+    uploading and acknowledging the DB flip, and the local file may have since
+    been pruned. Reporting the durable queue directly keeps reconciliation
+    progress observable instead of making it disappear with the file.
     """
-    persisted = pending_archive_flips()
-    with _upload_state_lock:
-        in_memory = set(_flip_pending)
-    if persisted is None:
-        return in_memory or None
-    return set(persisted) | in_memory
-
-
-def _durable_local_stats() -> dict[str, tuple[Optional[int], Optional[float], Optional[float]]]:
-    """Separate unverified archive files from proven objects awaiting reconciliation."""
     image_dir = Path(LOCAL_IMAGE_DIR)
     try:
-        # A missing outbox is an observation failure, not an empty backlog.
+        # A missing image directory is an observation failure, not an empty backlog.
         if not image_dir.is_dir():
             unknown = (None, None, None)
-            return {"all": unknown, "archive": unknown, "reconciliation": unknown}
+            return {
+                "all": unknown,
+                "archive": unknown,
+                "reconciliation": unknown,
+                "outbox": unknown,
+                "outbox_observed": False,
+            }
         pending = [path for path in image_dir.glob("*.jpg") if not _is_durably_archived(path.name)]
-        known_archived = _known_archived_names()
+        persisted = pending_archive_flips()
+        if persisted is None:
+            known_archived = None
+        else:
+            with _upload_state_lock:
+                in_memory_archived = set(_flip_pending)
+            known_archived = set(persisted) | in_memory_archived
         if known_archived is None:
             archive_pending = pending
-            reconciliation_pending: list[Path] = []
+            reconciliation_pending: list[Path] | None = None
+            outbox_stats = (None, None, None)
         else:
             archive_pending = [path for path in pending if path.name not in known_archived]
             reconciliation_pending = [path for path in pending if path.name in known_archived]
+            with _upload_state_lock:
+                pending_timestamps = dict(_flip_pending)
+            if persisted:
+                pending_timestamps.update(
+                    {name: timestamp for name, timestamp in persisted.items() if name not in pending_timestamps}
+                )
+            outbox_stats = _timestamp_stats(list(pending_timestamps.values()))
         return {
             "all": _age_stats(pending),
             "archive": _age_stats(archive_pending),
-            "reconciliation": _age_stats(reconciliation_pending),
+            "reconciliation": (
+                _age_stats(reconciliation_pending) if reconciliation_pending is not None else (None, None, None)
+            ),
+            "outbox": outbox_stats,
+            "outbox_observed": persisted is not None,
         }
     except OSError:
         unknown = (None, None, None)
-        return {"all": unknown, "archive": unknown, "reconciliation": unknown}
+        return {
+            "all": unknown,
+            "archive": unknown,
+            "reconciliation": unknown,
+            "outbox": unknown,
+            "outbox_observed": False,
+        }
 
 
 def _durable_pending_local_stats() -> tuple[Optional[int], Optional[float], Optional[float]]:
     """Count markerless local captures and report their age and timestamp."""
-    return _durable_local_stats()["all"]
+    return _durable_local_stats()["all"]  # type: ignore[return-value]
 
 
 def _durable_pending_local_file_count() -> Optional[int]:
@@ -223,9 +253,12 @@ def _health_snapshot() -> dict:
     with _health_lock:
         h = dict(_health)
     local_stats = _durable_local_stats()
-    pending_local_files, oldest_pending_age, oldest_pending_ts = local_stats["all"]
-    pending_archive_files, oldest_archive_age, oldest_archive_ts = local_stats["archive"]
-    pending_reconciliation_files, oldest_reconciliation_age, oldest_reconciliation_ts = local_stats["reconciliation"]
+    pending_local_files, oldest_pending_age, oldest_pending_ts = local_stats["all"]  # type: ignore[assignment]
+    pending_archive_files, oldest_archive_age, oldest_archive_ts = local_stats["archive"]  # type: ignore[assignment]
+    # Reconciliation progress belongs to the durable flip outbox, not only to
+    # markerless local files. The local copy may have been pruned already.
+    pending_reconciliation_files, oldest_reconciliation_age, oldest_reconciliation_ts = local_stats["outbox"]  # type: ignore[assignment]
+    archive_outbox_observed = bool(local_stats["outbox_observed"])
     with _upload_state_lock:
         pending_worker_names = [
             object_name for object_name, state in _upload_state.items() if state in ("pending", "failed")
@@ -238,7 +271,7 @@ def _health_snapshot() -> dict:
     h["pending_archive_files"] = pending_archive_files
     h["pending_reconciliation_files"] = pending_reconciliation_files
     h["worker_pending_files"] = in_memory_pending
-    h["archive_outbox_observed"] = pending_local_files is not None
+    h["archive_outbox_observed"] = archive_outbox_observed
     h["oldest_pending_local_age_seconds"] = oldest_pending_age
     h["oldest_pending_local_ts"] = oldest_pending_ts
     h["oldest_pending_archive_age_seconds"] = oldest_archive_age
@@ -254,7 +287,9 @@ def _health_snapshot() -> dict:
             and h["last_upload_success_ts"] >= h["last_upload_failure_ts"]
         )
     )
-    h["archive_reconciliation_healthy"] = pending_local_files == 0
+    h["archive_reconciliation_healthy"] = (
+        archive_outbox_observed and pending_archive_files == 0 and pending_reconciliation_files == 0
+    )
     # Keep this field as the transport signal. A non-empty outbox can represent
     # a delayed database reconciliation or a capture with no eventual pass row;
     # it is not proof that Bremen uploads are failing.
@@ -397,10 +432,14 @@ def _maybe_retry_pending_flips(now: Optional[float] = None) -> None:
     _retry_pending_flips(_flip_retry_db)
 
 
-def _forget_pending_flip(object_name: str) -> None:
+def _forget_pending_flip(object_name: str) -> bool:
+    """Acknowledge a flip only after the durable outbox row is deleted."""
+    if not forget_archive_flip(object_name):
+        logger.warning("Archive flip outbox cleanup failed for %s; retaining retry state", object_name)
+        return False
     with _upload_state_lock:
         _flip_pending.pop(object_name, None)
-    forget_archive_flip(object_name)
+    return True
 
 
 def _is_flip_pending(object_name: str) -> bool:
@@ -451,7 +490,8 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
         if rows:
             if _mark_durably_archived(object_name):
                 _mark_upload_state(object_name, "uploaded")
-                _forget_pending_flip(object_name)
+                if not _forget_pending_flip(object_name):
+                    logger.warning("DB path flip landed for %s; durable cleanup remains pending", object_name)
                 logger.info("Delayed DB path flip landed for %s: local:// -> bremen://", object_name)
             continue
 
@@ -468,7 +508,8 @@ def _retry_pending_flips(db: Optional[Database]) -> None:
             if not _mark_durably_archived(object_name):
                 continue
             _mark_upload_state(object_name, "uploaded")
-            _forget_pending_flip(object_name)
+            if not _forget_pending_flip(object_name):
+                logger.warning("Released %s locally; durable flip cleanup remains pending", object_name)
             logger.info(
                 "No pass references %s after %.0fs; releasing the local copy (object is in Bremen)",
                 object_name,
@@ -723,6 +764,9 @@ def _maybe_requeue_unarchived_uploads(now: Optional[float] = None) -> int:
         return 0
 
     _last_requeue_sweep_monotonic = now
+    # A restart can leave a durable flip row without the in-memory marker. Load
+    # it before deciding that a local file needs a second upload.
+    _load_persisted_flip_retries()
     wall = time.time()
     candidates: list[Path] = []
     for path in image_dir.glob("*.jpg"):
@@ -732,15 +776,19 @@ def _maybe_requeue_unarchived_uploads(now: Optional[float] = None) -> int:
                 continue
         except OSError:
             continue
-        if _get_upload_state(path.name) != "uploaded" and not _is_flip_pending(path.name):
+        if _get_upload_state(path.name) not in ("uploaded", "pending") and not _is_flip_pending(path.name):
             candidates.append(path)
 
     candidates.sort(key=lambda p: p.stat().st_mtime)
     requeued = 0
     for path in candidates[:REQUEUE_BATCH]:
+        # Mark before put_nowait: the worker can consume the item immediately,
+        # and a later sweep must not enqueue a duplicate while it is in flight.
+        _mark_upload_state(path.name, "pending")
         try:
             _upload_queue.put_nowait((str(path), path.name, _flip_retry_db))
         except queue.Full:
+            _mark_upload_state(path.name, "failed")
             break
         requeued += 1
 
