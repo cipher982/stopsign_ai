@@ -76,12 +76,13 @@ class RuleDecider:
         # still a guess.
         reasons: list[str] = []
         evidence_ok = True
-        if not obs.fresh:
+        # A frame the detector skipped is not evidence of anything: it ages the
+        # last real reading instead. Becoming blind on a single skipped frame
+        # would make the watch flap, because skipping stale frames is a designed
+        # behaviour of this pipeline (~20% of frames), not a fault.
+        if obs.age_sec > opts.stale_after_sec:
             evidence_ok = False
-            reasons.append("no fresh detection")
-        elif obs.age_sec > opts.stale_after_sec:
-            evidence_ok = False
-            reasons.append(f"stale by {obs.age_sec:.1f}s")
+            reasons.append(f"no fresh detection for {obs.age_sec:.1f}s")
         if not obs.decisive:
             evidence_ok = False
             reasons.append("no usable measurement of the region")

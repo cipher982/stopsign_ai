@@ -194,6 +194,31 @@ def test_absence_does_not_accumulate_without_usable_evidence(tmp_path):
     assert all(event.detail.get("note") is True for event in events)
 
 
+def test_skipped_detection_frames_do_not_blind_the_watch(tmp_path):
+    """Skipping stale frames is designed behaviour, not a fault.
+
+    The pipeline deliberately runs YOLO off-rate, so a single skipped frame must
+    age the last reading rather than declare the watch blind — otherwise every
+    watch flaps several times a minute on a healthy camera.
+    """
+    opts = options(stale_after_sec=3.0)
+    decider = RuleDecider(opts)
+    watch, runtime = build_runtime(tmp_path, Condition.GONE, armed_occupied=True, opts=opts)
+    _, ts = drive(runtime, decider, hold([scene(True)], 4))
+    assert runtime.state is WatchState.OCCUPIED
+
+    # 2s of skipped-detector frames: still occupied, and no blindness note.
+    events, ts = drive(runtime, decider, hold([scene(True)], 4), start=ts, fresh=False)
+    assert runtime.state is WatchState.OCCUPIED
+    assert [event for event in events if event.detail.get("note")] == []
+
+    # Past the staleness bound with no fresh reading at all: now it is blind.
+    events, ts = drive(runtime, decider, hold([scene(True)], 4), start=ts, fresh=False)
+    assert runtime.state is WatchState.UNKNOWN
+    assert any(event.detail.get("note") for event in events)
+    assert all(event.alerting is False for event in events)
+
+
 def test_zone_clear_reports_whether_emptiness_was_checked(tmp_path):
     """Appearance alone may not claim an area is clear; detections may."""
     opts = options()

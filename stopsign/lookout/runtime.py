@@ -69,7 +69,8 @@ class WatchRuntime:
         self.suspended_from = WatchState.PENDING
         self.updated_ts = now
         self.last_frame_ts = 0.0
-        self.last_fresh_ts = 0.0
+        # Capture clock, not wall clock: staleness is a property of the footage.
+        self.last_fresh_clock: Optional[float] = None
         self.reference_frame_mean = 0.0
         self.present_prob = 0.5
         self.evidence_fraction = 0.0
@@ -109,9 +110,9 @@ class WatchRuntime:
 
         score = self.model.score(patch)
         metrics = perception.measure_region(box, detections, self.watch.subject)
-        age_sec = max(0.0, started - self.last_fresh_ts) if self.last_fresh_ts else 0.0
+        age_sec = 0.0 if self.last_fresh_clock is None else max(0.0, clock - self.last_fresh_clock)
         if fresh:
-            self.last_fresh_ts = started
+            self.last_fresh_clock = clock
 
         obs = Observation(
             ts=capture_ts if capture_ts is not None else started,
@@ -138,7 +139,10 @@ class WatchRuntime:
             reference_frame_mean=self.reference_frame_mean,
             evidence_fraction=self.evidence_fraction,
             absent_sec=absent_sec,
-            detection_available=detection_channel,
+            # Detections only speak for a frame they were actually run on. An
+            # empty list on a skipped frame means "not measured", and treating it
+            # as "nothing there" is exactly the error this whole design avoids.
+            detection_available=detection_channel and fresh,
         )
         decision = decider.decide(self.watch, obs, ctx)
         self.last_decision = decision
