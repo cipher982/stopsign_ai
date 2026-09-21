@@ -11,7 +11,6 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing import Sequence
 from typing import Tuple
 
 import cv2
@@ -43,8 +42,6 @@ from stopsign.frame_codec import frame_metadata_error
 from stopsign.frame_codec import pack_frame
 from stopsign.frame_codec import unpack_frame
 from stopsign.image_storage import start_upload_worker
-from stopsign.lookout import LookoutManager
-from stopsign.lookout import LookoutOptions
 from stopsign.pass_spool import start_pass_outbox_worker
 from stopsign.service_status import VideoAnalyzerStatusMixin
 from stopsign.settings import ANALYZER_BOOT_TS_KEY
@@ -124,7 +121,6 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.last_inference_capture_ts: Optional[float] = None
         self.last_inference_at: Optional[float] = None
         self.stale_dropped_count = 0
-        self.lookout_submits = 0
         self.last_stage_reason = "starting"
 
         # Pipeline-health + error-handling state
@@ -136,21 +132,6 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         self.min_yolo_interval = 0.0  # Run YOLO every frame (GPU can handle it)
         self.stats_queue = queue.Queue()
         self.frame_dimensions = self.get_frame_dimensions()
-
-        # Lookout: operator-armed watches over regions of this camera.
-        # Disabled means zero cost: no worker thread, no frame copies.
-        self.lookout_options = LookoutOptions.from_env()
-        self.lookout: Optional[LookoutManager] = None
-        if self.lookout_options.enabled:
-            try:
-                self.lookout = LookoutManager(
-                    self.lookout_options,
-                    redis_client=self.redis_client,
-                    detect=self.lookout_detect,
-                )
-            except Exception as exc:
-                logger.error("Lookout disabled after init failure: %s", exc)
-                self.lookout = None
 
         # Initialize coordinate system tracking
         self.current_stream_resolution = None
@@ -349,10 +330,6 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
 
         # Timing specific metrics
         self.visualization_time = Histogram("visualization_time_seconds", "Time taken to visualize the frame")
-        # Lookout runs off the frame path; these two gauges are how the frame
-        # path proves it stayed off it (tick cost and dropped submissions).
-        self.lookout_tick_ms = Gauge("lookout_tick_ms", "Lookout worker evaluation time in milliseconds")
-        self.lookout_queue_drops = Gauge("lookout_queue_drops", "Frames dropped by the Lookout queue")
         self.object_detection_time = Histogram("object_detection_time_seconds", "Time taken for object detection")
         self.car_tracking_time = Histogram("car_tracking_time_seconds", "Time taken to update car tracking")
         self.stop_detection_time = Histogram("stop_detection_time_seconds", "Time to update stop detection")
@@ -573,8 +550,6 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             except Exception as boot_err:
                 logger.warning(f"Failed to record analyzer boot_ts: {boot_err}")
             self._publish_health("deferred", "Redis connected; waiting for source frame evidence")
-            if self.lookout is not None:
-                self.lookout.start()
         except redis_exceptions.ConnectionError as e:
             logger.error(f"Failed to connect to Redis: {str(e)}")
             return
@@ -974,11 +949,6 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
         # Check config updates every frame for near-instant reload
         self.check_config_updates()
 
-        # Lookout sees the clean frame, before visualization burns tracking
-        # overlays into it, and sits ahead of that work so a slow watch cannot
-        # delay the annotated frame.
-        self._submit_lookout(processed_frame, ts_for_logic, boxes, should_run_yolo)
-
         # Visualization
         visualization_start = time.time()
         annotated_frame = self.visualize(
@@ -1086,34 +1056,6 @@ class VideoAnalyzer(VideoAnalyzerStatusMixin):
             return cv2.resize(cropped, (new_width, new_height), interpolation=cv2.INTER_AREA)
 
         return cropped
-
-    def lookout_detect(self, frame: np.ndarray, classes: Sequence[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Detection pass for Lookout, run on the worker thread.
-
-        Uses the shared session but no tracker state, and covers subjects the
-        stop pipeline filters out (people, bicycles, animals).
-        """
-        return self.model.detect(frame, class_filter=list(classes))
-
-    def _submit_lookout(self, frame: np.ndarray, ts: float, boxes: Sequence, yolo_ran: bool) -> None:
-        """Hand the frame to Lookout. Bounded, non-blocking, never raises.
-
-        This runs inside the frame budget, so it does exactly one thing that
-        costs anything: a downscale, at most tick_hz times a second, and only
-        while a watch is armed. Everything else happens on the worker.
-        """
-        if self.lookout is None:
-            return
-        try:
-            self.lookout.submit_frame(frame, ts, boxes, fresh=yolo_ran)
-        except Exception as exc:  # a watch must never break the pipeline
-            logger.debug("Lookout submit failed: %s", exc)
-            return
-        self.lookout_submits += 1
-        if self.lookout_submits % 60 == 0:
-            health = self.lookout.health()
-            self.lookout_tick_ms.set(float(health.get("tick_ms") or 0.0))
-            self.lookout_queue_drops.set(float(health.get("queue_drops") or 0))
 
     def detect_objects(self, frame: np.ndarray) -> Tuple[np.ndarray, List]:
         try:

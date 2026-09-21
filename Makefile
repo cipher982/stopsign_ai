@@ -91,25 +91,17 @@ prod-help:
 	@echo "Runtime secrets remain on cube and are never committed."
 
 # Testing
-# The suite spans the analyzer (ml), the database and storage layers, the web app,
-# and Lookout — so the test environment needs those extras, not just pytest.
-TEST_EXTRAS = --extra ml --extra db --extra storage --extra web --extra lookout --extra test
-
 test:
 	@echo "🧪 Running tests..."
-	uv run $(TEST_EXTRAS) pytest tests/ -v
-
-test-lookout:
-	@echo "🧪 Running the Lookout suite only (fast, offline)..."
-	uv run --extra lookout --extra test pytest tests/test_lookout.py -v
+	uv run pytest tests/ -v
 
 test-cov:
 	@echo "🧪 Running tests with coverage..."
-	uv run $(TEST_EXTRAS) pytest tests/ -v --cov=stopsign --cov-report=term-missing
+	uv run pytest tests/ -v --cov=stopsign --cov-report=term-missing
 
 test-watch:
 	@echo "🧪 Running tests in watch mode..."
-	uv run $(TEST_EXTRAS) pytest tests/ -v --tb=short -x
+	uv run pytest tests/ -v --tb=short -x
 
 # Cleanup
 clean:
