@@ -31,6 +31,11 @@ ml = [
     "shapely>=2.0.6",
     "supervision>=0.25.0",
 ]
+# Camera-watch evaluation and offline replay (stopsign/lookout; no GPU stack)
+lookout = [
+    "opencv-python-headless>=4.10.0.84",
+    "numpy>=1.26",
+]
 # Database access (video_analyzer + web_server)
 db = [
     "psycopg2-binary>=2.9.10",

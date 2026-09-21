@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import List
 from typing import Optional
 from typing import Sequence
+from typing import Tuple
 
 import cv2
 import numpy as np
@@ -250,6 +251,23 @@ class OnnxYoloDetector:
     # Public API
     # ------------------------------------------------------------------
 
+    def detect(
+        self,
+        frame: np.ndarray,
+        class_filter: Optional[Sequence[int]] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Raw detections (xyxy, confidence, class_id) before any tracking.
+
+        ByteTrack state is untouched, so another thread may call this without
+        disturbing the stop pipeline's tracks. Confidence is preserved here: the
+        DetectionBox shim that the tracker produces does not carry it, and
+        "detected, but how sure?" is the difference between evidence and noise.
+        """
+        orig_h, orig_w = frame.shape[:2]
+        blob, scale, padding = _preprocess(frame)
+        outputs = self.session.run(None, {self.input_name: blob})
+        return self._postprocess(outputs[0], scale, padding, (orig_h, orig_w), class_filter)
+
     def detect_and_track(
         self,
         frame: np.ndarray,
@@ -259,15 +277,7 @@ class OnnxYoloDetector:
 
         Returns a list of DetectionBox objects compatible with tracking.py.
         """
-        orig_h, orig_w = frame.shape[:2]
-        blob, scale, padding = _preprocess(frame)
-
-        # Inference
-        outputs = self.session.run(None, {self.input_name: blob})
-        raw_output = outputs[0]  # (1, 84, 8400)
-
-        # Post-process
-        xyxy, confidences, class_ids = self._postprocess(raw_output, scale, padding, (orig_h, orig_w), class_filter)
+        xyxy, confidences, class_ids = self.detect(frame, class_filter)
 
         if len(xyxy) == 0:
             return []

@@ -106,6 +106,7 @@ def create_app() -> FastAPI:
     from stopsign.web.routes.debug_api import router as debug_api_router
     from stopsign.web.routes.health import router as health_router
     from stopsign.web.routes.infrastructure import router as infra_router
+    from stopsign.web.routes.lookout import router as lookout_router
     from stopsign.web.routes.pages import router as pages_router
     from stopsign.web.routes.stream import router as stream_router
 
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(debug_api_router)
     app.include_router(infra_router)
+    app.include_router(lookout_router)
 
     @app.on_event("startup")
     def _startup():
