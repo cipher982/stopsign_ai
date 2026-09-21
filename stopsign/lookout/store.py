@@ -99,6 +99,12 @@ class WatchStore:
             return "missing"
 
     def load(self) -> list[Watch]:
+        """Read the armed watches. A half-written or corrupt file reads as empty.
+
+        The web writes this file atomically, so a failure here means something
+        else is wrong with the volume — better an empty set than a crash in the
+        analyzer's worker loop.
+        """
         try:
             with open(self.options.watches_path, encoding="utf-8") as handle:
                 payload = json.load(handle)

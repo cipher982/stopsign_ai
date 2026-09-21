@@ -286,7 +286,11 @@ class LookoutManager:
             try:
                 payload = self._queue.get(timeout=0.5)
             except queue.Empty:
+                # Idle path. Syncing here, not only while evaluating, is what lets
+                # a newly armed watch be discovered at all: evaluation is what
+                # normally triggers a sync, and evaluation needs something armed.
                 self._watchdog()
+                self._sync_watches()
                 continue
             try:
                 self._evaluate(payload)
@@ -294,6 +298,7 @@ class LookoutManager:
                 self.log.warning("Lookout evaluation failed: %s", exc, exc_info=True)
 
     def _evaluate(self, payload: FramePayload) -> list[LookoutEvent]:
+        # Cheap: the revision check returns immediately when the file is unchanged.
         self._sync_watches()
         if self._killed or not self._runtimes:
             return []
