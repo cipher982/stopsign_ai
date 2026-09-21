@@ -269,6 +269,10 @@ class LookoutManager:
                 {"ts": float(ts), "w": int(small.shape[1]), "h": int(small.shape[0]), "src": "lookout"},
             )
             self.redis.set(FRAME_KEY, envelope, ex=FRAME_TTL_SEC)
+            # Health rides along with the frame: with no watch armed the worker
+            # never evaluates anything, so this is the only liveness signal an
+            # operator or watchdog can read.
+            self.redis.set(HEALTH_KEY, json.dumps(self.health()), ex=FRAME_TTL_SEC * 3)
         except Exception as exc:
             self.log.debug("Lookout frame publish failed: %s", exc)
 

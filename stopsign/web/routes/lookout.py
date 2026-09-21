@@ -16,7 +16,6 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
-from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 
 from stopsign.web.app import templates
@@ -65,23 +64,20 @@ def _merge(watches: list[dict], state: dict) -> list[dict]:
 
 
 @router.get("/lookout")
-async def lookout_page(request: Request, key: str = ""):
-    if not lookout_service.access_token():
+async def lookout_page(request: Request):
+    """Serve the arming UI, and trade a ?key= for a session cookie.
+
+    The cookie is what the page's own fetches authenticate with, so it has to be
+    set on the same response that renders the page. Serving the page on a
+    ?key= link without it produces a page whose every request 403s.
+    """
+    token = lookout_service.access_token()
+    if not token:
         raise HTTPException(status_code=404, detail="Not found")
-    if not lookout_service.authorized(request):
-        if key != lookout_service.access_token():
-            raise HTTPException(status_code=403, detail="Access key required")
-        response = RedirectResponse("/lookout", status_code=303)
-        response.set_cookie(
-            lookout_service.COOKIE_NAME,
-            key,
-            httponly=True,
-            samesite="lax",
-            secure=True,
-            max_age=60 * 60 * 24 * 30,
-        )
-        return response
-    return templates.TemplateResponse(
+    supplied = request.query_params.get("key") or request.cookies.get(lookout_service.COOKIE_NAME) or ""
+    if supplied != token:
+        raise HTTPException(status_code=403, detail="Access key required")
+    response = templates.TemplateResponse(
         "lookout.html",
         {
             "request": request,
@@ -91,6 +87,18 @@ async def lookout_page(request: Request, key: str = ""):
             "canonical_url": "https://crestwoodstopsign.com/lookout",
         },
     )
+    if request.query_params.get("key"):
+        response.set_cookie(
+            lookout_service.COOKIE_NAME,
+            token,
+            httponly=True,
+            samesite="lax",
+            # Secure only over TLS, so a local http check does not silently
+            # produce a session-less page.
+            secure=request.url.scheme == "https",
+            max_age=60 * 60 * 24 * 30,
+        )
+    return response
 
 
 @router.get("/api/lookout/state")
