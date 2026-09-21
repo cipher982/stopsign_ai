@@ -119,21 +119,24 @@ def latest_frame() -> Optional[dict[str, Any]]:
 
 
 def live_state() -> dict[str, Any]:
+    """Live watch status and analyzer health, as published by the evaluator.
+
+    Delivery outcomes are read by operators from Redis directly; the UI polls
+    this on every page view, so it stays to what the page renders.
+    """
     client = _redis()
     if client is None:
-        return {"available": False, "watches": {}, "health": {}, "deliveries": {}}
+        return {"available": False, "watches": {}, "health": {}}
     try:
         watches = client.hgetall(STATE_KEY) or {}
         health = client.get(HEALTH_KEY)
-        deliveries = client.hgetall(DELIVERY_KEY) or {}
     except Exception as exc:
         logger.warning("Lookout state read failed: %s", exc)
-        return {"available": False, "watches": {}, "health": {}, "deliveries": {}}
+        return {"available": False, "watches": {}, "health": {}}
     return {
         "available": True,
         "watches": {_key(key): _json(value) for key, value in watches.items()},
         "health": _json(health) if health else {},
-        "deliveries": {_key(key): _json(value) for key, value in deliveries.items()},
     }
 
 

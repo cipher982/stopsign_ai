@@ -43,7 +43,6 @@ def _merge(watches: list[dict], state: dict) -> list[dict]:
     """Definitions with their live status, newest watch first."""
     merged = []
     live = state.get("watches", {})
-    deliveries = state.get("deliveries", {})
     for row in watches:
         status = live.get(row.get("id"), {})
         merged.append(
@@ -56,7 +55,6 @@ def _merge(watches: list[dict], state: dict) -> list[dict]:
                 "reference_capture_ts": row.get("reference_capture_ts"),
                 "created_at": row.get("created_at"),
                 "status": status or None,
-                "delivery": deliveries.get(status.get("last_event_id", ""), None) if status else None,
             }
         )
     merged.sort(key=lambda item: item.get("created_at") or 0, reverse=True)
